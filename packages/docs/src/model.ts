@@ -42,4 +42,5 @@ export interface DocPage {
   codeBlocks: DocCodeBlock[];
   emphasised: DocEmphasis[];
   directives: InlineDirective[];
+  slug: string | null;
 }

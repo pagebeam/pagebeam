@@ -11,7 +11,7 @@ import {
 import { history, snapshot } from '@pagebeam/app';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
-import { configKeys, links, openapi, strings } from '@pagebeam/checks';
+import { configKeys, links, moved, openapi, strings } from '@pagebeam/checks';
 import { loadConfig, loadIgnores } from './load.js';
 import { reacher } from './reach.js';
 
@@ -108,6 +108,7 @@ export interface Evidence {
   before: Snapshot[] | null;
   complete: boolean;
   grade: Grade;
+  movement: { app: string; changed: string[] }[];
 }
 
 async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | null> {
@@ -116,6 +117,7 @@ async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | n
 
   const now: Snapshot[] = [];
   const before: Snapshot[] = [];
+  const movement: { app: string; changed: string[] }[] = [];
 
   for (const app of usable) {
     const root = rootOf(cwd, app);
@@ -134,6 +136,7 @@ async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | n
       : null;
     if (earlier === null) continue;
     before.push(await snapshot({ ...request, rev: earlier }));
+    movement.push({ app: app.name, changed: await history.changedBetween(root, earlier) });
   }
 
   // Every application has to be comparable before the comparison can carry the
@@ -143,6 +146,7 @@ async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | n
     now,
     before: before.length > 0 ? before : null,
     complete,
+    movement,
     grade: {
       source: bestSource(now.map((s) => s.source)),
       depth: complete ? 'paired' : 'single',
@@ -172,6 +176,21 @@ async function runStrings(
     evidence.before?.map(strings.dictionaryOf) ?? null,
     evidence.grade,
   );
+}
+
+async function runMoved(
+  pages: DocPage[],
+  config: PagebeamConfig,
+  evidence: Evidence | null,
+  untouched: ((page: string) => boolean) | null,
+  skipped: string[],
+): Promise<Finding[]> {
+  if (config.checks.moved === false) return [];
+  if (evidence === null || untouched === null || evidence.movement.length === 0) {
+    skipped.push('moved: needs an earlier revision of both the documentation and an application');
+    return [];
+  }
+  return moved.checkMoved(pages, evidence.now, evidence.movement, untouched);
 }
 
 async function runOpenapi(
@@ -224,6 +243,7 @@ async function checkAll(
   config: PagebeamConfig,
   docsRoot: string,
   evidence: Evidence | null,
+  untouched: ((page: string) => boolean) | null = null,
 ): Promise<Pass> {
   const skipped: string[] = [];
   const ran: string[] = [];
@@ -231,6 +251,7 @@ async function checkAll(
   if (config.checks.configKeys !== false) ran.push('config-keys');
   if (config.checks.openapi !== false) ran.push('openapi');
   if (config.checks.strings !== false) ran.push('strings');
+  if (config.checks.moved !== false) ran.push('moved');
 
   const findings = (
     await Promise.all([
@@ -238,6 +259,7 @@ async function checkAll(
       runConfigKeys(pages, cwd, config, skipped),
       runOpenapi(pages, cwd, config, skipped),
       runStrings(pages, config, evidence, skipped),
+      runMoved(pages, config, evidence, untouched, skipped),
     ])
   ).flat();
 
@@ -292,13 +314,18 @@ export async function run(cwd: string): Promise<RunResult> {
   }
 
   const evidence = await gather(cwd, config);
-  const pass = await checkAll(pages, cwd, config, docsRoot, evidence);
-  const { ran, skipped } = pass;
 
   // The baseline is how things stood on both sides. Using today's applications
   // with yesterday's documentation would mean a control renamed in the product
   // could never count as a problem this change introduced.
   const then = await docsAsThen(docsRoot, config, config.history.sinceDays);
+  const editedPages =
+    then === null ? null : new Set(await history.changedBetween(docsRoot, then.rev));
+  const untouched =
+    editedPages === null ? null : (page: string) => ![...editedPages].some((f) => f.endsWith(page));
+  const pass = await checkAll(pages, cwd, config, docsRoot, evidence, untouched);
+  const { ran, skipped } = pass;
+
   const known = new Set<string>();
   if (then !== null) {
     const asThen: Evidence | null =
@@ -308,6 +335,7 @@ export async function run(cwd: string): Promise<RunResult> {
             now: evidence.before ?? evidence.now,
             before: null,
             complete: false,
+            movement: [],
             grade: { source: evidence.grade.source, depth: 'single' },
           };
     const earlier = await checkAll(then.pages, cwd, config, docsRoot, asThen);

@@ -5,7 +5,7 @@ import type { DocPage } from '@pagebeam/docs';
 
 const page = (p: string): DocPage => ({
   path: p, format: 'markdown', raw: '', prose: '', links: [], codeSpans: [],
-  codeBlocks: [], emphasised: [], directives: [],
+  codeBlocks: [], emphasised: [], directives: [], slug: null,
 });
 
 test('a pattern with a literal directory names the scaffolding', () => {
@@ -27,4 +27,20 @@ test('scaffolding named by the pattern is stripped', () => {
 test('a declared prefix is applied to every route', () => {
   const routes = routesOf([page('guides/a.md')], '', '/docs');
   assert.ok(routes.has('/docs/guides/a'));
+});
+
+test('a page publishing itself at a declared address is found there', () => {
+  const declared: DocPage = { ...page('deep/nested/file.md'), slug: 'short' };
+  const routes = routesOf([declared]);
+  assert.ok(routes.has('/short'), 'the frontmatter decides, not the path');
+  assert.ok(!routes.has('/deep/nested/file'));
+});
+
+test('a declared address starting at the root ignores the prefix', () => {
+  const declared: DocPage = { ...page('a.md'), slug: '/top' };
+  assert.ok(routesOf([declared], '', '/docs').has('/top'));
+});
+
+test('a page with no declared address still follows its path', () => {
+  assert.ok(routesOf([page('guides/a.md')]).has('/guides/a'));
 });

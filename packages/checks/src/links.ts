@@ -61,6 +61,12 @@ export function baseFromPatterns(patterns: string[]): string {
 export function routesOf(pages: DocPage[], base = '', prefix = ''): Set<string> {
   const routes = new Set<string>();
   for (const page of pages) {
+    // A page that declares its own address is published there, whatever its
+    // path says. Docusaurus and Starlight both allow this.
+    if (typeof page.slug === 'string' && page.slug.trim() !== '') {
+      routes.add(normalise(page.slug.startsWith('/') ? page.slug : `${prefix}/${page.slug}`));
+      continue;
+    }
     const relative =
       base !== '' && page.path.startsWith(`${base}/`) ? page.path.slice(base.length + 1) : page.path;
     const withoutExt = relative.replace(/\.(md|mdx|markdown|astro)$/i, '');

@@ -41,6 +41,16 @@ export async function readAt(root: string, rev: string, file: string): Promise<s
 
 // A repository younger than the window still has a past. Falling back to its
 // first commit is the difference between comparing and not comparing at all.
+export async function changedBetween(
+  root: string,
+  from: string,
+  to = 'HEAD',
+): Promise<string[]> {
+  return run('git', ['-C', root, 'diff', '--name-only', from, to], { maxBuffer: BUFFER })
+    .then(({ stdout }) => stdout.split('\n').filter((f) => f !== ''))
+    .catch(() => []);
+}
+
 export async function revisionBefore(root: string, days: number): Promise<string | null> {
   const dated = await run('git', ['-C', root, 'rev-list', '-1', `--before=${days}.days.ago`, 'HEAD'])
     .then(({ stdout }) => stdout.trim())

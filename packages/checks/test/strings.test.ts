@@ -10,7 +10,7 @@ const PARSED_ALONE: Grade = { source: 'parsed', depth: 'single' };
 function doc(value: string, before = 'Click the ', after = ' button.'): DocPage {
   return {
     path: 'guide.md', format: 'markdown', raw: '', prose: '', links: [], codeSpans: [],
-    codeBlocks: [], emphasised: [{ value, line: 7, marker: 'strong', before, after }], directives: [],
+    codeBlocks: [], emphasised: [{ value, line: 7, marker: 'strong', before, after }], directives: [], slug: null,
   };
 }
 

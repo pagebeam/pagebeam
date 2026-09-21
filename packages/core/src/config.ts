@@ -45,6 +45,7 @@ const checksSchema = z.strictObject({
     ])
     .default({}),
   openapi: z.union([z.literal(false), z.strictObject({})]).default({}),
+  moved: z.union([z.literal(false), z.strictObject({})]).default(false),
   strings: z
     .union([
       z.literal(false),

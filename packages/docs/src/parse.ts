@@ -15,6 +15,8 @@ import type {
 } from './model.js';
 
 const HTML_HREF = /\b(?:href|src)\s*=\s*"([^"{}]+)"/g;
+const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
+const SLUG = /^\s*slug\s*:\s*["']?([^"'\r\n#]+)["']?\s*$/m;
 const ASTRO_FENCE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 
 export function formatOf(file: string): DocFormat {
@@ -174,7 +176,9 @@ export async function parsePage(
   if (raw === null) return null;
   const format = formatOf(relative);
   const parsed = format === 'astro' ? parseAstro(raw) : parseMarkdown(raw, format);
-  return { path: relative, format, raw, directives: parseDirectives(raw), ...parsed };
+  const front = format === 'astro' ? null : raw.match(FRONT_MATTER);
+  const slug = front?.[1]?.match(SLUG)?.[1]?.trim() ?? null;
+  return { path: relative, format, raw, slug, directives: parseDirectives(raw), ...parsed };
 }
 
 export async function parseAll(root: string, files: string[], read?: Read): Promise<DocPage[]> {
