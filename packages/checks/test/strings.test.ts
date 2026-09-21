@@ -1,67 +1,104 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { candidates, compare, normalise, type StringIndex } from '../src/strings.ts';
+import { candidates, compare, dictionaryOf, normalise } from '../src/strings.ts';
 import type { DocPage } from '@pagebeam/docs';
+import type { Grade, Snapshot } from '@pagebeam/core';
+
+const PARSED_PAIRED: Grade = { source: 'parsed', depth: 'paired' };
+const PARSED_ALONE: Grade = { source: 'parsed', depth: 'single' };
 
 function doc(value: string, before = 'Click the ', after = ' button.'): DocPage {
   return {
-    path: 'guide.md',
-    format: 'markdown',
-    raw: '',
-    prose: '',
-    links: [],
-    codeSpans: [],
-    codeBlocks: [],
-    emphasised: [{ value, line: 7, marker: 'strong', before, after }],
-    directives: [],
+    path: 'guide.md', format: 'markdown', raw: '', prose: '', links: [], codeSpans: [],
+    codeBlocks: [], emphasised: [{ value, line: 7, marker: 'strong', before, after }], directives: [],
   };
 }
 
-function app(...sources: string[]): StringIndex {
-  return { app: 'dashboard', haystack: sources.map(normalise), files: sources.length };
+function app(labels: string[], text: string[] = []): Snapshot {
+  return {
+    app: 'dashboard', rev: null, source: 'parsed',
+    labels: labels.map((t) => ({ text: t, kind: 'button', file: 'a.vue' })),
+    envKeys: [], text,
+  };
 }
 
-test('a renamed control is reported', () => {
-  const f = compare(candidates([doc('Create a report')]), [app('<button>Compose a report</button>')], 0.4);
-  assert.equal(f.length, 1);
-  assert.match(f[0]!.title, /Create a report/);
-  assert.equal(f[0]!.doc.line, 7);
+test('a control removed since the earlier revision is reported', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(app(['Compose a report']))],
+    [dictionaryOf(app(['Create a report']))],
+    PARSED_PAIRED,
+  );
+  assert.equal(findings.length, 1);
+  assert.match(findings[0]!.title, /was removed from dashboard/);
+  assert.equal(findings[0]!.severity, 'error');
 });
 
-test('a control that still exists is silent', () => {
-  const f = compare(candidates([doc('Create a report')]), [app('<button>Create a report</button>')], 0.4);
-  assert.deepEqual(f, []);
+test('a control that never existed is not called removed', () => {
+  const findings = compare(
+    candidates([doc('Invented label')], false),
+    [dictionaryOf(app(['Real label']))],
+    [dictionaryOf(app(['Real label']))],
+    PARSED_PAIRED,
+  );
+  assert.deepEqual(findings, [], 'it was not there before either, so nothing was removed');
 });
 
-test('an escaped ampersand in the source still matches', () => {
-  const f = compare(candidates([doc('Connect & continue')]), [app('<span>Connect &amp; continue</span>')], 0.4);
-  assert.deepEqual(f, []);
+test('a control still present is silent', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(app(['Create a report']))],
+    [dictionaryOf(app(['Create a report']))],
+    PARSED_PAIRED,
+  );
+  assert.deepEqual(findings, []);
 });
 
-test('a label assembled from interpolation still matches', () => {
-  const source = "{{ n }} {{ n === 1 ? 'connection' : 'connections' }} to look at";
-  const f = compare(candidates([doc('N connections to look at')]), [app(source)], 0.4);
-  assert.deepEqual(f, []);
+test('a label mentioned only in a comment does not count as present', () => {
+  const parsed = app([], ['// the Create a report button was removed last week']);
+  const findings = compare(
+    candidates([doc('Create a report')], true),
+    [dictionaryOf({ ...parsed, labels: [{ text: 'Other', kind: 'button', file: 'a.vue' }] })],
+    null,
+    PARSED_ALONE,
+  );
+  assert.equal(findings.length, 1, 'a comment naming a control is not the control');
 });
 
-test('a navigation path matches when each part exists', () => {
-  const f = compare(candidates([doc('Model → Keys')]), [app('<a>Model</a>', '<a>Keys</a>')], 0.4);
-  assert.deepEqual(f, []);
+test('an application no parser covers falls back to its text', () => {
+  const unparsed: Snapshot = {
+    app: 'api', rev: null, source: 'raw', labels: [], envKeys: [],
+    text: ['render("Create a report")'],
+  };
+  const findings = compare(
+    candidates([doc('Create a report')], true),
+    [dictionaryOf(unparsed)],
+    null,
+    { source: 'raw', depth: 'single' },
+  );
+  assert.deepEqual(findings, [], 'text is all there is, so text has to answer');
 });
 
-test('a leading icon glyph is not part of the label', () => {
-  const f = compare(candidates([doc('+ Add')]), [app('<button>Add</button>')], 0.4);
-  assert.deepEqual(f, []);
+test('confidence and severity follow the evidence', () => {
+  const made = (grade: Grade) =>
+    compare(candidates([doc('Gone label')], true), [dictionaryOf(app(['Other']))], null, grade)[0]!;
+  const parsed = made(PARSED_ALONE);
+  const raw = made({ source: 'raw', depth: 'single' });
+  assert.ok(parsed.confidence > raw.confidence);
+  assert.equal(raw.severity, 'info');
+  assert.match(parsed.detail, /no earlier revision/);
 });
 
-test('prose describing a control is not a candidate', () => {
-  assert.deepEqual(candidates([doc('share-shaped icon')]), []);
+test('placeholder folding survives the rewrite', () => {
+  assert.equal(normalise('Select all N'), normalise('Select all {{count}}'));
 });
 
-test('emphasis with no control context is not a candidate', () => {
-  assert.deepEqual(candidates([doc('worth understanding', 'This is ', ' because it matters.')]), []);
-});
-
-test('a control named by the noun after it is a candidate', () => {
-  assert.equal(candidates([doc('Save', 'Then the ', ' button commits.')]).length, 1);
+test('a phrase sharing words with another label is not a match', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(app(['Lay the report out again', 'Recreate it']))],
+    [dictionaryOf(app(['Create a report']))],
+    PARSED_PAIRED,
+  );
+  assert.equal(findings.length, 1, 'only a placeholder label may be matched word by word');
 });

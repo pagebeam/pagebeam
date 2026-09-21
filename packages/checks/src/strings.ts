@@ -1,6 +1,13 @@
-import { readFile } from 'node:fs/promises';
-import { glob } from 'tinyglobby';
-import { findingId, findingRevision, type Finding } from '@pagebeam/core';
+import {
+  caveatOf,
+  confidenceOf,
+  findingId,
+  findingRevision,
+  severityOf,
+  type Finding,
+  type Grade,
+  type Snapshot,
+} from '@pagebeam/core';
 import type { DocPage } from '@pagebeam/docs';
 
 const PLACEHOLDER = /\{\{?\s*[\w.]+\s*\}?\}|%[sd]|%\d+\$[sd]|\$\{[^}]*\}/g;
@@ -52,7 +59,7 @@ export interface Candidate {
   line: number;
 }
 
-export function candidates(pages: DocPage[]): Candidate[] {
+export function candidates(pages: DocPage[], strict = true): Candidate[] {
   const out: Candidate[] = [];
   const seen = new Set<string>();
 
@@ -62,8 +69,11 @@ export function candidates(pages: DocPage[]): Candidate[] {
       const literal = run.value.trim();
       if (literal.length < 3 || literal.length > 60) continue;
       if (/[\r\n]/.test(run.value)) continue;
-      if (!VERB_BEFORE.test(run.before) && !NOUN_AFTER.test(run.after)) continue;
-      if (DESCRIBES.test(literal)) continue;
+      // Without an earlier revision, nothing can tell a control from a phrase,
+      // so only text a sentence treats as a control is considered. With one,
+      // the comparison does that work and the guessing is dropped.
+      if (strict && !VERB_BEFORE.test(run.before) && !NOUN_AFTER.test(run.after)) continue;
+      if (strict && DESCRIBES.test(literal)) continue;
       if (/[.!?]$/.test(literal)) continue;
       if (literal.endsWith(':')) continue;
       if (ENV_LIKE.test(literal)) continue;
@@ -81,102 +91,123 @@ export function candidates(pages: DocPage[]): Candidate[] {
   return out;
 }
 
-export interface StringIndex {
+export interface Dictionary {
   app: string;
-  haystack: string[];
-  files: number;
+  labels: Map<string, string>;
+  text: string[];
+  parsed: boolean;
 }
 
-export async function indexApp(
-  name: string,
-  root: string,
-  include: string[],
-  exclude: string[],
-): Promise<StringIndex> {
-  const files = await glob(include, { cwd: root, ignore: exclude, absolute: true });
-  const haystack: string[] = [];
-  for (const file of files) {
-    const text = await readFile(file, 'utf8').catch(() => '');
-    if (text !== '') haystack.push(normalise(text));
+export function dictionaryOf(snapshot: Snapshot): Dictionary {
+  const labels = new Map<string, string>();
+  for (const label of snapshot.labels) {
+    const key = normalise(label.text);
+    if (key.length >= 3 && !labels.has(key)) labels.set(key, label.kind);
   }
-  return { app: name, haystack, files: files.length };
-}
-
-function anywhere(needle: string, indexes: StringIndex[]): string | null {
-  for (const index of indexes) {
-    if (index.haystack.some((h) => h.includes(needle))) return index.app;
-  }
-  return null;
+  return {
+    app: snapshot.app,
+    labels,
+    text: snapshot.text.map(normalise),
+    parsed: snapshot.labels.length > 0,
+  };
 }
 
 function forms(normalised: string): string[] {
   const out = new Set<string>([normalised]);
-
   const bare = normalised.replace(LEADING_GLYPH, '').trim();
   if (bare.length >= 3) out.add(bare);
-
   return [...out];
 }
 
-// A label built from interpolation never appears whole in the source, so each
-// literal run between the placeholders has to be found in one file instead.
-function assembled(normalised: string, indexes: StringIndex[]): string | null {
+function assembled(normalised: string, dictionaries: Dictionary[]): boolean {
   const words = normalised
     .split(VAR)
     .join(' ')
     .split(/[^\p{L}\p{N}]+/u)
     .filter((w) => w.length >= 4);
-  if (words.length === 0) return null;
-
-  for (const index of indexes) {
-    if (index.haystack.some((h) => words.every((w) => h.includes(w)))) return index.app;
-  }
-  return null;
+  if (words.length === 0) return false;
+  // Same rule as a whole match: where labels were read, only labels answer.
+  return dictionaries.some((d) =>
+    d.parsed
+      ? [...d.labels.keys()].some((l) => words.every((w) => l.includes(w)))
+      : d.text.some((h) => words.every((w) => h.includes(w))),
+  );
 }
 
-function found(candidate: Candidate, indexes: StringIndex[]): string | null {
-  const parts = candidate.normalised.split(PATH_SEPARATOR).map((s) => s.trim()).filter((s) => s.length >= 3);
-  if (parts.length > 1) {
-    const hits = parts.map((p) => anywhere(p, indexes));
-    return hits.every((h) => h !== null) ? (hits[0] as string) : null;
-  }
+// A label is the strongest answer. Text is only consulted for an application
+// no parser covers, and a comment mentioning a control is not the control.
+export function locate(
+  normalised: string,
+  dictionaries: Dictionary[],
+): { app: string; kind: string } | null {
+  const parts = normalised.split(PATH_SEPARATOR).map((s) => s.trim()).filter((s) => s.length >= 3);
+  const each = parts.length > 1 ? parts : forms(normalised);
 
-  for (const form of forms(candidate.normalised)) {
-    const app = anywhere(form, indexes);
-    if (app !== null) return app;
+  for (const dictionary of dictionaries) {
+    for (const form of each) {
+      const kind = dictionary.labels.get(form);
+      if (kind !== undefined) return { app: dictionary.app, kind };
+    }
   }
-  return candidate.normalised.includes(VAR) ? assembled(candidate.normalised, indexes) : null;
+  if (parts.length > 1) {
+    const found = parts.every((part) => dictionaries.some((d) => d.labels.has(part)));
+    if (found) return { app: dictionaries[0]?.app ?? '', kind: 'path' };
+  }
+  for (const dictionary of dictionaries) {
+    if (dictionary.parsed) continue;
+    for (const form of each) {
+      if (dictionary.text.some((h) => h.includes(form))) return { app: dictionary.app, kind: 'text' };
+    }
+  }
+  // Only a label with a placeholder can be scattered across an expression.
+  // Applying this to a plain phrase matches any label sharing its words.
+  if (!normalised.includes(VAR)) return null;
+  return assembled(normalised, dictionaries) ? { app: '', kind: 'assembled' } : null;
 }
 
 export function compare(
   found_: Candidate[],
-  indexes: StringIndex[],
-  minConfidence: number,
+  now: Dictionary[],
+  before: Dictionary[] | null,
+  grade: Grade,
 ): Finding[] {
-  const searched = indexes.map((i) => i.app);
+  const searched = now.map((d) => d.app).join(', ');
+  const caveat = caveatOf(grade);
   const findings: Finding[] = [];
 
   for (const candidate of found_) {
-    if (found(candidate, indexes) !== null) continue;
+    if (locate(candidate.normalised, now) !== null) continue;
+
+    // With history, a control has to have existed to count as removed.
+    let was: { app: string; kind: string } | null = null;
+    if (before !== null) {
+      was = locate(candidate.normalised, before);
+      if (was === null) continue;
+    }
+
     const words = candidate.literal.split(/\s+/).length;
-    const confidence = words >= 2 ? 0.75 : 0.45;
-    if (confidence < minConfidence) continue;
+    const confidence = confidenceOf(grade, words >= 2 ? 0.9 : 0.6);
 
     findings.push({
       id: findingId('strings', candidate.page, candidate.normalised),
       revision: findingRevision(candidate.normalised),
       check: 'strings',
-      severity: 'warn',
+      ...(was?.app ? { app: was.app } : {}),
+      severity: severityOf(grade),
       confidence,
       doc: { path: candidate.page, line: candidate.line },
-      title: `"${candidate.literal}" appears in no application`,
+      title:
+        was === null
+          ? `"${candidate.literal}" is in no application`
+          : `"${candidate.literal}" was removed from ${was.app}`,
       detail:
-        `This page tells the reader to look for "${candidate.literal}". ` +
-        `That text is in none of ${searched.join(', ')}. ` +
-        `Either it was renamed, or it is assembled at runtime and cannot be found by reading the source.`,
+        (was === null
+          ? `This page tells the reader to look for "${candidate.literal}". Nothing in ${searched} has it.`
+          : `This page tells the reader to look for "${candidate.literal}". It was a ${was.kind} in ${was.app} and is gone.`) +
+        (caveat === null ? '' : ` ${caveat}`),
       evidence: [
         { kind: 'documented-at', detail: `${candidate.page}:${candidate.line}` },
-        { kind: 'searched', detail: searched.join(', ') },
+        { kind: 'searched', detail: searched },
       ],
     });
   }

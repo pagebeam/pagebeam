@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { html, vue } from '../dist/index.js';
+import { html, vue, literalsIn } from '../dist/index.js';
 
 test('a label broken across child elements is one label', () => {
   assert.deepEqual(
@@ -26,4 +26,16 @@ test('a label attribute is captured with the element it sits on', () => {
 
 test('text outside a control is not a label', () => {
   assert.deepEqual(vue.extract('<template><div>Just some prose here</div></template>', 'a.vue'), []);
+});
+
+test('a label chosen at runtime is still a label', () => {
+  const labels = vue.extract(
+    "<template><h2>{{ editing ? 'Edit system' : 'Create a report' }}</h2></template>",
+    'a.vue',
+  );
+  assert.deepEqual(labels.map((l) => l.text).sort(), ['Create a report', 'Edit system']);
+});
+
+test('an expression that does not parse costs nothing', () => {
+  assert.deepEqual(literalsIn('this is ((( not javascript'), []);
 });

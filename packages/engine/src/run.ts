@@ -1,6 +1,14 @@
 import path from 'node:path';
 import { stat } from 'node:fs/promises';
-import { Ignores, type Finding, type PagebeamConfig } from '@pagebeam/core';
+import {
+  Ignores,
+  bestSource,
+  type Finding,
+  type Grade,
+  type PagebeamConfig,
+  type Snapshot,
+} from '@pagebeam/core';
+import { history, snapshot } from '@pagebeam/app';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, openapi, strings } from '@pagebeam/checks';
 import { loadConfig, loadIgnores } from './load.js';
@@ -8,6 +16,7 @@ import { reacher } from './reach.js';
 
 export interface RunResult {
   problem: string | null;
+  grade: Grade | null;
   configFrom: string | null;
   pages: number;
   apps: string[];
@@ -91,26 +100,75 @@ async function runLinks(
   return links.checkLinks(pages, set, { external: options.external });
 }
 
-async function runStrings(
-  pages: DocPage[],
-  cwd: string,
-  config: PagebeamConfig,
-  skipped: string[],
-): Promise<Finding[]> {
-  if (config.checks.strings === false) return [];
-  const usable = config.apps.filter((a) => a.path !== undefined);
-  if (usable.length === 0) {
-    skipped.push('strings: no application declares a local path');
-    return [];
-  }
+export interface Evidence {
+  now: Snapshot[];
+  before: Snapshot[] | null;
+  complete: boolean;
+  grade: Grade;
+}
 
-  const indexes = [];
+async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | null> {
+  const usable = config.apps.filter((a) => a.path !== undefined);
+  if (usable.length === 0) return null;
+
+  const now: Snapshot[] = [];
+  const before: Snapshot[] = [];
+
   for (const app of usable) {
     const root = rootOf(cwd, app);
     if (root === null) continue;
-    indexes.push(await strings.indexApp(app.name, root, app.include, app.exclude));
+    const request = {
+      app: app.name,
+      root,
+      include: app.include,
+      exclude: app.exclude,
+      envFiles: app.envFiles,
+    };
+    now.push(await snapshot(request));
+
+    const earlier = (await history.isRepository(root))
+      ? await history.revisionBefore(root, config.history.sinceDays)
+      : null;
+    if (earlier === null) continue;
+    before.push(await snapshot({ ...request, rev: earlier }));
   }
-  return strings.compare(strings.candidates(pages), indexes, config.checks.strings.minConfidence);
+
+  // Every application has to be comparable before the comparison can carry the
+  // claim on its own; with only some, the cautious reading still applies.
+  const complete = before.length === now.length && before.length > 0;
+  return {
+    now,
+    before: before.length > 0 ? before : null,
+    complete,
+    grade: {
+      source: bestSource(now.map((s) => s.source)),
+      depth: complete ? 'paired' : 'single',
+    },
+  };
+}
+
+async function runStrings(
+  pages: DocPage[],
+  config: PagebeamConfig,
+  evidence: Evidence | null,
+  skipped: string[],
+): Promise<Finding[]> {
+  if (config.checks.strings === false) return [];
+  if (evidence === null) {
+    skipped.push('strings: no application declares a local path');
+    return [];
+  }
+  if (evidence.now.every((s) => s.labels.length === 0)) {
+    skipped.push('strings: no parser covers any configured application, so no labels could be read');
+    return [];
+  }
+
+  return strings.compare(
+    strings.candidates(pages, !evidence.complete),
+    evidence.now.map(strings.dictionaryOf),
+    evidence.before?.map(strings.dictionaryOf) ?? null,
+    evidence.grade,
+  );
 }
 
 async function runOpenapi(
@@ -158,6 +216,7 @@ export async function run(cwd: string): Promise<RunResult> {
   if (pages.length === 0) {
     return {
       problem: `No documentation was found under ${docsRoot} matching ${config.docs.include.join(', ')}.`,
+      grade: null,
       configFrom: from,
       pages: 0,
       apps: config.apps.map((a) => a.name),
@@ -174,12 +233,14 @@ export async function run(cwd: string): Promise<RunResult> {
   if (config.checks.openapi !== false) ran.push('openapi');
   if (config.checks.strings !== false) ran.push('strings');
 
+  const evidence = await gather(cwd, config);
+
   const findings = (
     await Promise.all([
       runLinks(pages, cwd, config, docsRoot),
       runConfigKeys(pages, cwd, config, skipped),
       runOpenapi(pages, cwd, config, skipped),
-      runStrings(pages, cwd, config, skipped),
+      runStrings(pages, config, evidence, skipped),
     ])
   )
     .flat()
@@ -195,6 +256,7 @@ export async function run(cwd: string): Promise<RunResult> {
   const skippedNames = new Set(skipped.map((s) => s.split(':')[0]));
   return {
     problem: null,
+    grade: evidence?.grade ?? null,
     configFrom: from,
     pages: pages.length,
     apps: config.apps.map((a) => a.name),

@@ -12,6 +12,12 @@ export function pretty(result: RunResult): string {
       (result.configFrom ? ` (${result.configFrom})` : ' (no config file)'),
   );
   lines.push(`ran: ${result.ran.length === 0 ? 'nothing' : result.ran.join(', ')}`);
+  if (result.grade !== null) {
+    lines.push(
+      `evidence: ${result.grade.source} source, ` +
+        (result.grade.depth === 'paired' ? 'compared against an earlier revision' : 'no earlier revision'),
+    );
+  }
   for (const s of result.skipped) lines.push(`NOT RUN  ${s}`);
   lines.push('');
 
@@ -52,7 +58,7 @@ export function pretty(result: RunResult): string {
 
 export function json(result: RunResult): string {
   return JSON.stringify(
-    { problem: result.problem, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
+    { problem: result.problem, grade: result.grade, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
     null,
     2,
   );

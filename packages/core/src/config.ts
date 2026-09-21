@@ -56,6 +56,9 @@ const checksSchema = z.strictObject({
 export const configSchema = z.strictObject({
   docs: docsSchema,
   apps: z.array(appSchema).default([]),
+  history: z
+    .strictObject({ sinceDays: z.number().int().positive().default(30) })
+    .default({}),
   checks: checksSchema.default({}),
 });
 

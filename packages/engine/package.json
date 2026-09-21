@@ -4,14 +4,24 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
   "license": "MIT",
   "dependencies": {
     "@pagebeam/checks": "0.0.1",
     "@pagebeam/core": "0.0.1",
     "@pagebeam/docs": "0.0.1",
-    "yaml": "^2.6.1"
+    "yaml": "^2.6.1",
+    "@pagebeam/app": "0.0.1"
   }
 }
