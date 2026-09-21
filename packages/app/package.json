@@ -1,5 +1,5 @@
 {
-  "name": "@pagebeam/checks",
+  "name": "@pagebeam/app",
   "version": "0.0.1",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,12 +18,9 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@babel/parser": "^7.29.9",
-    "@babel/traverse": "^8.0.6",
     "@pagebeam/core": "0.0.1",
-    "@pagebeam/docs": "0.0.1",
-    "@vue/compiler-dom": "^3.5.43",
-    "@vue/compiler-sfc": "^3.5.43",
+    "@vue/compiler-sfc": "^3.5.13",
+    "parse5": "^8.0.1",
     "tinyglobby": "^0.2.10"
   }
 }
