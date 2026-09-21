@@ -79,3 +79,42 @@ test('several controls on one page make one finding, not several', () => {
   assert.equal(findings.length, 1);
   assert.match(findings[0]!.detail, /"Create a report", "Show related items"/);
 });
+
+const withLabels = (labels: [string, string][], file: string): Snapshot => ({
+  app: 'dashboard', rev: null, source: 'parsed',
+  labels: labels.map(([text, kind]) => ({ text, kind, file })), envKeys: [], text: [],
+});
+
+test('a file reformatted without touching its controls is not movement', () => {
+  const same = [['Create a report', 'button']] as [string, string][];
+  const findings = checkMoved(
+    [page('Create a report')],
+    [withLabels(same, 'c.vue')],
+    [{ app: 'dashboard', changed: ['c.vue'] }],
+    () => true,
+    [withLabels(same, 'c.vue')],
+  );
+  assert.deepEqual(findings, [], 'the file changed, what it offers the reader did not');
+});
+
+test('a control gaining a sibling is movement', () => {
+  const findings = checkMoved(
+    [page('Create a report')],
+    [withLabels([['Create a report', 'button'], ['Undo', 'button']], 'c.vue')],
+    [{ app: 'dashboard', changed: ['c.vue'] }],
+    () => true,
+    [withLabels([['Create a report', 'button']], 'c.vue')],
+  );
+  assert.equal(findings.length, 1);
+});
+
+test('a control changing what kind of thing it is counts', () => {
+  const findings = checkMoved(
+    [page('Create a report')],
+    [withLabels([['Create a report', 'a']], 'c.vue')],
+    [{ app: 'dashboard', changed: ['c.vue'] }],
+    () => true,
+    [withLabels([['Create a report', 'button']], 'c.vue')],
+  );
+  assert.equal(findings.length, 1, 'a button becoming a link is worth reading about');
+});

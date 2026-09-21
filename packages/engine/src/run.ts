@@ -190,7 +190,7 @@ async function runMoved(
     skipped.push('moved: needs an earlier revision of both the documentation and an application');
     return [];
   }
-  return moved.checkMoved(pages, evidence.now, evidence.movement, untouched);
+  return moved.checkMoved(pages, evidence.now, evidence.movement, untouched, evidence.before);
 }
 
 async function runOpenapi(

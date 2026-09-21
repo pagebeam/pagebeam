@@ -9,6 +9,35 @@ export interface Movement {
   changed: string[];
 }
 
+// What a file offers the reader: every control it declares, and nothing about
+// how the code is arranged. A file whose signature is unchanged had its
+// formatting or its internals altered, which is not a reason to reread prose.
+function signature(snapshot: Snapshot): Map<string, string> {
+  const byFile = new Map<string, Set<string>>();
+  for (const label of snapshot.labels) {
+    const set = byFile.get(label.file) ?? new Set<string>();
+    set.add(`${label.kind}\u0000${normalise(label.text)}`);
+    byFile.set(label.file, set);
+  }
+  return new Map([...byFile].map(([file, set]) => [file, [...set].sort().join('\n')]));
+}
+
+export function surfaceChanged(now: Snapshot[], before: Snapshot[]): Map<string, Set<string>> {
+  const earlier = new Map(before.map((s) => [s.app, signature(s)]));
+  const out = new Map<string, Set<string>>();
+  for (const snapshot of now) {
+    const then = earlier.get(snapshot.app);
+    if (then === undefined) continue;
+    const files = new Set<string>();
+    for (const [file, sig] of signature(snapshot)) {
+      if (then.get(file) !== sig) files.add(file);
+    }
+    for (const file of then.keys()) if (!files.has(file)) continue;
+    out.set(snapshot.app, files);
+  }
+  return out;
+}
+
 // Prose that did not change describes code that did. Nothing here is broken,
 // which is the point: it is the one signal that arrives before the breakage.
 export function checkMoved(
@@ -16,8 +45,17 @@ export function checkMoved(
   now: Snapshot[],
   movement: Movement[],
   untouched: (page: string) => boolean,
+  before: Snapshot[] | null = null,
 ): Finding[] {
-  const moved = new Map(movement.map((m) => [m.app, new Set(m.changed)]));
+  const edited = new Map(movement.map((m) => [m.app, new Set(m.changed)]));
+  // A changed file only counts when what it offers the reader changed with it.
+  const surface = before === null ? null : surfaceChanged(now, before);
+  const moved = new Map(
+    [...edited].map(([app, files]) => {
+      const real = surface?.get(app);
+      return [app, real === undefined ? files : new Set([...files].filter((f) => real.has(f)))];
+    }),
+  );
 
   const declaring = new Map<string, { app: string; file: string; kind: string }>();
   for (const snapshot of now) {
