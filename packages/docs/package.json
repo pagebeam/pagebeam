@@ -4,12 +4,22 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
   "license": "MIT",
   "dependencies": {
     "@pagebeam/core": "0.0.1",
+    "acorn": "^8.18.0",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-frontmatter": "^2.0.1",
     "mdast-util-mdx": "^3.0.0",

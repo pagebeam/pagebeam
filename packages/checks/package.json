@@ -18,13 +18,9 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@babel/parser": "^7.29.9",
-    "@babel/traverse": "^8.0.6",
     "@pagebeam/app": "0.0.1",
     "@pagebeam/core": "0.0.1",
     "@pagebeam/docs": "0.0.1",
-    "@vue/compiler-dom": "^3.5.43",
-    "@vue/compiler-sfc": "^3.5.43",
     "tinyglobby": "^0.2.10",
     "yaml": "^2.9.1"
   }

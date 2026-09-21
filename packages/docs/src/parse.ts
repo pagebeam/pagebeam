@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { frontmatterFromMarkdown } from 'mdast-util-frontmatter';
 import { frontmatter } from 'micromark-extension-frontmatter';
+import { mdxjs } from 'micromark-extension-mdxjs';
+import { mdxFromMarkdown } from 'mdast-util-mdx';
 import { visit } from 'unist-util-visit';
 import { parseDirectives } from './directives.js';
 import type {
@@ -62,9 +64,15 @@ function htmlLinks(raw: string, from = 0): DocLink[] {
 }
 
 function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
+  // Without these an .mdx file parses as Markdown, so its expressions and
+  // components are read as prose and its imports become paragraphs.
+  const mdx = format === 'mdx';
   const tree = fromMarkdown(raw, {
-    extensions: [frontmatter(['yaml', 'toml'])],
-    mdastExtensions: [frontmatterFromMarkdown(['yaml', 'toml'])],
+    extensions: [frontmatter(['yaml', 'toml']), ...(mdx ? [mdxjs()] : [])],
+    mdastExtensions: [
+      frontmatterFromMarkdown(['yaml', 'toml']),
+      ...(mdx ? [mdxFromMarkdown()] : []),
+    ],
   });
   const links: DocLink[] = [];
   const codeSpans: DocCodeSpan[] = [];
@@ -111,7 +119,6 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
     }
   });
 
-  void format;
   return { prose: prose.join('\n'), links, codeSpans, codeBlocks, emphasised };
 }
 
