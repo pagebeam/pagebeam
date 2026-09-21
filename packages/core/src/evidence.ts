@@ -70,7 +70,7 @@ export interface Snapshot {
   source: Source;
   labels: Label[];
   envKeys: string[];
-  text: string[];
+  files: { path: string; text: string }[];
 }
 
 export interface AppEvidence {

@@ -12,7 +12,7 @@ const page = (value: string): DocPage => ({
 
 const app = (text: string, file: string): Snapshot => ({
   app: 'dashboard', rev: null, source: 'parsed',
-  labels: [{ text, kind: 'button', file }], envKeys: [], text: [],
+  labels: [{ text, kind: 'button', file }], envKeys: [], files: [],
 });
 
 test('a page is flagged when the code behind a control it names changed', () => {
@@ -82,7 +82,7 @@ test('several controls on one page make one finding, not several', () => {
 
 const withLabels = (labels: [string, string][], file: string): Snapshot => ({
   app: 'dashboard', rev: null, source: 'parsed',
-  labels: labels.map(([text, kind]) => ({ text, kind, file })), envKeys: [], text: [],
+  labels: labels.map(([text, kind]) => ({ text, kind, file })), envKeys: [], files: [],
 });
 
 test('a file reformatted without touching its controls is not movement', () => {
@@ -117,4 +117,51 @@ test('a control changing what kind of thing it is counts', () => {
     [withLabels([['Create a report', 'button']], 'c.vue')],
   );
   assert.equal(findings.length, 1, 'a button becoming a link is worth reading about');
+});
+
+const noParser = (files: [string, string][]): Snapshot => ({
+  app: 'core', rev: null, source: 'raw', labels: [], envKeys: [],
+  files: files.map(([path, text]) => ({ path, text })),
+});
+
+test('an application with no parser still produces the signal', () => {
+  const findings = checkMoved(
+    [page('Start import')],
+    [noParser([['ui.py', 'button("Start import")\nlabel("New")']])],
+    [{ app: 'core', changed: ['ui.py'] }],
+    () => true,
+    [noParser([['ui.py', 'button("Start import")']])],
+  );
+  assert.equal(findings.length, 1, 'no parser is not no evidence');
+  assert.equal(findings[0]!.standing, 'review');
+  assert.match(findings[0]!.detail, /No parser covers core/);
+});
+
+test('an application with no parser says how weak the reading is', () => {
+  const weak = checkMoved(
+    [page('Start import')],
+    [noParser([['ui.py', 'button("Start import")\nlabel("New")']])],
+    [{ app: 'core', changed: ['ui.py'] }],
+    () => true,
+    [noParser([['ui.py', 'button("Start import")']])],
+  )[0]!;
+  const strong = checkMoved(
+    [page('Create a report')],
+    [withLabels([['Create a report', 'button'], ['Undo', 'button']], 'c.vue')],
+    [{ app: 'dashboard', changed: ['c.vue'] }],
+    () => true,
+    [withLabels([['Create a report', 'button']], 'c.vue')],
+  )[0]!;
+  assert.ok(strong.confidence > weak.confidence);
+});
+
+test('reformatting a file no parser covers is not movement', () => {
+  const findings = checkMoved(
+    [page('Start import')],
+    [noParser([['ui.py', 'button(\n  "Start import"\n)']])],
+    [{ app: 'core', changed: ['ui.py'] }],
+    () => true,
+    [noParser([['ui.py', 'button("Start import")']])],
+  );
+  assert.deepEqual(findings, [], 'the words are the same, only the layout moved');
 });

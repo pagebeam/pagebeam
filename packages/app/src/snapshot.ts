@@ -41,7 +41,7 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
         );
 
   const labels: Label[] = [];
-  const text: string[] = [];
+  const files_: { path: string; text: string }[] = [];
   const sources: Source[] = [];
 
   for (const file of files) {
@@ -51,7 +51,7 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
         : await readAt(request.root, rev, file);
     if (source === null) continue;
 
-    text.push(source);
+    files_.push({ path: file, text: source });
     const extractor = extractors.for(file);
     if (extractor === null) continue;
     sources.push(extractor.source);
@@ -79,6 +79,6 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     source: bestSource(sources),
     labels,
     envKeys: [...envKeys],
-    text,
+    files: files_,
   };
 }

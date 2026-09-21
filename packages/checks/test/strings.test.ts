@@ -18,7 +18,7 @@ function app(labels: string[], text: string[] = []): Snapshot {
   return {
     app: 'dashboard', rev: null, source: 'parsed',
     labels: labels.map((t) => ({ text: t, kind: 'button', file: 'a.vue' })),
-    envKeys: [], text,
+    envKeys: [], files: text.map((v, i) => ({ path: `f${i}.ts`, text: v })),
   };
 }
 
@@ -68,7 +68,7 @@ test('a label mentioned only in a comment does not count as present', () => {
 test('an application no parser covers falls back to its text', () => {
   const unparsed: Snapshot = {
     app: 'api', rev: null, source: 'raw', labels: [], envKeys: [],
-    text: ['render("Create a report")'],
+    files: [{ path: 'a.py', text: 'render("Create a report")' }],
   };
   const findings = compare(
     candidates([doc('Create a report')], true),
