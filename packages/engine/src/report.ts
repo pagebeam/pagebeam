@@ -18,7 +18,10 @@ export function pretty(result: RunResult): string {
         (result.grade.depth === 'paired' ? 'compared against an earlier revision' : 'no earlier revision'),
     );
   }
-  for (const s of result.skipped) lines.push(`NOT RUN  ${s}`);
+  for (const s of result.skipped) {
+    const name = s.split(':')[0] as string;
+    lines.push(`${result.degraded.includes(name) ? 'ASKED FOR, DID NOT RUN' : 'NOT RUN'}  ${s}`);
+  }
   lines.push('');
 
   if (result.findings.length === 0) {
@@ -35,7 +38,7 @@ export function pretty(result: RunResult): string {
 
   for (const f of result.findings) {
     const where = f.doc.line === undefined ? f.doc.path : `${f.doc.path}:${f.doc.line}`;
-    lines.push(`${MARK[f.severity]} ${f.title}`);
+    lines.push(`${MARK[f.severity]} [${f.standing}] ${f.title}`);
     lines.push(`  ${where}  [${f.id}]`);
     for (const line of f.detail.split('\n')) lines.push(`  ${line}`);
     lines.push('');
@@ -58,7 +61,7 @@ export function pretty(result: RunResult): string {
 
 export function json(result: RunResult): string {
   return JSON.stringify(
-    { problem: result.problem, grade: result.grade, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
+    { problem: result.problem, degraded: result.degraded, grade: result.grade, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
     null,
     2,
   );

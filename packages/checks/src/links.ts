@@ -26,6 +26,7 @@ function finding(
     id: findingId(check, page.path, target),
     revision: findingRevision(target),
     check,
+    standing: set.source === 'build' && kind === 'internal' ? 'proven' : 'review',
     severity: set.source === 'build' || kind !== 'internal' ? 'error' : 'warn',
     confidence: set.source === 'build' || kind !== 'internal' ? 1 : 0.6,
     doc: { path: page.path, line: link.line, offset: link.offset },

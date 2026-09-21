@@ -56,6 +56,7 @@ export function compare(
       id: findingId('config-keys', where.page, key),
       revision: findingRevision(key),
       check: 'config-keys',
+      standing: 'review',
       severity: 'warn',
       confidence: 0.9,
       doc: { path: where.page, line: where.line },

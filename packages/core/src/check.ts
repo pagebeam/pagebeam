@@ -8,6 +8,12 @@ export type CheckId =
 
 export type Severity = 'error' | 'warn' | 'info';
 
+// What the evidence can carry, which is not the same as how sure we are.
+// proven: the source of truth itself says so. A built site has no such route.
+// review: something a person should look at. Absence from what could be read
+// is not absence from the product.
+export type Standing = 'proven' | 'review';
+
 export interface SourceRef {
   path: string;
   line?: number;
@@ -38,6 +44,7 @@ export interface Finding {
   id: string;
   revision: string;
   check: string;
+  standing: Standing;
   app?: string;
   severity: Severity;
   confidence: number;

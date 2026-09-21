@@ -89,3 +89,34 @@ test('checks that cannot run are named rather than counted as passing', async ()
   assert.ok(result.skipped.length > 0);
   assert.match(pretty(result), /not a clean bill of health/);
 });
+
+test('a check that was asked for and could not run makes the answer untrustworthy', async () => {
+  const result = await run(
+    await site({
+      'pagebeam.config.yaml': 'docs:\n  root: docs\nchecks:\n  openapi: {}\n',
+      'docs/a.md': '# A\n',
+    }),
+  );
+  assert.deepEqual(result.degraded, ['openapi']);
+});
+
+test('a check nobody asked for is not applicable rather than degraded', async () => {
+  const result = await run(
+    await site({ 'pagebeam.config.yaml': 'docs:\n  root: docs\n', 'docs/a.md': '# A\n' }),
+  );
+  assert.ok(result.skipped.length > 0);
+  assert.deepEqual(result.degraded, []);
+});
+
+test('a finding says what its evidence can carry', async () => {
+  const result = await run(
+    await site({
+      'pagebeam.config.yaml':
+        'docs:\n  root: docs\napps:\n  - name: api\n    path: api\n    envFiles: [".env.example"]\n',
+      'docs/c.md': '```ini\nGONE=1\n```\n',
+      'api/.env.example': 'KEPT=1\n',
+    }),
+  );
+  const key = result.findings.find((f) => f.check === 'config-keys');
+  assert.equal(key?.standing, 'review', 'an example file is not the contract');
+});

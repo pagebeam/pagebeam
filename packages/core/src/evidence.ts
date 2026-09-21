@@ -32,6 +32,12 @@ export function confidenceOf(grade: Grade, base = 1): number {
   return Math.min(base, SOURCE_CEILING[grade.source] * DEPTH_FACTOR[grade.depth]);
 }
 
+// Only a complete reading compared against a known earlier state can prove a
+// thing was removed. Everything else is a reason to look.
+export function standingOf(grade: Grade): 'proven' | 'review' {
+  return grade.depth === 'paired' && grade.source !== 'raw' ? 'proven' : 'review';
+}
+
 export function severityOf(grade: Grade): 'error' | 'warn' | 'info' {
   if (grade.depth === 'paired' && grade.source !== 'raw') return 'error';
   if (grade.source === 'raw' && grade.depth === 'single') return 'info';

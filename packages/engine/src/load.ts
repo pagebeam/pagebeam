@@ -15,14 +15,17 @@ async function readIfPresent(file: string): Promise<string | null> {
   return readFile(file, 'utf8').catch(() => null);
 }
 
-export async function loadConfig(cwd: string): Promise<{ config: PagebeamConfig; from: string | null }> {
+export async function loadConfig(
+  cwd: string,
+): Promise<{ config: PagebeamConfig; from: string | null; asked: Set<string> }> {
   for (const name of CONFIG_NAMES) {
     const text = await readIfPresent(path.join(cwd, name));
     if (text === null) continue;
     const raw = name.endsWith('.json') ? JSON.parse(text) : parseYaml(text);
-    return { config: parseConfig(raw), from: name };
+    const checks = (raw as { checks?: Record<string, unknown> })?.checks ?? {};
+    return { config: parseConfig(raw), from: name, asked: new Set(Object.keys(checks)) };
   }
-  return { config: parseConfig({ docs: { root: '.' } }), from: null };
+  return { config: parseConfig({ docs: { root: '.' } }), from: null, asked: new Set() };
 }
 
 export async function loadIgnores(cwd: string): Promise<IgnoreFile> {

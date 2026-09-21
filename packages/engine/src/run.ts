@@ -16,6 +16,7 @@ import { reacher } from './reach.js';
 
 export interface RunResult {
   problem: string | null;
+  degraded: string[];
   grade: Grade | null;
   configFrom: string | null;
   pages: number;
@@ -208,7 +209,7 @@ async function runOpenapi(
 }
 
 export async function run(cwd: string): Promise<RunResult> {
-  const { config, from } = await loadConfig(cwd);
+  const { config, from, asked } = await loadConfig(cwd);
   const ignores = new Ignores(await loadIgnores(cwd));
   const docsRoot = path.resolve(cwd, config.docs.root);
   const files = await discover(docsRoot, config.docs.include, config.docs.exclude);
@@ -216,6 +217,7 @@ export async function run(cwd: string): Promise<RunResult> {
   if (pages.length === 0) {
     return {
       problem: `No documentation was found under ${docsRoot} matching ${config.docs.include.join(', ')}.`,
+      degraded: [],
       grade: null,
       configFrom: from,
       pages: 0,
@@ -253,9 +255,19 @@ export async function run(cwd: string): Promise<RunResult> {
   const order = { error: 0, warn: 1, info: 2 } as const;
   deduped.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));
 
-  const skippedNames = new Set(skipped.map((s) => s.split(':')[0]));
+  const skippedNames = new Set(skipped.map((s) => s.split(':')[0] as string));
+  // A check nobody asked for and which has no input is not applicable. One that
+  // was configured and could not run means the answer is incomplete.
+  const configured = new Map([
+    ['config-keys', 'configKeys'],
+    ['openapi', 'openapi'],
+    ['strings', 'strings'],
+    ['links', 'links'],
+  ]);
+  const degraded = [...skippedNames].filter((name) => asked.has(configured.get(name) ?? name));
   return {
     problem: null,
+    degraded,
     grade: evidence?.grade ?? null,
     configFrom: from,
     pages: pages.length,
