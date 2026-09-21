@@ -5,6 +5,7 @@ const MARK = { error: '✗', warn: '!', info: 'i' } as const;
 
 export function pretty(result: RunResult): string {
   const lines: string[] = [];
+  if (result.problem !== null) return `${result.problem}\nNothing was checked.`;
   const apps = result.apps.length === 0 ? 'no applications' : result.apps.join(', ');
   lines.push(
     `${result.pages} pages, checked against ${apps}` +
@@ -51,7 +52,7 @@ export function pretty(result: RunResult): string {
 
 export function json(result: RunResult): string {
   return JSON.stringify(
-    { pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
+    { problem: result.problem, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
     null,
     2,
   );

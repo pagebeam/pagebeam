@@ -50,4 +50,6 @@ if (args.command !== 'check') {
 
 const result = await run(args.cwd);
 process.stdout.write((args.json ? json(result) : pretty(result)) + '\n');
+
+if (result.problem !== null) process.exit(2);
 process.exit(shouldFail(args.failOn, worst(result.findings)) ? 1 : 0);

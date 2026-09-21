@@ -6,6 +6,7 @@ import { configKeys, links, openapi, strings } from '@pagebeam/checks';
 import { loadConfig, loadIgnores } from './load.js';
 
 export interface RunResult {
+  problem: string | null;
   configFrom: string | null;
   pages: number;
   apps: string[];
@@ -52,6 +53,7 @@ async function routeSet(
   pages: DocPage[],
   cwd: string,
   config: PagebeamConfig,
+  docsRoot: string,
 ): Promise<links.RouteSet> {
   const publicDir = config.docs.publicDir ? path.resolve(cwd, config.docs.publicDir) : undefined;
   const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
@@ -60,18 +62,21 @@ async function routeSet(
   for (const dir of candidates) {
     if (!(await exists(dir))) continue;
     const routes = await links.routesFromBuild(dir);
-    if (routes.size > 0) return { routes, source: 'build', ...(publicDir ? { publicDir } : {}) };
+    if (routes.size > 0) {
+      return { routes, source: 'build', docsRoot, ...(publicDir ? { publicDir } : {}) };
+    }
   }
-  return { routes: links.routesOf(pages), source: 'content', ...(publicDir ? { publicDir } : {}) };
+  return { routes: links.routesOf(pages), source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
 }
 
 async function runLinks(
   pages: DocPage[],
   cwd: string,
   config: PagebeamConfig,
+  docsRoot: string,
 ): Promise<Finding[]> {
   if (config.checks.links === false) return [];
-  const set = await routeSet(pages, cwd, config);
+  const set = await routeSet(pages, cwd, config, docsRoot);
   return links.checkLinks(pages, set, { external: config.checks.links.external });
 }
 
@@ -112,16 +117,19 @@ async function runOpenapi(
 
   const cited = openapi.citations(pages);
   const findings: Finding[] = [];
+  const every: openapi.Operation[] = [];
+
   for (const app of withSpec) {
     const spec = app.openapi!.spec;
     const file = path.resolve(cwd, spec);
     const ops = await openapi.readSpec(file);
     const shown = path.isAbsolute(spec) ? path.basename(spec) : spec;
-    findings.push(
-      ...openapi.checkCitations(cited, ops, app.name),
-      ...openapi.checkCoverage(pages, ops, shown, app.name),
-    );
+    every.push(...ops);
+    findings.push(...openapi.checkCoverage(pages, ops, shown, app.name));
   }
+
+  const names = withSpec.map((a) => a.name).join(', ');
+  findings.push(...openapi.checkCitations(cited, every, names));
   return findings;
 }
 
@@ -131,6 +139,18 @@ export async function run(cwd: string): Promise<RunResult> {
   const docsRoot = path.resolve(cwd, config.docs.root);
   const files = await discover(docsRoot, config.docs.include, config.docs.exclude);
   const pages = await parseAll(docsRoot, files);
+  if (pages.length === 0) {
+    return {
+      problem: `No documentation was found under ${docsRoot} matching ${config.docs.include.join(', ')}.`,
+      configFrom: from,
+      pages: 0,
+      apps: config.apps.map((a) => a.name),
+      findings: [],
+      ran: [],
+      skipped: [],
+    };
+  }
+
   const skipped: string[] = [];
   const ran: string[] = [];
   if (config.checks.links !== false) ran.push('links');
@@ -140,7 +160,7 @@ export async function run(cwd: string): Promise<RunResult> {
 
   const findings = (
     await Promise.all([
-      runLinks(pages, cwd, config),
+      runLinks(pages, cwd, config, docsRoot),
       runConfigKeys(pages, cwd, config, skipped),
       runOpenapi(pages, cwd, config, skipped),
       runStrings(pages, cwd, config, skipped),
@@ -158,6 +178,7 @@ export async function run(cwd: string): Promise<RunResult> {
 
   const skippedNames = new Set(skipped.map((s) => s.split(':')[0]));
   return {
+    problem: null,
     configFrom: from,
     pages: pages.length,
     apps: config.apps.map((a) => a.name),

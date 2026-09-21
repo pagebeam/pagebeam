@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "node --experimental-strip-types --test packages/*/test/*.test.ts",
+    "test": "tsc --build && node --experimental-strip-types --test packages/*/test/*.test.ts",
     "typecheck": "tsc --build"
   },
   "devDependencies": {
