@@ -8,6 +8,8 @@ const docsSchema = z.object({
     .enum(['auto', 'docusaurus', 'starlight', 'astro', 'nextra', 'mkdocs', 'markdown'])
     .default('auto'),
   siteUrl: z.string().url().optional(),
+  buildDir: z.string().optional(),
+  publicDir: z.string().optional(),
 });
 
 const appSchema = z.object({

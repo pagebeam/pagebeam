@@ -6,6 +6,7 @@ import type { DocPage } from '@pagebeam/docs';
 export interface RouteSet {
   routes: Set<string>;
   publicDir?: string;
+  source: 'build' | 'content';
 }
 
 function normalise(route: string): string {
@@ -57,14 +58,32 @@ export async function checkLinks(
         id: findingId('links', page.path, target),
         revision: findingRevision(target),
         check: 'links',
-        severity: 'error',
-        confidence: 1,
+        severity: set.source === 'build' ? 'error' : 'warn',
+        confidence: set.source === 'build' ? 1 : 0.6,
         doc: { path: page.path, line: link.line, offset: link.offset },
         title: `${target} does not resolve`,
-        detail: `This page links to ${target}. No page and no public asset answers to it.`,
+        detail:
+          set.source === 'build'
+            ? `This page links to ${target}. No built page and no public asset answers to it.`
+            : `This page links to ${target}. No source page answers to it. Routes were read from source files, which cannot see pages a framework plugin generates, so build the site and run again to be certain.`,
         evidence: [{ kind: 'linked-from', detail: `${page.path}:${link.line}` }],
       });
     }
   }
   return findings;
+}
+
+export async function routesFromBuild(buildDir: string): Promise<Set<string>> {
+  const { glob } = await import('tinyglobby');
+  const pages = await glob(['**/index.html', '*.html'], {
+    cwd: buildDir,
+    ignore: ['**/node_modules/**'],
+    absolute: false,
+  });
+  const routes = new Set<string>();
+  for (const p of pages) {
+    const route = p.replace(/(^|\/)index\.html$/, '').replace(/\.html$/, '');
+    routes.add(normalise(`/${route}`));
+  }
+  return routes;
 }
