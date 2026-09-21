@@ -12,6 +12,9 @@ export function pretty(result: RunResult): string {
       (result.configFrom ? ` (${result.configFrom})` : ' (no config file)'),
   );
   lines.push(`ran: ${result.ran.length === 0 ? 'nothing' : result.ran.join(', ')}`);
+  if (result.comparedWith !== null) {
+    lines.push(`documentation compared with ${result.comparedWith.slice(0, 8)}`);
+  }
   if (result.grade !== null) {
     lines.push(
       `evidence: ${result.grade.source} source, ` +
@@ -38,7 +41,8 @@ export function pretty(result: RunResult): string {
 
   for (const f of result.findings) {
     const where = f.doc.line === undefined ? f.doc.path : `${f.doc.path}:${f.doc.line}`;
-    lines.push(`${MARK[f.severity]} [${f.standing}] ${f.title}`);
+    const age = f.introduced === null ? '' : f.introduced ? ' new' : ' pre-existing';
+    lines.push(`${MARK[f.severity]} [${f.standing}${age}] ${f.title}`);
     lines.push(`  ${where}  [${f.id}]`);
     for (const line of f.detail.split('\n')) lines.push(`  ${line}`);
     lines.push('');
@@ -61,7 +65,7 @@ export function pretty(result: RunResult): string {
 
 export function json(result: RunResult): string {
   return JSON.stringify(
-    { problem: result.problem, degraded: result.degraded, grade: result.grade, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
+    { problem: result.problem, degraded: result.degraded, comparedWith: result.comparedWith, grade: result.grade, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
     null,
     2,
   );

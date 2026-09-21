@@ -9,6 +9,7 @@ import {
   type Snapshot,
 } from '@pagebeam/core';
 import { history, snapshot } from '@pagebeam/app';
+import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, openapi, strings } from '@pagebeam/checks';
 import { loadConfig, loadIgnores } from './load.js';
@@ -17,6 +18,7 @@ import { reacher } from './reach.js';
 export interface RunResult {
   problem: string | null;
   degraded: string[];
+  comparedWith: string | null;
   grade: Grade | null;
   configFrom: string | null;
   pages: number;
@@ -208,6 +210,66 @@ async function runOpenapi(
   return findings;
 }
 
+interface Pass {
+  pages: DocPage[];
+  evidence: Evidence | null;
+  findings: Finding[];
+  ran: string[];
+  skipped: string[];
+}
+
+async function checkAll(
+  pages: DocPage[],
+  cwd: string,
+  config: PagebeamConfig,
+  docsRoot: string,
+  evidence: Evidence | null,
+): Promise<Pass> {
+  const skipped: string[] = [];
+  const ran: string[] = [];
+  if (config.checks.links !== false) ran.push('links');
+  if (config.checks.configKeys !== false) ran.push('config-keys');
+  if (config.checks.openapi !== false) ran.push('openapi');
+  if (config.checks.strings !== false) ran.push('strings');
+
+  const findings = (
+    await Promise.all([
+      runLinks(pages, cwd, config, docsRoot),
+      runConfigKeys(pages, cwd, config, skipped),
+      runOpenapi(pages, cwd, config, skipped),
+      runStrings(pages, config, evidence, skipped),
+    ])
+  ).flat();
+
+  const names = new Set(skipped.map((s) => s.split(':')[0] as string));
+  return { pages, evidence, findings, ran: ran.filter((r) => !names.has(r)), skipped };
+}
+
+// The same documentation as it was, so a problem that predates this change can
+// be told apart from one this change introduced.
+async function docsAsThen(
+  docsRoot: string,
+  config: PagebeamConfig,
+  sinceDays: number,
+): Promise<{ pages: DocPage[]; rev: string } | null> {
+  if (!(await history.isRepository(docsRoot))) return null;
+  const rev = await history.revisionBefore(docsRoot, sinceDays);
+  if (rev === null) return null;
+
+  const top = await history.filesAt(docsRoot, rev).catch(() => [] as string[]);
+  if (top.length === 0) return null;
+
+  const files = top.filter((f) =>
+    picomatch.isMatch(f, config.docs.include, { ignore: config.docs.exclude }),
+  );
+  if (files.length === 0) return null;
+
+  const pages = await parseAll(docsRoot, files, (relative) =>
+    history.readAt(docsRoot, rev, relative),
+  );
+  return { pages, rev };
+}
+
 export async function run(cwd: string): Promise<RunResult> {
   const { config, from, asked } = await loadConfig(cwd);
   const ignores = new Ignores(await loadIgnores(cwd));
@@ -218,6 +280,7 @@ export async function run(cwd: string): Promise<RunResult> {
     return {
       problem: `No documentation was found under ${docsRoot} matching ${config.docs.include.join(', ')}.`,
       degraded: [],
+      comparedWith: null,
       grade: null,
       configFrom: from,
       pages: 0,
@@ -228,24 +291,31 @@ export async function run(cwd: string): Promise<RunResult> {
     };
   }
 
-  const skipped: string[] = [];
-  const ran: string[] = [];
-  if (config.checks.links !== false) ran.push('links');
-  if (config.checks.configKeys !== false) ran.push('config-keys');
-  if (config.checks.openapi !== false) ran.push('openapi');
-  if (config.checks.strings !== false) ran.push('strings');
-
   const evidence = await gather(cwd, config);
+  const pass = await checkAll(pages, cwd, config, docsRoot, evidence);
+  const { ran, skipped } = pass;
 
-  const findings = (
-    await Promise.all([
-      runLinks(pages, cwd, config, docsRoot),
-      runConfigKeys(pages, cwd, config, skipped),
-      runOpenapi(pages, cwd, config, skipped),
-      runStrings(pages, config, evidence, skipped),
-    ])
-  )
-    .flat()
+  // The baseline is how things stood on both sides. Using today's applications
+  // with yesterday's documentation would mean a control renamed in the product
+  // could never count as a problem this change introduced.
+  const then = await docsAsThen(docsRoot, config, config.history.sinceDays);
+  const known = new Set<string>();
+  if (then !== null) {
+    const asThen: Evidence | null =
+      evidence === null
+        ? null
+        : {
+            now: evidence.before ?? evidence.now,
+            before: null,
+            complete: false,
+            grade: { source: evidence.grade.source, depth: 'single' },
+          };
+    const earlier = await checkAll(then.pages, cwd, config, docsRoot, asThen);
+    for (const f of earlier.findings) known.add(f.id);
+  }
+
+  const findings = pass.findings
+    .map((f) => ({ ...f, introduced: then === null ? null : !known.has(f.id) }))
     .filter((f) => !ignores.silences(f));
 
   const unique = new Map<string, Finding>();
@@ -255,6 +325,7 @@ export async function run(cwd: string): Promise<RunResult> {
   const order = { error: 0, warn: 1, info: 2 } as const;
   deduped.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));
 
+  const comparedWith = then?.rev ?? null;
   const skippedNames = new Set(skipped.map((s) => s.split(':')[0] as string));
   // A check nobody asked for and which has no input is not applicable. One that
   // was configured and could not run means the answer is incomplete.
@@ -268,6 +339,7 @@ export async function run(cwd: string): Promise<RunResult> {
   return {
     problem: null,
     degraded,
+    comparedWith,
     grade: evidence?.grade ?? null,
     configFrom: from,
     pages: pages.length,

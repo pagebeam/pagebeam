@@ -45,6 +45,8 @@ export interface Finding {
   revision: string;
   check: string;
   standing: Standing;
+  // null when there is nothing to compare the documentation against.
+  introduced?: boolean | null;
   app?: string;
   severity: Severity;
   confidence: number;

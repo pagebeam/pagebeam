@@ -160,17 +160,24 @@ function parseAstro(raw: string): Pick<DocPage, 'prose' | 'links' | 'codeSpans' 
   return { prose, links, codeSpans, codeBlocks, emphasised };
 }
 
-export async function parsePage(root: string, relative: string): Promise<DocPage> {
-  const abs = path.join(root, relative);
-  const raw = await readFile(abs, 'utf8');
+export type Read = (relative: string) => Promise<string | null>;
+
+export async function parsePage(
+  root: string,
+  relative: string,
+  read?: Read,
+): Promise<DocPage | null> {
+  const raw =
+    read === undefined
+      ? await readFile(path.join(root, relative), 'utf8')
+      : await read(relative);
+  if (raw === null) return null;
   const format = formatOf(relative);
   const parsed = format === 'astro' ? parseAstro(raw) : parseMarkdown(raw, format);
   return { path: relative, format, raw, directives: parseDirectives(raw), ...parsed };
 }
 
-export async function parseAll(
-  root: string,
-  files: string[],
-): Promise<DocPage[]> {
-  return Promise.all(files.map((f) => parsePage(root, f)));
+export async function parseAll(root: string, files: string[], read?: Read): Promise<DocPage[]> {
+  const parsed = await Promise.all(files.map((f) => parsePage(root, f, read)));
+  return parsed.filter((p): p is DocPage => p !== null);
 }

@@ -120,3 +120,48 @@ test('a finding says what its evidence can carry', async () => {
   const key = result.findings.find((f) => f.check === 'config-keys');
   assert.equal(key?.standing, 'review', 'an example file is not the contract');
 });
+
+import { execFileSync } from 'node:child_process';
+
+function commit(root: string, message: string): void {
+  execFileSync('git', ['-C', root, 'add', '-A']);
+  execFileSync('git', [
+    '-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', message,
+  ]);
+}
+
+test('a problem that predates the change is not blamed on it', async () => {
+  const root = await site({
+    'pagebeam.config.yaml': 'docs:\n  root: docs\nhistory:\n  sinceDays: 3650\n',
+    'docs/a.md': '[old](/already-broken)\n',
+  });
+  execFileSync('git', ['-C', root, 'init', '-q']);
+  commit(root, 'first');
+  await writeFile(path.join(root, 'docs/b.md'), '[new](/just-broken)\n');
+  commit(root, 'second');
+
+  const result = await run(root);
+  assert.notEqual(result.comparedWith, null, 'the documentation has a past to compare with');
+  const byPage = new Map(result.findings.map((f) => [f.doc.path, f.introduced]));
+  assert.equal(byPage.get('a.md'), false, 'already broken before this change');
+  assert.equal(byPage.get('b.md'), true, 'broken by this change');
+});
+
+test('documentation in a nested directory is still readable at an earlier revision', async () => {
+  const root = await site({
+    'pagebeam.config.yaml': 'docs:\n  root: site/content\nhistory:\n  sinceDays: 3650\n',
+    'site/content/a.md': '[old](/already-broken)\n',
+  });
+  execFileSync('git', ['-C', root, 'init', '-q']);
+  commit(root, 'first');
+  await writeFile(path.join(root, 'site/content/b.md'), '# B\n');
+  commit(root, 'second');
+
+  const result = await run(root);
+  assert.notEqual(result.comparedWith, null);
+  assert.equal(
+    result.findings.find((f) => f.doc.path === 'a.md')?.introduced,
+    false,
+    'a nested root must not make every finding look new',
+  );
+});

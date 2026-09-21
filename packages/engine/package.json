@@ -18,10 +18,11 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@pagebeam/app": "0.0.1",
     "@pagebeam/checks": "0.0.1",
     "@pagebeam/core": "0.0.1",
     "@pagebeam/docs": "0.0.1",
-    "yaml": "^2.6.1",
-    "@pagebeam/app": "0.0.1"
+    "picomatch": "^4.0.7",
+    "yaml": "^2.6.1"
   }
 }

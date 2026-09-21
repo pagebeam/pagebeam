@@ -9,10 +9,11 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   --cwd      directory holding pagebeam.config.* (default: current directory)
   --json     machine-readable output
   --profile  observe: report everything, block nothing (default)
-             enforce: block on findings the evidence can prove
+             enforce: block on proven findings this change introduced
+             enforce-all: block on any proven finding, old or new
 
   exit 0  nothing blocks
-  exit 1  a proven finding blocks, under enforce
+  exit 1  a proven finding blocks, under an enforcing profile
   exit 2  the answer cannot be trusted: nothing was read, or a check that was
           asked for could not run
 `;
@@ -21,7 +22,7 @@ interface Args {
   command: string;
   cwd: string;
   json: boolean;
-  profile: 'observe' | 'enforce';
+  profile: 'observe' | 'enforce' | 'enforce-all';
 }
 
 function parse(argv: string[]): Args {
@@ -30,7 +31,10 @@ function parse(argv: string[]): Args {
     const a = argv[i];
     if (a === '--json') args.json = true;
     else if (a === '--cwd') args.cwd = argv[++i] ?? args.cwd;
-    else if (a === '--profile') args.profile = argv[++i] === 'enforce' ? 'enforce' : 'observe';
+    else if (a === '--profile') {
+      const value = argv[++i];
+      args.profile = value === 'enforce' || value === 'enforce-all' ? value : 'observe';
+    }
   }
   return args;
 }
@@ -51,7 +55,10 @@ const result = await run(args.cwd);
 process.stdout.write((args.json ? json(result) : pretty(result)) + '\n');
 
 if (result.problem !== null || result.degraded.length > 0) process.exit(2);
-if (args.profile === 'enforce' && result.findings.some((f) => f.standing === 'proven')) {
-  process.exit(1);
-}
+const blocking = result.findings.filter(
+  (f) =>
+    f.standing === 'proven' &&
+    (args.profile === 'enforce-all' || f.introduced === true || f.introduced === null),
+);
+if (args.profile !== 'observe' && blocking.length > 0) process.exit(1);
 process.exit(0);

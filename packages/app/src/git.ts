@@ -10,6 +10,12 @@ export async function isRepository(root: string): Promise<boolean> {
     .catch(() => false);
 }
 
+export async function repositoryRoot(root: string): Promise<string | null> {
+  return run('git', ['-C', root, 'rev-parse', '--show-toplevel'])
+    .then(({ stdout }) => stdout.trim() || null)
+    .catch(() => null);
+}
+
 export async function head(root: string): Promise<string | null> {
   return run('git', ['-C', root, 'rev-parse', 'HEAD'])
     .then(({ stdout }) => stdout.trim())
@@ -23,8 +29,12 @@ export async function filesAt(root: string, rev: string): Promise<string[]> {
   return stdout.split('\n').filter((f) => f !== '');
 }
 
+// ls-tree names files from the directory it runs in, but `show rev:path`
+// resolves from the repository root unless the path is explicitly relative.
+// Without the prefix every read from a nested directory returns nothing.
 export async function readAt(root: string, rev: string, file: string): Promise<string | null> {
-  return run('git', ['-C', root, 'show', `${rev}:${file}`], { maxBuffer: BUFFER })
+  const relative = file.startsWith('./') || file.startsWith('../') ? file : `./${file}`;
+  return run('git', ['-C', root, 'show', `${rev}:${relative}`], { maxBuffer: BUFFER })
     .then(({ stdout }) => stdout)
     .catch(() => null);
 }
