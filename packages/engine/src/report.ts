@@ -5,12 +5,24 @@ const MARK = { error: '✗', warn: '!', info: 'i' } as const;
 
 export function pretty(result: RunResult): string {
   const lines: string[] = [];
-  lines.push(`${result.pages} pages read` + (result.configFrom ? ` (${result.configFrom})` : ' (no config file)'));
-  for (const s of result.skipped) lines.push(`  skipped ${s}`);
+  const apps = result.apps.length === 0 ? 'no applications' : result.apps.join(', ');
+  lines.push(
+    `${result.pages} pages, checked against ${apps}` +
+      (result.configFrom ? ` (${result.configFrom})` : ' (no config file)'),
+  );
+  lines.push(`ran: ${result.ran.length === 0 ? 'nothing' : result.ran.join(', ')}`);
+  for (const s of result.skipped) lines.push(`NOT RUN  ${s}`);
   lines.push('');
 
   if (result.findings.length === 0) {
-    lines.push('Nothing has drifted.');
+    lines.push(
+      result.ran.length === 0
+        ? 'No check ran, so nothing was verified.'
+        : `No drift found by ${result.ran.join(', ')}.`,
+    );
+    if (result.skipped.length > 0) {
+      lines.push(`${result.skipped.length} check(s) did not run. This is not a clean bill of health.`);
+    }
     return lines.join('\n');
   }
 
@@ -31,11 +43,18 @@ export function pretty(result: RunResult): string {
       .map(([check, n]) => `${n} ${check}`)
       .join(', '),
   );
+  if (result.skipped.length > 0) {
+    lines.push(`${result.skipped.length} check(s) did not run, so this is not the whole picture.`);
+  }
   return lines.join('\n');
 }
 
 export function json(result: RunResult): string {
-  return JSON.stringify({ pages: result.pages, findings: result.findings }, null, 2);
+  return JSON.stringify(
+    { pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
+    null,
+    2,
+  );
 }
 
 export function worst(findings: Finding[]): 'error' | 'warn' | 'info' | null {

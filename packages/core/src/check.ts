@@ -38,6 +38,7 @@ export interface Finding {
   id: string;
   revision: string;
   check: string;
+  app?: string;
   severity: Severity;
   confidence: number;
   doc: SourceRef;

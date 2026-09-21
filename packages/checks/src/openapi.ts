@@ -47,6 +47,7 @@ export function citations(pages: DocPage[]): { method: string; path: string; pag
 export function checkCitations(
   cited: ReturnType<typeof citations>,
   ops: Operation[],
+  app: string,
 ): Finding[] {
   const known = new Set(ops.map((o) => `${o.method} ${o.path}`));
   const findings: Finding[] = [];
@@ -57,21 +58,27 @@ export function checkCitations(
     if (known.has(key) || seen.has(`${c.page}|${key}`)) continue;
     seen.add(`${c.page}|${key}`);
     findings.push({
-      id: findingId('openapi', c.page, key),
+      id: findingId('openapi', c.page, `${app}|${key}`),
       revision: findingRevision(key),
       check: 'openapi',
+      app,
       severity: 'error',
       confidence: 0.95,
       doc: { path: c.page, line: c.line },
-      title: `${key} is documented but not in the specification`,
-      detail: `This page describes ${key}. The specification has no such operation.`,
+      title: `${key} is documented but not in the ${app} specification`,
+      detail: `This page describes ${key}. The ${app} specification has no such operation.`,
       evidence: [{ kind: 'cited-in', detail: `${c.page}:${c.line}` }],
     });
   }
   return findings;
 }
 
-export function checkCoverage(pages: DocPage[], ops: Operation[], specFile: string): Finding[] {
+export function checkCoverage(
+  pages: DocPage[],
+  ops: Operation[],
+  specFile: string,
+  app: string,
+): Finding[] {
   const corpus = pages.map((p) => `${p.prose}\n${p.codeBlocks.map((b) => b.value).join('\n')}`).join('\n');
   const undocumented = ops.filter((o) => !corpus.includes(o.path));
   if (undocumented.length === 0) return [];
@@ -80,13 +87,14 @@ export function checkCoverage(pages: DocPage[], ops: Operation[], specFile: stri
   const more = undocumented.length - shown.length;
   return [
     {
-      id: findingId('openapi', specFile, 'coverage'),
+      id: findingId('openapi', specFile, `${app}|coverage`),
       revision: findingRevision(String(undocumented.length)),
       check: 'openapi',
+      app,
       severity: 'info',
       confidence: 1,
       doc: { path: specFile },
-      title: `${undocumented.length} of ${ops.length} API operations appear in no documentation page`,
+      title: `${undocumented.length} of ${ops.length} ${app} API operations appear in no documentation page`,
       detail:
         `No page mentions the path for these operations:\n` +
         shown.map((s) => `  ${s}`).join('\n') +

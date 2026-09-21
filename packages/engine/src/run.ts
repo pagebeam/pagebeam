@@ -8,13 +8,14 @@ import { loadConfig, loadIgnores } from './load.js';
 export interface RunResult {
   configFrom: string | null;
   pages: number;
+  apps: string[];
   findings: Finding[];
+  ran: string[];
   skipped: string[];
 }
 
-function appRootOf(cwd: string, config: PagebeamConfig): string | null {
-  if (!config.app?.path) return null;
-  return path.resolve(cwd, config.app.path);
+function rootOf(cwd: string, app: { path?: string | undefined }): string | null {
+  return app.path ? path.resolve(cwd, app.path) : null;
 }
 
 async function runConfigKeys(
@@ -24,14 +25,21 @@ async function runConfigKeys(
   skipped: string[],
 ): Promise<Finding[]> {
   if (config.checks.configKeys === false) return [];
-  const appRoot = appRootOf(cwd, config);
-  if (appRoot === null) {
-    skipped.push('config-keys: no app.path configured');
+  const usable = config.apps.filter((a) => a.path !== undefined);
+  if (usable.length === 0) {
+    skipped.push('config-keys: no application declares a local path');
     return [];
   }
-  const documented = configKeys.documentedKeys(pages);
-  const defined = await configKeys.definedKeys(appRoot, config.app?.envFiles ?? []);
-  return configKeys.compare(documented, defined);
+
+  const defined = new Set<string>();
+  const searched: string[] = [];
+  for (const app of usable) {
+    const root = rootOf(cwd, app);
+    if (root === null) continue;
+    for (const key of await configKeys.definedKeys(root, app.envFiles)) defined.add(key);
+    searched.push(app.name);
+  }
+  return configKeys.compare(configKeys.documentedKeys(pages), defined, searched);
 }
 
 async function exists(dir: string): Promise<boolean> {
@@ -74,18 +82,25 @@ async function runOpenapi(
   skipped: string[],
 ): Promise<Finding[]> {
   if (config.checks.openapi === false) return [];
-  const spec = config.app?.openapi?.spec;
-  if (spec === undefined) {
-    skipped.push('openapi: no app.openapi.spec configured');
+  const withSpec = config.apps.filter((a) => a.openapi?.spec !== undefined);
+  if (withSpec.length === 0) {
+    skipped.push('openapi: no application declares a specification');
     return [];
   }
-  const file = path.resolve(cwd, spec);
-  const ops = await openapi.readSpec(file);
-  const shown = path.isAbsolute(spec) ? path.basename(spec) : spec;
-  return [
-    ...openapi.checkCitations(openapi.citations(pages), ops),
-    ...openapi.checkCoverage(pages, ops, shown),
-  ];
+
+  const cited = openapi.citations(pages);
+  const findings: Finding[] = [];
+  for (const app of withSpec) {
+    const spec = app.openapi!.spec;
+    const file = path.resolve(cwd, spec);
+    const ops = await openapi.readSpec(file);
+    const shown = path.isAbsolute(spec) ? path.basename(spec) : spec;
+    findings.push(
+      ...openapi.checkCitations(cited, ops, app.name),
+      ...openapi.checkCoverage(pages, ops, shown, app.name),
+    );
+  }
+  return findings;
 }
 
 export async function run(cwd: string): Promise<RunResult> {
@@ -95,6 +110,10 @@ export async function run(cwd: string): Promise<RunResult> {
   const files = await discover(docsRoot, config.docs.include, config.docs.exclude);
   const pages = await parseAll(docsRoot, files);
   const skipped: string[] = [];
+  const ran: string[] = [];
+  if (config.checks.links !== false) ran.push('links');
+  if (config.checks.configKeys !== false) ran.push('config-keys');
+  if (config.checks.openapi !== false) ran.push('openapi');
 
   const findings = (
     await Promise.all([
@@ -113,5 +132,13 @@ export async function run(cwd: string): Promise<RunResult> {
   const order = { error: 0, warn: 1, info: 2 } as const;
   deduped.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));
 
-  return { configFrom: from, pages: pages.length, findings: deduped, skipped };
+  const skippedNames = new Set(skipped.map((s) => s.split(':')[0]));
+  return {
+    configFrom: from,
+    pages: pages.length,
+    apps: config.apps.map((a) => a.name),
+    findings: deduped,
+    ran: ran.filter((r) => !skippedNames.has(r)),
+    skipped,
+  };
 }

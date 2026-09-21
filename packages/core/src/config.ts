@@ -13,9 +13,11 @@ const docsSchema = z.object({
 });
 
 const appSchema = z.object({
+  name: z.string(),
   path: z.string().optional(),
   repo: z.string().regex(/^[^/]+\/[^/]+$/).optional(),
   ref: z.string().optional(),
+  url: z.string().url().optional(),
   include: z.array(z.string()).default(['**/*.{ts,tsx,js,jsx,vue,svelte}']),
   exclude: z
     .array(z.string())
@@ -24,6 +26,8 @@ const appSchema = z.object({
   openapi: z.object({ spec: z.string() }).optional(),
   i18n: z.object({ catalogs: z.array(z.string()) }).optional(),
 });
+
+export type AppSource = z.infer<typeof appSchema>;
 
 const checksSchema = z.object({
   links: z
@@ -73,7 +77,7 @@ const prSchema = z.object({
 
 export const configSchema = z.object({
   docs: docsSchema,
-  app: appSchema.optional(),
+  apps: z.array(appSchema).default([]),
   checks: checksSchema.default({}),
   pr: prSchema.default({}),
   model: z

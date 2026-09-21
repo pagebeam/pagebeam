@@ -5,7 +5,7 @@ import { findingId, findingRevision, type Finding } from '@pagebeam/core';
 import type { DocPage } from '@pagebeam/docs';
 
 const ENV_LANGS = new Set(['ini', 'env', 'dotenv', 'sh', 'bash', 'shell', 'properties', '']);
-const ASSIGNMENT = /^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=/gm;
+const ASSIGNMENT = /(?:^|\s)(?:-e\s+|--env\s+|export\s+|ENV\s+)?([A-Z][A-Z0-9_]{2,})\s*=/gm;
 
 export interface DocumentedKey {
   key: string;
@@ -20,9 +20,10 @@ export function documentedKeys(pages: DocPage[]): DocumentedKey[] {
       if (!ENV_LANGS.has(block.lang ?? '')) continue;
       ASSIGNMENT.lastIndex = 0;
       for (const m of block.value.matchAll(ASSIGNMENT)) {
-        const before = block.value.slice(0, m.index ?? 0);
-        const line = block.line + before.split('\n').length;
-        found.push({ key: m[1] as string, page: page.path, line });
+        const key = m[1] as string;
+        const at = (m.index ?? 0) + m[0].indexOf(key);
+        const newlines = block.value.slice(0, at).split('\n').length - 1;
+        found.push({ key, page: page.path, line: block.line + 1 + newlines });
       }
     }
   }
@@ -40,7 +41,11 @@ export async function definedKeys(appRoot: string, patterns: string[]): Promise<
   return keys;
 }
 
-export function compare(documented: DocumentedKey[], defined: Set<string>): Finding[] {
+export function compare(
+  documented: DocumentedKey[],
+  defined: Set<string>,
+  searched: string[],
+): Finding[] {
   const seen = new Map<string, DocumentedKey>();
   for (const d of documented) if (!seen.has(d.key)) seen.set(d.key, d);
 
@@ -57,11 +62,11 @@ export function compare(documented: DocumentedKey[], defined: Set<string>): Find
       title: `${key} is documented but defined nowhere in the app`,
       detail:
         `The docs describe ${key} as a configuration key. ` +
-        `It does not appear in any of the app's example environment files. ` +
+        `It appears in no example environment file in ${searched.length === 1 ? searched[0] : `any of ${searched.length} applications`}. ` +
         `Either it was renamed or removed, or the example files are missing it.`,
       evidence: [
         { kind: 'documented-at', detail: `${where.page}:${where.line}` },
-        { kind: 'searched', detail: 'example environment files in the app' },
+        { kind: 'searched', detail: searched.join(', ') },
       ],
     });
   }
