@@ -23,12 +23,17 @@ export function stripTemplating(source: string): string {
   return out;
 }
 
+function textOf(node: any): string {
+  if (node.nodeName === '#text' && typeof node.value === 'string') return node.value;
+  return (node.childNodes ?? []).map(textOf).join('');
+}
+
 function walk(node: any, file: string, out: Label[], within: string | null): void {
   const tag = typeof node.nodeName === 'string' ? node.nodeName.toLowerCase() : null;
 
-  if (node.nodeName === '#text' && typeof node.value === 'string' && within !== null) {
-    const text = node.value.replace(/\s+/g, ' ').trim();
-    if (usable(text)) out.push({ text, kind: within, file, line: node.sourceCodeLocation?.startLine });
+  if (tag !== null && CONTROL.has(tag)) {
+    const text = textOf(node).replace(/\s+/g, ' ').trim();
+    if (usable(text)) out.push({ text, kind: tag, file, line: node.sourceCodeLocation?.startLine });
   }
 
   for (const attr of node.attrs ?? []) {
@@ -44,8 +49,7 @@ function walk(node: any, file: string, out: Label[], within: string | null): voi
     }
   }
 
-  const inside = tag !== null && CONTROL.has(tag) ? tag : within;
-  for (const child of node.childNodes ?? []) walk(child, file, out, inside);
+  for (const child of node.childNodes ?? []) walk(child, file, out, within);
 }
 
 export const html: Extractor = {

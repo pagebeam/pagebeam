@@ -4,6 +4,7 @@ import { Ignores, type Finding, type PagebeamConfig } from '@pagebeam/core';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, openapi, strings } from '@pagebeam/checks';
 import { loadConfig, loadIgnores } from './load.js';
+import { reacher } from './reach.js';
 
 export interface RunResult {
   problem: string | null;
@@ -66,7 +67,9 @@ async function routeSet(
       return { routes, source: 'build', docsRoot, ...(publicDir ? { publicDir } : {}) };
     }
   }
-  return { routes: links.routesOf(pages), source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
+  const base = links.baseFromPatterns(config.docs.include);
+  const prefix = config.docs.routeBase.replace(/\/+$/, '');
+  return { routes: links.routesOf(pages, base, prefix), source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
 }
 
 async function runLinks(
@@ -76,8 +79,16 @@ async function runLinks(
   docsRoot: string,
 ): Promise<Finding[]> {
   if (config.checks.links === false) return [];
+  const options = config.checks.links;
   const set = await routeSet(pages, cwd, config, docsRoot);
-  return links.checkLinks(pages, set, { external: config.checks.links.external });
+  if (options.external) {
+    set.reach = reacher({
+      timeoutMs: options.timeoutMs,
+      concurrency: options.concurrency,
+      allowlist: options.allowlist,
+    });
+  }
+  return links.checkLinks(pages, set, { external: options.external });
 }
 
 async function runStrings(

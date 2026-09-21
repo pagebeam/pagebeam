@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const docsSchema = z.object({
+const docsSchema = z.strictObject({
   root: z.string(),
   include: z.array(z.string()).default(['**/*.{md,mdx,markdown}']),
   exclude: z.array(z.string()).default(['**/node_modules/**', '**/dist/**']),
@@ -8,10 +8,11 @@ const docsSchema = z.object({
     .enum(['auto', 'docusaurus', 'starlight', 'astro', 'nextra', 'mkdocs', 'markdown'])
     .default('auto'),
   buildDir: z.string().optional(),
+  routeBase: z.string().default(''),
   publicDir: z.string().optional(),
 });
 
-const appSchema = z.object({
+const appSchema = z.strictObject({
   name: z.string(),
   path: z.string().optional(),
   url: z.string().url().optional(),
@@ -20,34 +21,39 @@ const appSchema = z.object({
     .array(z.string())
     .default(['**/node_modules/**', '**/*.test.*', '**/*.spec.*', '**/*.stories.*', '**/dist/**']),
   envFiles: z.array(z.string()).default(['**/.env.example']),
-  openapi: z.object({ spec: z.string() }).optional(),
+  openapi: z.strictObject({ spec: z.string() }).optional(),
 });
 
 export type AppSource = z.infer<typeof appSchema>;
 
-const checksSchema = z.object({
+const checksSchema = z.strictObject({
   links: z
     .union([
       z.literal(false),
-      z.object({ external: z.boolean().default(false) }),
+      z.strictObject({
+        external: z.boolean().default(false),
+        timeoutMs: z.number().int().positive().default(10_000),
+        concurrency: z.number().int().positive().default(8),
+        allowlist: z.array(z.string()).default([]),
+      }),
     ])
     .default({}),
   configKeys: z
     .union([
       z.literal(false),
-      z.object({}),
+      z.strictObject({}),
     ])
     .default({}),
-  openapi: z.union([z.literal(false), z.object({})]).default({}),
+  openapi: z.union([z.literal(false), z.strictObject({})]).default({}),
   strings: z
     .union([
       z.literal(false),
-      z.object({ minConfidence: z.number().min(0).max(1).default(0.5) }),
+      z.strictObject({ minConfidence: z.number().min(0).max(1).default(0.5) }),
     ])
     .default(false),
 });
 
-export const configSchema = z.object({
+export const configSchema = z.strictObject({
   docs: docsSchema,
   apps: z.array(appSchema).default([]),
   checks: checksSchema.default({}),

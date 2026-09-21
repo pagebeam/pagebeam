@@ -38,29 +38,31 @@ function normalise(route: string): string {
   return trimmed === '' ? '/' : trimmed;
 }
 
-// Every page sitting under src/pages means src/pages is the site root, not a
-// path segment. Without this a nested docs root makes every link look broken.
-export function sharedPrefix(paths: string[]): string {
-  if (paths.length === 0) return '';
-  const split = paths.map((p) => p.split('/').slice(0, -1));
-  const first = split[0] ?? [];
-  let shared = first.length;
-  for (const parts of split) {
-    let i = 0;
-    while (i < shared && i < parts.length && parts[i] === first[i]) i++;
-    shared = i;
-  }
-  return first.slice(0, shared).join('/');
+// The literal directory a glob starts with is scaffolding, not a URL segment:
+// 'src/pages/**/*.md' publishes src/pages/guide.md at /guide. Anything the
+// pattern does not name stays in the route, because it is part of the address.
+export function baseFromPatterns(patterns: string[]): string {
+  const literal = (pattern: string): string => {
+    const parts: string[] = [];
+    for (const part of pattern.split('/')) {
+      if (/[*?[\]{}]/.test(part)) break;
+      parts.push(part);
+    }
+    return parts.join('/');
+  };
+  const bases = patterns.map(literal);
+  const first = bases[0] ?? '';
+  return bases.every((b) => b === first) ? first : '';
 }
 
-export function routesOf(pages: DocPage[], base = ''): Set<string> {
-  const prefix = sharedPrefix(pages.map((p) => p.path));
+export function routesOf(pages: DocPage[], base = '', prefix = ''): Set<string> {
   const routes = new Set<string>();
   for (const page of pages) {
-    const relative = prefix === '' ? page.path : page.path.slice(prefix.length + 1);
+    const relative =
+      base !== '' && page.path.startsWith(`${base}/`) ? page.path.slice(base.length + 1) : page.path;
     const withoutExt = relative.replace(/\.(md|mdx|markdown|astro)$/i, '');
     const withoutIndex = withoutExt.replace(/(^|\/)index$/i, '');
-    routes.add(normalise(`${base}/${withoutIndex}`));
+    routes.add(normalise(`${prefix}/${withoutIndex}`));
   }
   return routes;
 }
@@ -118,7 +120,7 @@ export async function checkLinks(
           target,
           set.source === 'build'
             ? `This page links to ${target}. No built page and no public asset answers to it.`
-            : `This page links to ${target}. No source page answers to it. Routes were read from source files, which cannot see pages a framework plugin generates, so build the site and run again to be certain.`,
+            : `This page links to ${target}. No source page answers to it. Routes were read from source files, so pages a framework generates are invisible; build the site, or set docs.routeBase if the site serves these pages under a prefix.`,
           set,
           'internal',
         ),

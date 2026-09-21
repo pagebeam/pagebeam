@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { glob } from 'tinyglobby';
+import picomatch from 'picomatch';
 import { bestSource, type Label, type Snapshot, type Source } from '@pagebeam/core';
 import { Extractors } from './extractor.js';
 import { filesAt, readAt } from './git.js';
@@ -15,20 +16,7 @@ export function defaultExtractors(): Extractors {
 }
 
 function matches(file: string, include: string[], exclude: string[]): boolean {
-  const hit = (pattern: string) => {
-    const re = new RegExp(
-      '^' +
-        pattern
-          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .replace(/\*\*\//g, '(?:.*/)?')
-          .replace(/\*\*/g, '.*')
-          .replace(/\*/g, '[^/]*')
-          .replace(/\{([^}]*)\}/g, (_, g: string) => `(?:${g.split(',').join('|')})`) +
-        '$',
-    );
-    return re.test(file);
-  };
-  return include.some(hit) && !exclude.some(hit);
+  return picomatch.isMatch(file, include, { dot: false, ignore: exclude });
 }
 
 export interface SnapshotRequest {

@@ -4,15 +4,20 @@ import type { Extractor } from './extractor.js';
 
 import { CONTROL, LABEL_ATTRS, usable } from './rules.js';
 
+function textOf(node: any): string {
+  if (node === null || node === undefined) return '';
+  if (node.type === 2 && typeof node.content === 'string') return node.content;
+  if (node.type === 5) return ' ';
+  return (node.children ?? []).map(textOf).join('');
+}
+
 function walk(node: any, file: string, out: Label[], within: string | null): void {
   if (node === null || node === undefined) return;
   const tag = typeof node.tag === 'string' ? node.tag.toLowerCase() : null;
 
-  if (node.type === 2 && typeof node.content === 'string' && within !== null) {
-    const text = node.content.replace(/\s+/g, ' ').trim();
-    if (usable(text)) {
-      out.push({ text, kind: within, file, line: node.loc?.start?.line });
-    }
+  if (tag !== null && CONTROL.has(tag)) {
+    const text = textOf(node).replace(/\s+/g, ' ').trim();
+    if (usable(text)) out.push({ text, kind: tag, file, line: node.loc?.start?.line });
   }
 
   for (const prop of node.props ?? []) {
@@ -29,8 +34,7 @@ function walk(node: any, file: string, out: Label[], within: string | null): voi
     }
   }
 
-  const inside = tag !== null && CONTROL.has(tag) ? tag : within;
-  for (const child of node.children ?? []) walk(child, file, out, inside);
+  for (const child of node.children ?? []) walk(child, file, out, within);
 }
 
 export const vue: Extractor = {
