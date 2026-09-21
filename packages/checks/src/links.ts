@@ -61,10 +61,12 @@ export function baseFromPatterns(patterns: string[]): string {
 export function routesOf(pages: DocPage[], base = '', prefix = ''): Set<string> {
   const routes = new Set<string>();
   for (const page of pages) {
-    // A page that declares its own address is published there, whatever its
-    // path says. Docusaurus and Starlight both allow this.
+    // A page may name its own address instead of taking it from its path.
+    // The address is still inside the section the site publishes it under:
+    // Docusaurus appends a doc's slug to the plugin's route base, so a leading
+    // slash makes it relative to that base, not to the site root.
     if (typeof page.slug === 'string' && page.slug.trim() !== '') {
-      routes.add(normalise(page.slug.startsWith('/') ? page.slug : `${prefix}/${page.slug}`));
+      routes.add(normalise(`${prefix}/${page.slug.trim().replace(/^\/+/, '')}`));
       continue;
     }
     const relative =
@@ -82,11 +84,16 @@ async function isFile(candidate: string): Promise<boolean> {
     .catch(() => false);
 }
 
+export interface LinkOutcome {
+  findings: Finding[];
+  external: { alive: number; dead: number; unknown: number };
+}
+
 export async function checkLinks(
   pages: DocPage[],
   set: RouteSet,
   options: { external: boolean },
-): Promise<Finding[]> {
+): Promise<LinkOutcome> {
   const findings: Finding[] = [];
   const external: { page: DocPage; link: DocLink; href: string }[] = [];
 
@@ -133,11 +140,13 @@ export async function checkLinks(
     }
   }
 
+  const counted = { alive: 0, dead: 0, unknown: 0 };
   if (external.length > 0 && set.reach !== undefined) {
     const unique = [...new Set(external.map((e) => e.href))];
     const verdicts = new Map(
       await Promise.all(unique.map(async (href) => [href, await set.reach!(href)] as const)),
     );
+    for (const verdict of verdicts.values()) counted[verdict] += 1;
     for (const { page, link, href } of external) {
       if (verdicts.get(href) !== 'dead') continue;
       findings.push(
@@ -145,7 +154,7 @@ export async function checkLinks(
       );
     }
   }
-  return findings;
+  return { findings, external: counted };
 }
 
 export async function routesFromBuild(buildDir: string): Promise<Set<string>> {

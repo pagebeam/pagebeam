@@ -1,4 +1,5 @@
 import {
+  bestSource,
   caveatOf,
   confidenceOf,
   findingId,
@@ -8,6 +9,7 @@ import {
   type Finding,
   type Grade,
   type Snapshot,
+  type Source,
 } from '@pagebeam/core';
 import type { DocPage } from '@pagebeam/docs';
 
@@ -97,6 +99,7 @@ export interface Dictionary {
   labels: Map<string, string>;
   text: string[];
   parsed: boolean;
+  source: Source;
 }
 
 export function dictionaryOf(snapshot: Snapshot): Dictionary {
@@ -110,6 +113,7 @@ export function dictionaryOf(snapshot: Snapshot): Dictionary {
     labels,
     text: snapshot.files.map((f) => normalise(f.text)),
     parsed: snapshot.labels.length > 0,
+    source: snapshot.source,
   };
 }
 
@@ -140,30 +144,39 @@ function assembled(normalised: string, dictionaries: Dictionary[]): boolean {
 export function locate(
   normalised: string,
   dictionaries: Dictionary[],
-): { app: string; kind: string } | null {
+): { app: string; kind: string; source: Source } | null {
   const parts = normalised.split(PATH_SEPARATOR).map((s) => s.trim()).filter((s) => s.length >= 3);
   const each = parts.length > 1 ? parts : forms(normalised);
 
   for (const dictionary of dictionaries) {
     for (const form of each) {
       const kind = dictionary.labels.get(form);
-      if (kind !== undefined) return { app: dictionary.app, kind };
+      if (kind !== undefined) return { app: dictionary.app, kind, source: dictionary.source };
     }
   }
   if (parts.length > 1) {
     const found = parts.every((part) => dictionaries.some((d) => d.labels.has(part)));
-    if (found) return { app: dictionaries[0]?.app ?? '', kind: 'path' };
+    if (found) {
+      return {
+        app: dictionaries[0]?.app ?? '',
+        kind: 'path',
+        source: dictionaries[0]?.source ?? 'raw',
+      };
+    }
   }
   for (const dictionary of dictionaries) {
     if (dictionary.parsed) continue;
     for (const form of each) {
-      if (dictionary.text.some((h) => h.includes(form))) return { app: dictionary.app, kind: 'text' };
+      if (dictionary.text.some((h) => h.includes(form))) {
+        return { app: dictionary.app, kind: 'text', source: dictionary.source };
+      }
     }
   }
   // Only a label with a placeholder can be scattered across an expression.
   // Applying this to a plain phrase matches any label sharing its words.
   if (!normalised.includes(VAR)) return null;
-  return assembled(normalised, dictionaries) ? { app: '', kind: 'assembled' } : null;
+  if (!assembled(normalised, dictionaries)) return null;
+  return { app: '', kind: 'assembled', source: bestSource(dictionaries.map((d) => d.source)) };
 }
 
 export function compare(
@@ -173,29 +186,31 @@ export function compare(
   grade: Grade,
 ): Finding[] {
   const searched = now.map((d) => d.app).join(', ');
-  const caveat = caveatOf(grade);
+  const runCaveat = caveatOf(grade);
   const findings: Finding[] = [];
 
   for (const candidate of found_) {
     if (locate(candidate.normalised, now) !== null) continue;
 
     // With history, a control has to have existed to count as removed.
-    let was: { app: string; kind: string } | null = null;
+    let was: { app: string; kind: string; source: Source } | null = null;
     if (before !== null) {
       was = locate(candidate.normalised, before);
       if (was === null) continue;
     }
 
+    // A claim about one application cannot borrow another's parser.
+    const mine: Grade = { source: was?.source ?? grade.source, depth: grade.depth };
     const words = candidate.literal.split(/\s+/).length;
-    const confidence = confidenceOf(grade, words >= 2 ? 0.9 : 0.6);
+    const confidence = confidenceOf(mine, words >= 2 ? 0.9 : 0.6);
 
     findings.push({
       id: findingId('strings', candidate.page, candidate.normalised),
       revision: findingRevision(candidate.normalised),
       check: 'strings',
-      standing: was === null ? 'review' : standingOf(grade),
+      standing: was === null ? 'review' : standingOf(mine),
       ...(was?.app ? { app: was.app } : {}),
-      severity: severityOf(grade),
+      severity: severityOf(mine),
       confidence,
       doc: { path: candidate.page, line: candidate.line },
       title:
@@ -206,7 +221,10 @@ export function compare(
         (was === null
           ? `This page tells the reader to look for "${candidate.literal}". Nothing in ${searched} has it.`
           : `This page tells the reader to look for "${candidate.literal}". It was a ${was.kind} in ${was.app} and is gone.`) +
-        (caveat === null ? '' : ` ${caveat}`),
+        (() => {
+          const caveat = caveatOf(mine) ?? runCaveat;
+          return caveat === null ? '' : ` ${caveat}`;
+        })(),
       evidence: [
         { kind: 'documented-at', detail: `${candidate.page}:${candidate.line}` },
         { kind: 'searched', detail: searched },

@@ -11,8 +11,20 @@ const CONFIG_NAMES = [
   '.pagebeam/config.yml',
 ];
 
+export class Unreadable extends Error {
+  constructor(readonly file: string, readonly reason: string) {
+    super(`${file} could not be read: ${reason}`);
+  }
+}
+
 async function readIfPresent(file: string): Promise<string | null> {
-  return readFile(file, 'utf8').catch(() => null);
+  try {
+    return await readFile(file, 'utf8');
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw new Unreadable(file, code ?? (error as Error).message);
+  }
 }
 
 export async function loadConfig(

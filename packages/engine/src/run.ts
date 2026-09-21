@@ -37,6 +37,7 @@ async function runConfigKeys(
   cwd: string,
   config: PagebeamConfig,
   skipped: string[],
+  known: Snapshot[] | null,
 ): Promise<Finding[]> {
   if (config.checks.configKeys === false) return [];
   const usable = config.apps.filter((a) => a.path !== undefined);
@@ -47,6 +48,17 @@ async function runConfigKeys(
 
   const defined = new Set<string>();
   const searched: string[] = [];
+
+  // A snapshot already holds the settings each application declared at the
+  // revision it was read from, so the earlier pass never reads today's files.
+  if (known !== null) {
+    for (const snapshot of known) {
+      for (const key of snapshot.envKeys) defined.add(key);
+      searched.push(snapshot.app);
+    }
+    return configKeys.compare(configKeys.documentedKeys(pages), defined, searched);
+  }
+
   for (const app of usable) {
     const root = rootOf(cwd, app);
     if (root === null) continue;
@@ -67,12 +79,15 @@ async function routeSet(
   cwd: string,
   config: PagebeamConfig,
   docsRoot: string,
+  earlier: boolean,
 ): Promise<links.RouteSet> {
   const publicDir = config.docs.publicDir ? path.resolve(cwd, config.docs.publicDir) : undefined;
   const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
   const candidates = declared ? [declared] : [path.join(cwd, 'dist'), path.join(cwd, 'build')];
 
-  for (const dir of candidates) {
+  // The build on disk is today's. Comparing yesterday's pages against it would
+  // let a route deleted today make an old link look like it was always broken.
+  for (const dir of earlier ? [] : candidates) {
     if (!(await exists(dir))) continue;
     const routes = await links.routesFromBuild(dir);
     if (routes.size > 0) {
@@ -89,18 +104,26 @@ async function runLinks(
   cwd: string,
   config: PagebeamConfig,
   docsRoot: string,
+  skipped: string[],
+  earlier: boolean,
 ): Promise<Finding[]> {
   if (config.checks.links === false) return [];
   const options = config.checks.links;
-  const set = await routeSet(pages, cwd, config, docsRoot);
-  if (options.external) {
+  const set = await routeSet(pages, cwd, config, docsRoot, earlier);
+  if (options.external && !earlier) {
     set.reach = reacher({
       timeoutMs: options.timeoutMs,
       concurrency: options.concurrency,
       allowlist: options.allowlist,
     });
   }
-  return links.checkLinks(pages, set, { external: options.external });
+  const outcome = await links.checkLinks(pages, set, { external: options.external });
+  if (outcome.external.unknown > 0) {
+    skipped.push(
+      `links: ${outcome.external.unknown} external address(es) could not be reached either way, so they are unchecked rather than sound`,
+    );
+  }
+  return outcome.findings;
 }
 
 export interface Evidence {
@@ -244,6 +267,7 @@ async function checkAll(
   docsRoot: string,
   evidence: Evidence | null,
   untouched: ((page: string) => boolean) | null = null,
+  earlier = false,
 ): Promise<Pass> {
   const skipped: string[] = [];
   const ran: string[] = [];
@@ -255,8 +279,8 @@ async function checkAll(
 
   const findings = (
     await Promise.all([
-      runLinks(pages, cwd, config, docsRoot),
-      runConfigKeys(pages, cwd, config, skipped),
+      runLinks(pages, cwd, config, docsRoot, skipped, earlier),
+      runConfigKeys(pages, cwd, config, skipped, earlier ? (evidence?.now ?? []) : null),
       runOpenapi(pages, cwd, config, skipped),
       runStrings(pages, config, evidence, skipped),
       runMoved(pages, config, evidence, untouched, skipped),
@@ -293,6 +317,27 @@ async function docsAsThen(
 }
 
 export async function run(cwd: string): Promise<RunResult> {
+  try {
+    return await attempt(cwd);
+  } catch (error) {
+    // Something on disk refused to be read. Reporting nothing found would be a
+    // lie about a file nobody looked at.
+    return {
+      problem: (error as Error).message,
+      degraded: [],
+      comparedWith: null,
+      grade: null,
+      configFrom: null,
+      pages: 0,
+      apps: [],
+      findings: [],
+      ran: [],
+      skipped: [],
+    };
+  }
+}
+
+async function attempt(cwd: string): Promise<RunResult> {
   const { config, from, asked } = await loadConfig(cwd);
   const ignores = new Ignores(await loadIgnores(cwd));
   const docsRoot = path.resolve(cwd, config.docs.root);
@@ -326,6 +371,15 @@ export async function run(cwd: string): Promise<RunResult> {
   const pass = await checkAll(pages, cwd, config, docsRoot, evidence, untouched);
   const { ran, skipped } = pass;
 
+  // Only the label and movement checks are fed a genuine earlier state. The
+  // others would be comparing yesterday's documentation with today's build,
+  // specification and example files, so their age is not known and is not
+  // guessed at.
+  // A check may only be told apart by age when its earlier pass was fed
+  // genuinely earlier inputs. Documentation alone is enough for links; the
+  // others also need every application to have a past.
+  const NEEDS_DOCS = new Set(['links']);
+  const NEEDS_APPS = new Set(['strings', 'moved', 'config-keys']);
   const known = new Set<string>();
   if (then !== null) {
     const asThen: Evidence | null =
@@ -338,12 +392,19 @@ export async function run(cwd: string): Promise<RunResult> {
             movement: [],
             grade: { source: evidence.grade.source, depth: 'single' },
           };
-    const earlier = await checkAll(then.pages, cwd, config, docsRoot, asThen);
+    const earlier = await checkAll(then.pages, cwd, config, docsRoot, asThen, null, true);
     for (const f of earlier.findings) known.add(f.id);
   }
 
+  const appsHaveAPast = evidence !== null && evidence.before !== null && evidence.complete;
+  const comparable = (check: string): boolean => {
+    if (then === null) return false;
+    if (NEEDS_DOCS.has(check)) return true;
+    return NEEDS_APPS.has(check) && appsHaveAPast;
+  };
+
   const findings = pass.findings
-    .map((f) => ({ ...f, introduced: then === null ? null : !known.has(f.id) }))
+    .map((f) => ({ ...f, introduced: comparable(f.check) ? !known.has(f.id) : null }))
     .filter((f) => !ignores.silences(f));
 
   const unique = new Map<string, Finding>();

@@ -19,6 +19,22 @@ function matches(file: string, include: string[], exclude: string[]): boolean {
   return picomatch.isMatch(file, include, { dot: false, ignore: exclude });
 }
 
+export class Unreadable extends Error {
+  constructor(readonly file: string, readonly reason: string) {
+    super(`${file} could not be read: ${reason}`);
+  }
+}
+
+async function readOrThrow(file: string): Promise<string | null> {
+  try {
+    return await readFile(file, 'utf8');
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw new Unreadable(file, code ?? (error as Error).message);
+  }
+}
+
 export interface SnapshotRequest {
   app: string;
   root: string;
@@ -66,7 +82,7 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
   for (const file of envPaths) {
     const source =
       rev === undefined
-        ? await readFile(path.join(request.root, file), 'utf8').catch(() => null)
+        ? await readOrThrow(path.join(request.root, file))
         : await readAt(request.root, rev, file);
     if (source === null) continue;
     ENV_ASSIGNMENT.lastIndex = 0;

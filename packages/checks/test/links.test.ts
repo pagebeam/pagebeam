@@ -36,9 +36,11 @@ test('a page publishing itself at a declared address is found there', () => {
   assert.ok(!routes.has('/deep/nested/file'));
 });
 
-test('a declared address starting at the root ignores the prefix', () => {
-  const declared: DocPage = { ...page('a.md'), slug: '/top' };
-  assert.ok(routesOf([declared], '', '/docs').has('/top'));
+test('a declared address is relative to the section it is published under', () => {
+  const declared: DocPage = { ...page('a.md'), slug: '/bonjour' };
+  const routes = routesOf([declared], '', '/docs');
+  assert.ok(routes.has('/docs/bonjour'), 'a slug is appended to the route base');
+  assert.ok(!routes.has('/bonjour'), 'a leading slash does not escape to the site root');
 });
 
 test('a page with no declared address still follows its path', () => {
