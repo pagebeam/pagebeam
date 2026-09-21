@@ -12,6 +12,14 @@ export interface DocCodeSpan {
   line: number;
 }
 
+export interface DocEmphasis {
+  value: string;
+  line: number;
+  marker: 'strong' | 'emphasis' | 'code';
+  before: string;
+  after: string;
+}
+
 export interface DocCodeBlock {
   value: string;
   lang: string | null;
@@ -32,5 +40,6 @@ export interface DocPage {
   links: DocLink[];
   codeSpans: DocCodeSpan[];
   codeBlocks: DocCodeBlock[];
+  emphasised: DocEmphasis[];
   directives: InlineDirective[];
 }

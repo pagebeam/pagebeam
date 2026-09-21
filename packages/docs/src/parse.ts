@@ -5,7 +5,14 @@ import { frontmatterFromMarkdown } from 'mdast-util-frontmatter';
 import { frontmatter } from 'micromark-extension-frontmatter';
 import { visit } from 'unist-util-visit';
 import { parseDirectives } from './directives.js';
-import type { DocCodeBlock, DocCodeSpan, DocFormat, DocLink, DocPage } from './model.js';
+import type {
+  DocCodeBlock,
+  DocCodeSpan,
+  DocEmphasis,
+  DocFormat,
+  DocLink,
+  DocPage,
+} from './model.js';
 
 const HTML_HREF = /\b(?:href|src)\s*=\s*"([^"{}]+)"/g;
 const ASTRO_FENCE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
@@ -15,6 +22,21 @@ export function formatOf(file: string): DocFormat {
   if (ext === '.mdx') return 'mdx';
   if (ext === '.astro') return 'astro';
   return 'markdown';
+}
+
+const CONTEXT = 90;
+
+function around(
+  source: string,
+  start: number,
+  end: number,
+  stripTags = false,
+): { before: string; after: string } {
+  const clean = (s: string) => (stripTags ? s.replace(/<[^>]+>/g, ' ') : s).replace(/\s+/g, ' ');
+  return {
+    before: clean(source.slice(Math.max(0, start - CONTEXT), start)),
+    after: clean(source.slice(end, end + CONTEXT)),
+  };
 }
 
 function lineAt(raw: string, index: number): number {
@@ -37,7 +59,7 @@ function htmlLinks(raw: string, from = 0): DocLink[] {
   return out;
 }
 
-function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks'> {
+function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
   const tree = fromMarkdown(raw, {
     extensions: [frontmatter(['yaml', 'toml'])],
     mdastExtensions: [frontmatterFromMarkdown(['yaml', 'toml'])],
@@ -45,6 +67,7 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
   const links: DocLink[] = [];
   const codeSpans: DocCodeSpan[] = [];
   const codeBlocks: DocCodeBlock[] = [];
+  const emphasised: DocEmphasis[] = [];
   const prose: string[] = [];
 
   visit(tree, (node: any) => {
@@ -58,6 +81,25 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
       });
     } else if (node.type === 'inlineCode' && typeof node.value === 'string') {
       codeSpans.push({ value: node.value, line: start?.line ?? 1 });
+      emphasised.push({
+        value: node.value,
+        line: start?.line ?? 1,
+        marker: 'code',
+        ...around(raw, node.position?.start?.offset ?? 0, node.position?.end?.offset ?? 0),
+      });
+    } else if (node.type === 'strong' || node.type === 'emphasis') {
+      const text = (node.children ?? [])
+        .filter((c: any) => c.type === 'text')
+        .map((c: any) => c.value)
+        .join('');
+      if (text !== '') {
+        emphasised.push({
+          value: text,
+          line: start?.line ?? 1,
+          marker: node.type === 'strong' ? 'strong' : 'emphasis',
+          ...around(raw, node.position?.start?.offset ?? 0, node.position?.end?.offset ?? 0),
+        });
+      }
     } else if (node.type === 'text' && typeof node.value === 'string') {
       prose.push(node.value);
     } else if (node.type === 'html' && typeof node.value === 'string') {
@@ -68,10 +110,10 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
   });
 
   void format;
-  return { prose: prose.join('\n'), links, codeSpans, codeBlocks };
+  return { prose: prose.join('\n'), links, codeSpans, codeBlocks, emphasised };
 }
 
-function parseAstro(raw: string): Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks'> {
+function parseAstro(raw: string): Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
   const fence = raw.match(ASTRO_FENCE);
   const body = fence ? raw.slice(fence[0].length) : raw;
   const from = fence ? fence[0].length : 0;
@@ -95,7 +137,27 @@ function parseAstro(raw: string): Pick<DocPage, 'prose' | 'links' | 'codeSpans' 
       line: lineAt(body, m.index ?? 0),
     });
   }
-  return { prose, links, codeSpans, codeBlocks };
+  const emphasised: DocEmphasis[] = [];
+  const TAGS: [RegExp, DocEmphasis['marker']][] = [
+    [/<strong>([\s\S]{1,120}?)<\/strong>/g, 'strong'],
+    [/<em>([\s\S]{1,120}?)<\/em>/g, 'emphasis'],
+    [/<code>([\s\S]{1,120}?)<\/code>/g, 'code'],
+  ];
+  for (const [pattern, marker] of TAGS) {
+    for (const m of body.matchAll(pattern)) {
+      const text = (m[1] as string).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+      if (text !== '') {
+        const at = m.index ?? 0;
+        emphasised.push({
+          value: text,
+          line: lineAt(body, at),
+          marker,
+          ...around(body, at, at + m[0].length, true),
+        });
+      }
+    }
+  }
+  return { prose, links, codeSpans, codeBlocks, emphasised };
 }
 
 export async function parsePage(root: string, relative: string): Promise<DocPage> {

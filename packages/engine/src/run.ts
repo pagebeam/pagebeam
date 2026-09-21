@@ -2,7 +2,7 @@ import path from 'node:path';
 import { stat } from 'node:fs/promises';
 import { Ignores, type Finding, type PagebeamConfig } from '@pagebeam/core';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
-import { configKeys, links, openapi } from '@pagebeam/checks';
+import { configKeys, links, openapi, strings } from '@pagebeam/checks';
 import { loadConfig, loadIgnores } from './load.js';
 
 export interface RunResult {
@@ -75,6 +75,28 @@ async function runLinks(
   return links.checkLinks(pages, set, { external: config.checks.links.external });
 }
 
+async function runStrings(
+  pages: DocPage[],
+  cwd: string,
+  config: PagebeamConfig,
+  skipped: string[],
+): Promise<Finding[]> {
+  if (config.checks.strings === false) return [];
+  const usable = config.apps.filter((a) => a.path !== undefined);
+  if (usable.length === 0) {
+    skipped.push('strings: no application declares a local path');
+    return [];
+  }
+
+  const indexes = [];
+  for (const app of usable) {
+    const root = rootOf(cwd, app);
+    if (root === null) continue;
+    indexes.push(await strings.indexApp(app.name, root, app.include, app.exclude));
+  }
+  return strings.compare(strings.candidates(pages), indexes, config.checks.strings.minConfidence);
+}
+
 async function runOpenapi(
   pages: DocPage[],
   cwd: string,
@@ -114,12 +136,14 @@ export async function run(cwd: string): Promise<RunResult> {
   if (config.checks.links !== false) ran.push('links');
   if (config.checks.configKeys !== false) ran.push('config-keys');
   if (config.checks.openapi !== false) ran.push('openapi');
+  if (config.checks.strings !== false) ran.push('strings');
 
   const findings = (
     await Promise.all([
       runLinks(pages, cwd, config),
       runConfigKeys(pages, cwd, config, skipped),
       runOpenapi(pages, cwd, config, skipped),
+      runStrings(pages, cwd, config, skipped),
     ])
   )
     .flat()
