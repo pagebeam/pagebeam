@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { findingId, findingRevision, type Finding } from '@pagebeam/core';
 import type { DocPage } from '@pagebeam/docs';
 
@@ -12,22 +14,64 @@ export interface Operation {
   operationId?: string;
 }
 
-export async function readSpec(file: string): Promise<Operation[]> {
-  const spec = JSON.parse(await readFile(file, 'utf8')) as {
-    paths?: Record<string, Record<string, { operationId?: string }>>;
-  };
-  const ops: Operation[] = [];
-  for (const [p, item] of Object.entries(spec.paths ?? {})) {
-    for (const [method, op] of Object.entries(item)) {
+type Document = Record<string, unknown>;
+
+function at(document: Document, pointer: string): unknown {
+  return pointer
+    .replace(/^#\//, '')
+    .split('/')
+    .filter((s) => s !== '')
+    .reduce<unknown>(
+      (node, key) =>
+        typeof node === 'object' && node !== null
+          ? (node as Record<string, unknown>)[key.replace(/~1/g, '/').replace(/~0/g, '~')]
+          : undefined,
+      document,
+    );
+}
+
+export interface SpecResult {
+  operations: Operation[];
+  unresolved: string[];
+}
+
+export async function readSpec(file: string): Promise<SpecResult> {
+  const text = await readFile(file, 'utf8');
+  const json = path.extname(file).toLowerCase() === '.json';
+  const document = (json ? JSON.parse(text) : parseYaml(text)) as Document;
+
+  const operations: Operation[] = [];
+  const unresolved: string[] = [];
+  const paths = (document['paths'] ?? {}) as Record<string, unknown>;
+
+  for (const [p, rawItem] of Object.entries(paths)) {
+    let item = rawItem as Record<string, unknown> | undefined;
+    const ref = item?.['$ref'];
+
+    if (typeof ref === 'string') {
+      if (!ref.startsWith('#/')) {
+        unresolved.push(`${p} -> ${ref}`);
+        continue;
+      }
+      const resolved = at(document, ref);
+      if (typeof resolved !== 'object' || resolved === null) {
+        unresolved.push(`${p} -> ${ref}`);
+        continue;
+      }
+      item = resolved as Record<string, unknown>;
+    }
+
+    for (const [method, op] of Object.entries(item ?? {})) {
       if (!METHODS.has(method)) continue;
-      ops.push({
+      const id = (op as { operationId?: string } | undefined)?.operationId;
+      operations.push({
         method: method.toUpperCase(),
         path: p,
-        ...(op?.operationId ? { operationId: op.operationId } : {}),
+        ...(id ? { operationId: id } : {}),
       });
     }
   }
-  return ops;
+  return { operations, unresolved };
 }
 
 export function citations(pages: DocPage[]): { method: string; path: string; page: string; line: number }[] {
@@ -54,7 +98,7 @@ export function checkCitations(
   const seen = new Set<string>();
 
   for (const c of cited) {
-    const key = `${c.method} ${c.path}`;
+    const key = `${c.method} ${templatise(c.path, ops)}`;
     if (known.has(key) || seen.has(`${c.page}|${key}`)) continue;
     seen.add(`${c.page}|${key}`);
     findings.push({
@@ -73,15 +117,38 @@ export function checkCitations(
   return findings;
 }
 
+// /users/123 in a worked example is the same operation as /users/{id}.
+export function templatise(p: string, against: Operation[]): string {
+  if (against.some((o) => o.path === p)) return p;
+  const segments = p.split('/');
+  for (const op of against) {
+    const parts = op.path.split('/');
+    if (parts.length !== segments.length) continue;
+    const fits = parts.every((part, i) => part.startsWith('{') || part === segments[i]);
+    if (fits) return op.path;
+  }
+  return p;
+}
+
 export function checkCoverage(
   pages: DocPage[],
   ops: Operation[],
   specFile: string,
   app: string,
 ): Finding[] {
-  const corpus = pages.map((p) => `${p.prose}\n${p.codeBlocks.map((b) => b.value).join('\n')}`).join('\n');
-  const undocumented = ops.filter((o) => !corpus.includes(o.path));
+  const documented = new Set(
+    citations(pages).map((c) => `${c.method} ${templatise(c.path, ops)}`),
+  );
+  const undocumented = ops.filter((o) => !documented.has(`${o.method} ${o.path}`));
   if (undocumented.length === 0) return [];
+
+  // A path named in prose is not the same as an operation described with its
+  // method, and neither is the same as a reference page. Saying so is the
+  // difference between a useful number and a discouraging one.
+  const corpus = pages
+    .map((p) => `${p.prose}\n${p.codeBlocks.map((b) => b.value).join('\n')}`)
+    .join('\n');
+  const named = undocumented.filter((o) => corpus.includes(o.path));
 
   const shown = undocumented.slice(0, UNDOCUMENTED_SHOWN).map((o) => `${o.method} ${o.path}`);
   const more = undocumented.length - shown.length;
@@ -94,9 +161,12 @@ export function checkCoverage(
       severity: 'info',
       confidence: 1,
       doc: { path: specFile },
-      title: `${undocumented.length} of ${ops.length} ${app} API operations appear in no documentation page`,
+      title: `${undocumented.length} of ${ops.length} ${app} API operations are not documented with their method`,
       detail:
-        `No page mentions the path for these operations:\n` +
+        (named.length > 0
+          ? `${named.length} of them have their path named somewhere in the docs but never with a method, so a reader cannot tell which operations exist.\n`
+          : 'None of their paths appear anywhere in the docs.\n') +
+        `Not documented:\n` +
         shown.map((s) => `  ${s}`).join('\n') +
         (more > 0 ? `\n  and ${more} more` : ''),
       evidence: [{ kind: 'specification', detail: specFile }],

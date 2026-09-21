@@ -1,14 +1,16 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { findingId, findingRevision, type Finding } from '@pagebeam/core';
-import type { DocPage } from '@pagebeam/docs';
+import type { DocLink, DocPage } from '@pagebeam/docs';
+
+export type Verdict = 'alive' | 'dead' | 'unknown';
 
 export interface RouteSet {
   routes: Set<string>;
   publicDir?: string;
   docsRoot: string;
   source: 'build' | 'content';
-  reach?: ((href: string) => Promise<boolean>) | undefined;
+  reach?: ((href: string) => Promise<Verdict>) | undefined;
 }
 
 function finding(
@@ -79,6 +81,7 @@ export async function checkLinks(
   options: { external: boolean },
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
+  const external: { page: DocPage; link: DocLink; href: string }[] = [];
 
   for (const page of pages) {
     for (const link of page.links) {
@@ -86,12 +89,7 @@ export async function checkLinks(
       if (href === '' || href.startsWith('#')) continue;
       if (href.startsWith('mailto:') || href.startsWith('tel:')) continue;
       if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
-        if (!options.external) continue;
-        const reachable = await set.reach?.(href);
-        if (reachable !== false) continue;
-        findings.push(
-          finding('links', page, link, href, `${href} could not be reached.`, set, 'external'),
-        );
+        if (options.external && /^https?:/i.test(href)) external.push({ page, link, href });
         continue;
       }
 
@@ -124,6 +122,19 @@ export async function checkLinks(
           set,
           'internal',
         ),
+      );
+    }
+  }
+
+  if (external.length > 0 && set.reach !== undefined) {
+    const unique = [...new Set(external.map((e) => e.href))];
+    const verdicts = new Map(
+      await Promise.all(unique.map(async (href) => [href, await set.reach!(href)] as const)),
+    );
+    for (const { page, link, href } of external) {
+      if (verdicts.get(href) !== 'dead') continue;
+      findings.push(
+        finding('links', page, link, href, `${href} could not be reached.`, set, 'external'),
       );
     }
   }

@@ -1,6 +1,8 @@
 // Two independent axes. Where the labels came from, and whether there is an
 // earlier revision to compare them with. An application with no parser can
 // still have perfect history; one with a parser may have none.
+// rendered is what a build emitted or a running application served. parsed is
+// source read with a real parser. raw is text nobody understood.
 export type Source = 'rendered' | 'parsed' | 'raw';
 export type Depth = 'paired' | 'single';
 

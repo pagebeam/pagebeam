@@ -133,10 +133,15 @@ async function runOpenapi(
   for (const app of withSpec) {
     const spec = app.openapi!.spec;
     const file = path.resolve(cwd, spec);
-    const ops = await openapi.readSpec(file);
+    const { operations, unresolved } = await openapi.readSpec(file);
     const shown = path.isAbsolute(spec) ? path.basename(spec) : spec;
-    every.push(...ops);
-    findings.push(...openapi.checkCoverage(pages, ops, shown, app.name));
+    if (unresolved.length > 0) {
+      skipped.push(
+        `openapi: ${unresolved.length} path item(s) in ${shown} point outside the document and were not read`,
+      );
+    }
+    every.push(...operations);
+    findings.push(...openapi.checkCoverage(pages, operations, shown, app.name));
   }
 
   const names = withSpec.map((a) => a.name).join(', ');

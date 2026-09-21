@@ -6,22 +6,35 @@ export interface ReachOptions {
 
 // A HEAD is enough for most servers and cheap; the ones that refuse it are
 // common enough that a GET has to follow before calling a link dead.
-async function once(href: string, timeoutMs: number): Promise<boolean> {
+export type Verdict = 'alive' | 'dead' | 'unknown';
+
+// Only the server saying the page is not there proves it is not there. A
+// timeout, a refusal, or a bot wall says nothing about the link.
+const GONE = new Set([404, 410]);
+const RETRY_WITH_GET = new Set([403, 405, 501]);
+
+async function once(href: string, timeoutMs: number): Promise<Verdict> {
+  let last: Verdict = 'unknown';
   for (const method of ['HEAD', 'GET'] as const) {
-    const abort = AbortSignal.timeout(timeoutMs);
     try {
-      const response = await fetch(href, { method, signal: abort, redirect: 'follow' });
-      if (response.ok || response.status === 304) return true;
-      if (response.status !== 405 && response.status !== 501) return false;
+      const response = await fetch(href, {
+        method,
+        signal: AbortSignal.timeout(timeoutMs),
+        redirect: 'follow',
+      });
+      if (response.ok || response.status === 304) return 'alive';
+      if (GONE.has(response.status)) return 'dead';
+      if (!RETRY_WITH_GET.has(response.status)) return 'unknown';
+      last = 'unknown';
     } catch {
-      return false;
+      return 'unknown';
     }
   }
-  return false;
+  return last;
 }
 
-export function reacher(options: ReachOptions): (href: string) => Promise<boolean> {
-  const known = new Map<string, Promise<boolean>>();
+export function reacher(options: ReachOptions): (href: string) => Promise<Verdict> {
+  const known = new Map<string, Promise<Verdict>>();
   let running = 0;
   const waiting: (() => void)[] = [];
 
@@ -39,8 +52,10 @@ export function reacher(options: ReachOptions): (href: string) => Promise<boolea
     waiting.shift()?.();
   };
 
-  return (href: string): Promise<boolean> => {
-    if (options.allowlist.some((pattern) => href.includes(pattern))) return Promise.resolve(true);
+  return (href: string): Promise<Verdict> => {
+    if (options.allowlist.some((pattern) => href.includes(pattern))) {
+      return Promise.resolve<Verdict>('alive');
+    }
     const cached = known.get(href);
     if (cached !== undefined) return cached;
 

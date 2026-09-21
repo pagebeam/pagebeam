@@ -52,9 +52,12 @@ function walk(node: any, file: string, out: Label[], within: string | null): voi
   for (const child of node.childNodes ?? []) walk(child, file, out, within);
 }
 
+// Reserved for output a build or a running application produced. Parsing a
+// template is reading source, so it is graded as source however close to HTML
+// the file looks.
 export const html: Extractor = {
   name: 'html',
-  source: 'rendered',
+  source: 'parsed',
   handles: (file) => TEMPLATE_FILES.test(file),
   extract(source, file) {
     try {

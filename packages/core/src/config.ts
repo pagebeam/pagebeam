@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const docsSchema = z.strictObject({
   root: z.string(),
-  include: z.array(z.string()).default(['**/*.{md,mdx,markdown}']),
+  include: z.array(z.string()).default(['**/*.{md,mdx,markdown,astro}']),
   exclude: z.array(z.string()).default(['**/node_modules/**', '**/dist/**']),
   format: z
     .enum(['auto', 'docusaurus', 'starlight', 'astro', 'nextra', 'mkdocs', 'markdown'])
