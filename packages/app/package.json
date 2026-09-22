@@ -1,6 +1,6 @@
 {
   "name": "@pagebeam/app",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.1-rc.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   "license": "MIT",
   "dependencies": {
     "@babel/parser": "^7.29.9",
-    "@pagebeam/core": "0.1.1-rc.1",
+    "@pagebeam/core": "0.1.1-rc.2",
     "@types/picomatch": "^4.0.3",
     "@vue/compiler-sfc": "^3.5.13",
     "parse5": "^8.0.1",

@@ -1,6 +1,6 @@
 {
   "name": "@pagebeam/model",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.1-rc.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,7 +18,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@pagebeam/core": "0.1.1-rc.1"
+    "@pagebeam/core": "0.1.1-rc.2"
   },
   "description": "Asks a model to draft the change a check could not",
   "homepage": "https://pagebeam.dev",

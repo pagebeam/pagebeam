@@ -1,6 +1,6 @@
 {
   "name": "pagebeam",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.1-rc.2",
   "type": "module",
   "bin": {
     "pagebeam": "./dist/main.js"
@@ -17,9 +17,9 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@pagebeam/core": "0.1.1-rc.1",
-    "@pagebeam/engine": "0.1.1-rc.1",
-    "@pagebeam/git": "0.1.1-rc.1"
+    "@pagebeam/core": "0.1.1-rc.2",
+    "@pagebeam/engine": "0.1.1-rc.2",
+    "@pagebeam/git": "0.1.1-rc.2"
   },
   "description": "Docs that keep up with your product",
   "homepage": "https://pagebeam.dev",

@@ -1,6 +1,6 @@
 {
   "name": "@pagebeam/engine",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.1-rc.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,13 +18,13 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@pagebeam/app": "0.1.1-rc.1",
-    "@pagebeam/checks": "0.1.1-rc.1",
-    "@pagebeam/core": "0.1.1-rc.1",
-    "@pagebeam/docs": "0.1.1-rc.1",
+    "@pagebeam/app": "0.1.1-rc.2",
+    "@pagebeam/checks": "0.1.1-rc.2",
+    "@pagebeam/core": "0.1.1-rc.2",
+    "@pagebeam/docs": "0.1.1-rc.2",
     "picomatch": "^4.0.7",
     "yaml": "^2.6.1",
-    "@pagebeam/model": "0.1.1-rc.1"
+    "@pagebeam/model": "0.1.1-rc.2"
   },
   "description": "Runs the checks and grades what they find",
   "homepage": "https://pagebeam.dev",

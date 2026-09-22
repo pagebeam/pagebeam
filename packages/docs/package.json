@@ -1,6 +1,6 @@
 {
   "name": "@pagebeam/docs",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.1-rc.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   "license": "MIT",
   "dependencies": {
     "@astrojs/compiler": "^4.0.0",
-    "@pagebeam/core": "0.1.1-rc.1",
+    "@pagebeam/core": "0.1.1-rc.2",
     "acorn": "^8.18.0",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-frontmatter": "^2.0.1",
