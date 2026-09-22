@@ -371,12 +371,13 @@ async function mend(
   findings: Finding[],
 ): Promise<Finding[]> {
   const settings = config.model;
-  if (settings === undefined) return findings;
+  if (settings === undefined || !settings.enrich) return findings;
 
   const router = {
     baseUrl: settings.baseUrl,
     model: settings.name,
     timeoutMs: settings.timeoutMs,
+    headers: settings.headers,
     ...(settings.apiKeyEnv ? { apiKey: process.env[settings.apiKeyEnv] } : {}),
   };
   const sourceOf = new Map(pages.map((page) => [page.path, page.raw]));

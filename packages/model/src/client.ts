@@ -1,10 +1,13 @@
-// Anything that answers the OpenAI chat completions shape. A router run beside
-// the rest of the stack answers it, and so does a provider reached directly,
-// so pagebeam carries no provider code and no opinion about where the model is.
+// Anything that answers the OpenAI chat completions shape: a provider's own
+// address, a gateway in front of several, or a router on the same machine.
+// pagebeam ships no provider code and holds no opinion about which it is.
 export interface Router {
   baseUrl: string;
   model: string;
   apiKey?: string | undefined;
+  // For a provider that authenticates with something other than a bearer
+  // token, or wants a version or project header alongside it.
+  headers?: Record<string, string> | undefined;
   timeoutMs?: number | undefined;
 }
 
@@ -26,9 +29,10 @@ export async function ask(router: Router, system: string, user: string): Promise
       signal: control.signal,
       headers: {
         'content-type': 'application/json',
-        // A router run locally often wants no key at all, but the header is
-        // cheap and some are configured to require one.
+        // Some endpoints want no key at all. Whatever the provider asks for
+        // beyond a bearer token is passed through as given.
         ...(router.apiKey === undefined ? {} : { authorization: `Bearer ${router.apiKey}` }),
+        ...(router.headers ?? {}),
       },
       body: JSON.stringify({
         model: router.model,

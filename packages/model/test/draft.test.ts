@@ -23,7 +23,7 @@ async function router(answer: string | number): Promise<{ url: string; seen: any
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      seen.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body || '{}') });
+      seen.push({ url: req.url, auth: req.headers.authorization, headers: req.headers, body: JSON.parse(body || '{}') });
       if (typeof answer === 'number') {
         res.writeHead(answer, { 'content-type': 'text/plain' });
         return res.end('no');
@@ -146,4 +146,19 @@ test('a router that is not there is reported, not swallowed', async () => {
     ask({ baseUrl: 'http://127.0.0.1:1', model: 'local', timeoutMs: 2000 }, 's', 'u'),
     Unanswered,
   );
+});
+
+test('whatever the provider wants beyond a bearer token is sent as given', async () => {
+  const api = await router(CORRECTED);
+  try {
+    await draft(
+      { baseUrl: api.url, model: 'm', apiKey: 'k', headers: { 'x-project': 'p' } },
+      finding(),
+      PAGE,
+    );
+    assert.equal(api.seen[0].auth, 'Bearer k');
+    assert.equal(api.seen[0].headers?.['x-project'] ?? 'missing', 'p');
+  } finally {
+    await api.stop();
+  }
 });

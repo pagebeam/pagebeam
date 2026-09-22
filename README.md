@@ -19,10 +19,11 @@ npx pagebeam check
 | `openapi` | An endpoint documented that the specification lacks, and operations nothing documents | on |
 | `strings` | A control named in the documentation that the application no longer has | off |
 | `moved` | Code changing under a page that did not change with it | off |
-| `undocumented` | A screen of controls the documentation never mentions | off |
+| `undocumented` | A screen of controls the documentation never mentions | on |
 
-The last three need more than the documentation. `strings` and `undocumented`
-read the application, `moved` reads its history. Turn them on in the config.
+`strings` and `moved` are off until asked for, and compare against an earlier
+revision. `undocumented` reads the application rather than its history, and is
+always `review`, so it reports without ever failing a build.
 
 ## Standing
 
@@ -48,6 +49,23 @@ pagebeam fix --publish             open or update the pull request
 
 Exit `0` nothing blocks, `1` a proven finding blocks, `2` the answer cannot be
 trusted: nothing was read, or a check that was asked for could not run.
+
+## Proposals
+
+A check can prove a page is wrong without being able to say what it should say
+instead. Name a provider and each of those findings is put to it once, with the
+page and the evidence already gathered.
+
+Any endpoint answering the OpenAI chat completions shape works: a provider's
+own address, a gateway in front of several, or a router on this machine.
+pagebeam ships no provider code and never sees a key, only the name of the
+variable holding one. Use `headers` where a provider wants more than a bearer
+token, and `enrich: false` to keep the provider configured and stop asking it.
+
+A draft that comes back unchanged, or shorter than half the page it was given,
+is refused rather than proposed. A provider that cannot answer leaves the
+finding exactly as it was. Every draft is marked as written by a model, so it
+is never confused with a replacement worked out from the source.
 
 ## Configuration
 
@@ -77,7 +95,11 @@ apps:                           # every application the documentation describes
 checks:
   strings: { minConfidence: 0.4 }
   moved: {}
-  undocumented: {}
+
+model:
+  baseUrl: https://api.openai.com/v1   # or a gateway, or one on this machine
+  name: gpt-4o
+  apiKeyEnv: OPENAI_API_KEY
 
 propose:
   branch: pagebeam/drift

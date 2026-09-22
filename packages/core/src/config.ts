@@ -61,7 +61,7 @@ const checksSchema = z.strictObject({
     .default({}),
   openapi: z.union([z.literal(false), z.strictObject({})]).default({}),
   moved: z.union([z.literal(false), z.strictObject({})]).default(false),
-  undocumented: z.union([z.literal(false), z.strictObject({})]).default(false),
+  undocumented: z.union([z.literal(false), z.strictObject({})]).default({}),
   strings: z
     .union([
       z.literal(false),
@@ -92,9 +92,18 @@ export const configSchema = z.strictObject({
   // findings they cannot mend are reported without a change to propose.
   model: z
     .strictObject({
+      // Any endpoint answering the OpenAI chat completions shape, run wherever
+      // the user wants it: a provider's own address, a gateway, or a router on
+      // the same machine. pagebeam does not care which and ships none of them.
       baseUrl: z.string().url(),
       name: z.string(),
+      // Named, never written down. A key belongs in the environment.
       apiKeyEnv: z.string().optional(),
+      // For a provider that wants something besides a bearer token.
+      headers: z.record(z.string()).default({}),
+      // On once a provider is named. Set false to keep the provider configured
+      // and stop asking it.
+      enrich: z.boolean().default(true),
       timeoutMs: z.number().int().positive().default(60_000),
     })
     .optional(),
