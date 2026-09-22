@@ -7,12 +7,13 @@ import { Extractors } from './extractor.js';
 import { filesAt, readAt } from './git.js';
 import { raw } from './raw.js';
 import { html } from './html.js';
+import { jsx } from './jsx.js';
 import { vue } from './vue.js';
 
 const ENV_ASSIGNMENT = /(?:^|\s)(?:-e\s+|--env\s+|export\s+|ENV\s+)?([A-Z][A-Z0-9_]{2,})\s*=/gm;
 
 export function defaultExtractors(): Extractors {
-  return new Extractors().add(vue).add(html).add(raw);
+  return new Extractors().add(vue).add(jsx).add(html).add(raw);
 }
 
 function matches(file: string, include: string[], exclude: string[]): boolean {

@@ -4,7 +4,11 @@ import type { Extractor } from './extractor.js';
 import { CONTROL, LABEL_ATTRS, usable } from './rules.js';
 
 const TEMPLATE_FILES =
-  /\.(html?|erb|blade\.php|jinja2?|j2|twig|tmpl|gohtml|hbs|handlebars|ejs|liquid|mustache|razor|cshtml)$/i;
+  /\.(html?|erb|blade\.php|jinja2?|j2|twig|tmpl|gohtml|hbs|handlebars|ejs|liquid|mustache|razor|cshtml|svelte|astro)$/i;
+
+// Svelte and Astro interpolate with a single brace, which no other template
+// language here does, so stripping it everywhere would eat ordinary prose.
+const SINGLE_BRACE = /\.(svelte|astro)$/i;
 
 // Server-side syntax has to go before the markup will parse. Each construct
 // becomes a single token so a label built around one still reads as one string.
@@ -17,9 +21,10 @@ const TEMPLATE_SYNTAX: RegExp[] = [
   /@[a-z]+\s*\([^)]*\)/gi,
 ];
 
-export function stripTemplating(source: string): string {
+export function stripTemplating(source: string, file = ''): string {
   let out = source;
   for (const pattern of TEMPLATE_SYNTAX) out = out.replace(pattern, '␣');
+  if (SINGLE_BRACE.test(file)) out = out.replace(/\{[^{}\r\n]{0,200}\}/g, '␣');
   return out;
 }
 
@@ -61,7 +66,7 @@ export const html: Extractor = {
   handles: (file) => TEMPLATE_FILES.test(file),
   extract(source, file) {
     try {
-      const tree = parseFragment(stripTemplating(source), { sourceCodeLocationInfo: true });
+      const tree = parseFragment(stripTemplating(source, file), { sourceCodeLocationInfo: true });
       const out: Label[] = [];
       walk(tree, file, out, null);
       return out;

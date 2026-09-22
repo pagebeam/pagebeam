@@ -34,3 +34,33 @@ test('frontmatter is not prose in either', async () => {
     assert.equal(parsed!.slug, '/s', name);
   }
 });
+
+test('a link written as a component attribute is a link', async () => {
+  const parsed = await page('a.mdx', '<Link to="/broken">Read it</Link>\n');
+  assert.deepEqual(parsed!.links.map((l) => l.href), ['/broken']);
+});
+
+test('an image written as a component is checked like any other', async () => {
+  const parsed = await page('a.mdx', '<img src="/missing.png" alt="A screenshot" />\n');
+  assert.deepEqual(parsed!.links.map((l) => l.href), ['/missing.png']);
+  assert.ok(parsed!.emphasised.some((e) => e.value === 'A screenshot'));
+});
+
+test('a control named in a component title is a control', async () => {
+  const parsed = await page('a.mdx', '<Admonition title="Click Save first">Body.</Admonition>\n');
+  assert.ok(parsed!.emphasised.some((e) => e.value === 'Click Save first'));
+});
+
+test('content nested inside components is still read', async () => {
+  const parsed = await page(
+    'a.mdx',
+    '<Tabs>\n  <TabItem value="npm">\n    Press **Install now** and read [the guide](/guide).\n  </TabItem>\n</Tabs>\n',
+  );
+  assert.ok(parsed!.links.some((l) => l.href === '/guide'));
+  assert.ok(parsed!.emphasised.some((e) => e.value === 'Install now'));
+});
+
+test('the same attributes in plain markdown are not components', async () => {
+  const parsed = await page('a.md', '<Link to="/broken">Read it</Link>\n');
+  assert.deepEqual(parsed!.links.map((l) => l.href), [], 'markdown has no components to read');
+});

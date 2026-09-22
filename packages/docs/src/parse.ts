@@ -17,6 +17,11 @@ import type {
 } from './model.js';
 
 const HTML_HREF = /\b(?:href|src)\s*=\s*"([^"{}]+)"/g;
+
+// A React documentation site writes most of its links and every image as a
+// component attribute rather than as Markdown, so these carry the address.
+const LINK_ATTRS = new Set(['href', 'src', 'to', 'url', 'poster']);
+const EMPHASIS_ATTRS = new Set(['title', 'label', 'alt', 'heading']);
 const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const SLUG = /^\s*slug\s*:\s*["']?([^"'\r\n#]+)["']?\s*$/m;
 const ASTRO_FENCE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
@@ -112,6 +117,28 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
       }
     } else if (node.type === 'text' && typeof node.value === 'string') {
       prose.push(node.value);
+    } else if (node.type === 'mdxJsxFlowElement' || node.type === 'mdxJsxTextElement') {
+      for (const attribute of node.attributes ?? []) {
+        if (attribute?.type !== 'mdxJsxAttribute') continue;
+        const name = String(attribute.name ?? '').toLowerCase();
+        if (typeof attribute.value !== 'string') continue;
+        const at = node.position?.start?.offset ?? 0;
+        if (LINK_ATTRS.has(name)) {
+          links.push({
+            href: attribute.value,
+            line: start?.line ?? 1,
+            offset: [at, node.position?.end?.offset ?? at],
+            kind: 'html',
+          });
+        } else if (EMPHASIS_ATTRS.has(name) && attribute.value.trim() !== '') {
+          emphasised.push({
+            value: attribute.value,
+            line: start?.line ?? 1,
+            marker: 'strong',
+            ...around(raw, at, node.position?.end?.offset ?? at),
+          });
+        }
+      }
     } else if (node.type === 'html' && typeof node.value === 'string') {
       links.push(...htmlLinks(node.value, node.position?.start?.offset ?? 0));
     } else if (node.type === 'code' && typeof node.value === 'string') {
