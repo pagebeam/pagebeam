@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { createServer, type Server } from 'node:http';
 import { test } from 'node:test';
 import { render, unavailable } from '../dist/index.js';
@@ -79,4 +80,83 @@ test('labels are attributed to the route that showed them', async (t) => {
   } finally {
     await site.stop();
   }
+});
+
+const GUARDED = (authed: boolean): string =>
+  authed
+    ? '<!doctype html><body><button>Create a report</button><a>Sign out</a></body>'
+    : '<!doctype html><body><button>Sign in</button></body>';
+
+async function guarded(): Promise<{ url: string; stop: () => Promise<void> }> {
+  const server: Server = createServer((req, res) => {
+    const authed = (req.headers.cookie ?? '').includes('session=');
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(GUARDED(authed));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const a = server.address();
+  const port = typeof a === 'object' && a !== null ? a.port : 0;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+test('a login screen standing in for every page is refused, not harvested', async (t) => {
+  const site = await guarded();
+  try {
+    const result = await render({
+      app: 'd',
+      baseUrl: site.url,
+      routes: ['/dashboard', '/settings'],
+      auth: { confirm: 'text=Sign out' },
+    });
+    if (!unavailable(result)) {
+      assert.fail(`expected a refusal, got ${JSON.stringify(result.labels.map((l) => l.text))}`);
+    }
+    assert.match(result.reason, /signed-in check/);
+  } finally {
+    await site.stop();
+  }
+});
+
+test('signing in is confirmed before anything is read', async (t) => {
+  const site = await guarded();
+  const { mkdtemp, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-login-'));
+  const script = path.join(dir, 'login.mjs');
+  await writeFile(
+    script,
+    'export default async (page) => {\n' +
+      '  await page.context().addCookies([{ name: "session", value: "1", url: page.url() }]);\n' +
+      '};\n',
+  );
+  try {
+    const result = await render({
+      app: 'd',
+      baseUrl: site.url,
+      routes: ['/dashboard'],
+      auth: { script, confirm: 'text=Sign out' },
+    });
+    if (unavailable(result)) {
+      t.skip(`no browser to drive: ${result.reason}`);
+      return;
+    }
+    assert.ok(result.labels.some((l) => l.text === 'Create a report'), 'the real page was read');
+    assert.ok(!result.labels.some((l) => l.text === 'Sign in'), 'not the login screen');
+  } finally {
+    await site.stop();
+  }
+});
+
+test('signing in with no way to confirm it is refused', async () => {
+  const result = await render({
+    app: 'd',
+    baseUrl: 'http://127.0.0.1:1',
+    routes: ['/'],
+    auth: { storageState: '/nowhere.json' },
+  });
+  assert.ok(unavailable(result));
+  assert.match(result.reason, /confirm it worked/);
 });

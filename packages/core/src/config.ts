@@ -16,7 +16,17 @@ const appSchema = z.strictObject({
   name: z.string(),
   path: z.string().optional(),
   url: z.string().url().optional(),
-  routes: z.array(z.string()).default([]),
+  routes: z
+    .array(z.union([z.string(), z.strictObject({ path: z.string(), prepare: z.string().optional() })]))
+    .default([]),
+  auth: z
+    .strictObject({
+      storageState: z.string().optional(),
+      storageStateEnv: z.string().optional(),
+      script: z.string().optional(),
+      confirm: z.string().optional(),
+    })
+    .optional(),
   renderTimeoutMs: z.number().int().positive().default(15_000),
   include: z.array(z.string()).default(['**/*.{ts,tsx,js,jsx,vue,svelte}']),
   exclude: z

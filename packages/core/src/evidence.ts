@@ -91,6 +91,8 @@ export interface Snapshot {
   // False when only part of the application was examined, which is the case
   // for anything read from a running application rather than from its files.
   whole: boolean;
+  // Why the running application could not be read, when it was asked for.
+  refused?: string;
   labels: Label[];
   envKeys: string[];
   files: { path: string; text: string }[];

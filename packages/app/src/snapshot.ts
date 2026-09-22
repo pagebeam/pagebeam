@@ -6,7 +6,7 @@ import { bestSource, type Label, type Snapshot, type Source } from '@pagebeam/co
 import { Extractors } from './extractor.js';
 import { filesAt, readAt } from './git.js';
 import { raw } from './raw.js';
-import { render, unavailable } from './render.js';
+import { render, unavailable, type Auth, type Route } from './render.js';
 import { html } from './html.js';
 import { jsx } from './jsx.js';
 import { vue } from './vue.js';
@@ -39,7 +39,8 @@ async function readOrThrow(file: string): Promise<string | null> {
 
 export interface Viewing {
   baseUrl: string;
-  routes: string[];
+  routes: (string | Route)[];
+  auth?: Auth | undefined;
   timeoutMs?: number | undefined;
 }
 
@@ -103,14 +104,18 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
   // subtracts, because it only ever visited some of the pages.
   let whole = true;
   let source = bestSource(sources);
+  let refused: string | null = null;
   if (request.viewing !== undefined && rev === undefined) {
     const seen = await render({
       app: request.app,
       baseUrl: request.viewing.baseUrl,
       routes: request.viewing.routes,
+      auth: request.viewing.auth,
       timeoutMs: request.viewing.timeoutMs,
     });
-    if (!unavailable(seen)) {
+    if (unavailable(seen)) {
+      refused = seen.reason;
+    } else {
       labels.push(...seen.labels);
       if (sources.every((s) => s === 'raw')) {
         source = 'rendered';
@@ -124,6 +129,7 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     rev: rev ?? null,
     source,
     whole,
+    ...(refused === null ? {} : { refused }),
     labels,
     envKeys: [...envKeys],
     files: files_,

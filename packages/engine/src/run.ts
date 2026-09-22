@@ -156,7 +156,12 @@ async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | n
     // from the repository, so history stays a file-level comparison.
     const viewing =
       app.url !== undefined && app.routes.length > 0
-        ? { baseUrl: app.url, routes: app.routes, timeoutMs: app.renderTimeoutMs }
+        ? {
+            baseUrl: app.url,
+            routes: app.routes,
+            timeoutMs: app.renderTimeoutMs,
+            ...(app.auth ? { auth: app.auth } : {}),
+          }
         : undefined;
     now.push(await snapshot({ ...request, ...(viewing ? { viewing } : {}) }));
 
@@ -272,6 +277,11 @@ async function checkAll(
   earlier = false,
 ): Promise<Pass> {
   const skipped: string[] = [];
+  for (const snapshot of evidence?.now ?? []) {
+    if (snapshot.refused !== undefined) {
+      skipped.push(`opening ${snapshot.app}: ${snapshot.refused}`);
+    }
+  }
   const ran: string[] = [];
   if (config.checks.links !== false) ran.push('links');
   if (config.checks.configKeys !== false) ran.push('config-keys');
