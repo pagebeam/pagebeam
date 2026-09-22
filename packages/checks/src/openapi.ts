@@ -145,9 +145,7 @@ export function checkCoverage(
   const undocumented = ops.filter((o) => !documented.has(`${o.method} ${o.path}`));
   if (undocumented.length === 0) return [];
 
-  // A path named in prose is not the same as an operation described with its
-  // method, and neither is the same as a reference page. Saying so is the
-  // difference between a useful number and a discouraging one.
+  // A path named in prose is not an operation described with its method.
   const corpus = pages
     .map((p) => `${p.prose}\n${p.codeBlocks.map((b) => b.value).join('\n')}`)
     .join('\n');

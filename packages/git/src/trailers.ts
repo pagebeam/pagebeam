@@ -25,8 +25,7 @@ export function messageFor(finding: Finding, subject: string): string {
   return `${subject}\n\n${finding.detail}\n\n${trailersFor(finding)}\n`;
 }
 
-// A commit without these was written by a person, and a person's work is not
-// something to force out of the way.
+// A commit without these was written by a person.
 export function readTrailers(message: string): Trailers | null {
   const value = (name: string): string | null =>
     message.match(new RegExp(`^${name}:\\s*(.+)$`, 'm'))?.[1]?.trim() ?? null;

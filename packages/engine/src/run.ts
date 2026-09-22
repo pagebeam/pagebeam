@@ -363,8 +363,7 @@ export async function run(cwd: string): Promise<RunResult> {
   try {
     return await attempt(cwd);
   } catch (error) {
-    // Something on disk refused to be read. Reporting nothing found would be a
-    // lie about a file nobody looked at.
+    // A file that could not be read is not a file with nothing in it.
     return {
       problem: (error as Error).message,
       degraded: [],

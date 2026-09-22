@@ -218,9 +218,7 @@ export interface Rename {
   because: string;
 }
 
-// Only labels that have appeared since are candidates, which is a few dozen
-// rather than every string in the application, and it is why this can be
-// specific rather than a guess dressed up as one.
+// Candidates are only labels that appeared since the earlier revision.
 export function renameOf(
   gone: { normalised: string; kind: string; file: string },
   now: Dictionary,
@@ -260,8 +258,7 @@ export function renameOf(
   const best = scored[0];
   if (best === undefined) return null;
 
-  // Two equally good answers is no answer. Proposing either would be a guess
-  // wearing a confidence score.
+  // Two equally good answers is no answer.
   const rival = scored[1];
   if (rival !== undefined && rival.confidence === best.confidence) {
     return { ...best, confidence: Math.min(best.confidence, 0.5), because: 'more than one label could be the replacement' };
@@ -291,10 +288,8 @@ export function compare(
       if (was === null) continue;
     }
 
-    // The claim is that a control is gone, and only today's reading can carry
-    // that. Yesterday's reading proves it was once there, which is a different
-    // thing; if the application can only be searched as text today, then that
-    // is what the absence rests on however well it was read before.
+    // Only today's reading can carry an absence. The earlier one proves the
+    // control existed, which is a different claim.
     const owner = was?.app;
     const seen = now.find((d) => d.app === owner);
     const mine: Grade = {

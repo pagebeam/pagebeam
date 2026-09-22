@@ -33,12 +33,8 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
 
   const openPr = await forge.findOpen(branch);
 
-  // The remote is what will be replaced, so the remote has to be asked; a
-  // local ref only says what this clone last heard. But work committed here
-  // and not yet pushed is still somebody's work, so both have to agree before
-  // anything is thrown away.
-  // Not being able to ask is not an answer. Nothing is replaced or closed on
-  // the strength of a question that went unanswered.
+  // Both the remote and this clone have to agree before anything is replaced,
+  // and a question that could not be asked is not an answer.
   const onRemote = await remoteCommits(repo, branch, await baseRef(repo, base));
   const from = await baseRef(repo, base);
   const locally = (await exists(repo, branch)) ? await commitsOn(repo, branch, from) : [];
@@ -70,9 +66,8 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
     return { ...nothing, url: openPr?.url ?? null, commits: 0 };
   }
 
-  // Each finding stays its own commit, so a reviewer reads them one at a time.
-  // Within a page they are made from the last span backwards, so that a change
-  // never moves the ground under the one after it.
+  // One commit per finding. Within a page they go from the last span
+  // backwards, so an edit never moves the one after it.
   const startOf = (finding: Finding): number =>
     Math.max(...(finding.fix?.changes ?? []).map((c) => c.splice?.start ?? -1), -1);
   const fixable = findings
@@ -90,9 +85,7 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
   const session = await open(repo, branch, base, plan.action !== 'append');
   let written = 0;
   try {
-    // Each finding is still its own commit, so a reviewer can read them one at
-    // a time, but a page's spans are resolved against the file as it stands
-    // when that commit is made.
+
     for (const finding of fixable) {
       await apply(session.dir, finding.fix!.changes);
       if (await commit(session.dir, finding, finding.title)) written += 1;

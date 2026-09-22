@@ -65,9 +65,8 @@ export function planFor({ findings, open, ours, complete }: PlanInput): Plan {
     return { action: 'noop', reason: 'the same findings as last time', findings, state };
   }
 
-  // Replaying from the base is the only way to stay correct as findings come
-  // and go, but it throws away commits. Somebody else's work is not ours to
-  // throw away, so theirs is added to rather than replaced.
+  // Replaying from the base keeps this correct as findings come and go, but
+  // discards commits, so a branch somebody else wrote to is appended to.
   return ours
     ? { action: 'update', reason: 'the findings have changed', findings, state }
     : {

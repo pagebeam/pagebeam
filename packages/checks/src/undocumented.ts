@@ -38,9 +38,7 @@ export function areasOf(snapshots: Snapshot[], pages: DocPage[]): Area[] {
   const grouped = new Map<string, Area>();
   for (const snapshot of snapshots) {
     for (const label of snapshot.labels) {
-      // Only what the product calls things creates an obligation to describe
-      // it. A name a running application showed may be somebody's own data,
-      // and nobody should be asked to document that.
+      // A rendered name may be somebody's own data rather than a label.
       if (label.from === 'rendered') continue;
       const key = `${snapshot.app}|${areaOf(label.file)}`;
       const area =

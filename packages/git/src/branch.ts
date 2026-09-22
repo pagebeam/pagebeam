@@ -43,8 +43,7 @@ export interface Session {
   end: () => Promise<void>;
 }
 
-// The tool works in a checkout of its own. Somebody's branch, their staged
-// work and their open editor are none of its business.
+// Works in a checkout of its own, leaving the repository's own state alone.
 // What is proposed is proposed against what everybody else can see. Building
 // on a local base would sweep up commits sitting here unpushed and offer them
 // as part of the change, and they would then read as somebody else's work.
@@ -84,9 +83,8 @@ export async function open(repo: string, branch: string, base: string, fresh: bo
     return session(repo, dir, at);
   }
 
-  // Adding to a branch means adding to everything on it: what this clone has
-  // and what the remote has. Where those have genuinely diverged, somebody has
-  // to look, and it is not going to be resolved by force.
+  // Takes in both what this clone has and what the remote has. Divergence is
+  // refused rather than forced.
   await git(repo, 'worktree', 'add', at, branch);
   const fetched = await git(repo, 'fetch', '--quiet', 'origin', `${branch}:refs/pagebeam/onto`)
     .then(() => true)
@@ -141,8 +139,7 @@ export class Escapes extends Error {
   }
 }
 
-// A proposal says where it wants to write. It does not get to say "somewhere
-// else entirely", so the resolved path has to still be inside the checkout.
+// The resolved path has to be inside the checkout.
 export function within(dir: string, proposed: string): string {
   const root = path.resolve(dir);
   const file = path.resolve(root, proposed);
@@ -151,8 +148,8 @@ export function within(dir: string, proposed: string): string {
   return file;
 }
 
-// Reading the text of a path is not enough: a link inside the checkout points
-// wherever it likes. Every directory on the way has to really be inside it.
+// Lexical containment is not enough: a link inside the checkout can point
+// outside it, so every directory on the way is resolved.
 export async function reallyWithin(dir: string, proposed: string): Promise<string> {
   const { realpath } = await import('node:fs/promises');
   const file = within(dir, proposed);
