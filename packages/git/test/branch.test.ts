@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { apply, commit, commitsOn, exists, headOf, open } from '../dist/branch.js';
+import { apply, commit, commitsOn, exists, headOf, open, within } from '../dist/branch.js';
 import type { Finding } from '@pagebeam/core';
 
 const finding = (id: string): Finding => ({
@@ -102,5 +102,23 @@ test('carrying on from a branch keeps what is already on it', async () => {
     assert.equal((await commitsOn(dir, 'pagebeam/drift', 'main')).length, 2);
   } finally {
     await again.end();
+  }
+});
+
+test('a proposal cannot write outside the checkout', async () => {
+  const dir = await repo();
+  const session = await open(dir, 'pagebeam/drift', 'main', true);
+  try {
+    await assert.rejects(
+      () => apply(session.dir, [{ path: '../escaped.md', mode: 'write', contents: 'no' }]),
+      /outside the checkout/,
+    );
+    await assert.rejects(
+      () => apply(session.dir, [{ path: '/etc/passwd', mode: 'delete' }]),
+      /outside the checkout/,
+    );
+    assert.equal(within(session.dir, 'docs/a.md'), path.join(session.dir, 'docs/a.md'));
+  } finally {
+    await session.end();
   }
 });

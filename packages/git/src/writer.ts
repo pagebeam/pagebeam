@@ -1,5 +1,5 @@
 import type { Finding } from '@pagebeam/core';
-import { apply, commit, commitsOn, exists, open, push } from './branch.js';
+import { apply, commit, commitsOn, exists, open, push, remoteCommits } from './branch.js';
 import { bodyFor, titleFor } from './body.js';
 import type { Forge, PullRequest } from './forge.js';
 import { planFor, type Action } from './plan.js';
@@ -11,6 +11,8 @@ export interface WriteRequest {
   base: string;
   findings: Finding[];
   comparedWith: string | null;
+  // False when a check was asked for and could not run.
+  complete: boolean;
   labels?: string[] | undefined;
   reviewers?: string[] | undefined;
   draft?: boolean | undefined;
@@ -30,9 +32,17 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
   const { repo, branch, base, findings } = request;
 
   const openPr = await forge.findOpen(branch);
-  const ours = !(await exists(repo, branch))
-    ? true
-    : byPagebeam(await commitsOn(repo, branch, base));
+
+  // The remote is what will be replaced, so the remote has to be asked; a
+  // local ref only says what this clone last heard. But work committed here
+  // and not yet pushed is still somebody's work, so both have to agree before
+  // anything is thrown away.
+  const onRemote = await remoteCommits(repo, branch, base);
+  const locally = (await exists(repo, branch)) ? await commitsOn(repo, branch, base) : [];
+  const theirs =
+    (onRemote !== null && onRemote.length > 0 && !byPagebeam(onRemote)) ||
+    (locally.length > 0 && !byPagebeam(locally));
+  const ours = !theirs;
 
   const plan = planFor({
     findings,
@@ -41,6 +51,7 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
         ? null
         : { number: openPr.number, head: openPr.head, body: openPr.body, commits: [] },
     ours,
+    complete: request.complete,
   });
 
   const title = titleFor(findings);
@@ -56,6 +67,16 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
     return { ...nothing, url: openPr?.url ?? null, commits: 0 };
   }
 
+  const fixable = findings.filter((f) => f.fix !== undefined);
+
+  // A dry run says what it would do. Creating a branch and committing to it is
+  // doing it, so nothing here goes near the repository.
+  if (request.dryRun) {
+    return fixable.length === 0
+      ? { ...nothing, action: 'noop', reason: 'nothing found has a fix to propose', url: openPr?.url ?? null, commits: 0 }
+      : { ...nothing, url: openPr?.url ?? null, commits: fixable.length };
+  }
+
   const session = await open(repo, branch, base, plan.action !== 'append');
   let written = 0;
   try {
@@ -64,9 +85,7 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
       await apply(session.dir, finding.fix.changes);
       if (await commit(session.dir, finding, finding.title)) written += 1;
     }
-    if (!request.dryRun && written > 0) {
-      await push(session.dir, branch, plan.action === 'update');
-    }
+    if (written > 0) await push(session.dir, branch, plan.action === 'update');
   } finally {
     await session.end();
   }
@@ -82,8 +101,6 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
       commits: 0,
     };
   }
-
-  if (request.dryRun) return { ...nothing, url: openPr?.url ?? null, commits: written };
 
   const pr: PullRequest =
     openPr === null

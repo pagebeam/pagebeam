@@ -61,7 +61,7 @@ async function repo(): Promise<string> {
 
 const base = async (findings: Finding[]) => ({
   repo: await repo(), branch: 'pagebeam/drift', base: 'main', findings,
-  comparedWith: null, dryRun: true,
+  comparedWith: null, dryRun: true, complete: true,
 });
 
 test('a finding with a fix becomes a commit and a pull request', async () => {
@@ -119,4 +119,51 @@ test('a branch somebody pushed to is added to rather than replaced', async () =>
   assert.equal(result.action, 'append');
   const log = execFileSync('git', ['-C', where.repo, 'log', '--format=%s', 'main..pagebeam/drift']).toString();
   assert.match(log, /my own work/, 'their commit is still there');
+});
+
+test('a dry run leaves the repository exactly as it found it', async () => {
+  const forge = fake();
+  const where = await base([fixing('a', 'One.\n')]);
+  const before = execFileSync('git', ['-C', where.repo, 'log', '--all', '--format=%H']).toString();
+
+  const result = await write(forge, { ...where, dryRun: true });
+  assert.equal(result.commits, 1, 'it says what it would do');
+  assert.equal(
+    execFileSync('git', ['-C', where.repo, 'log', '--all', '--format=%H']).toString(),
+    before,
+    'and no branch or commit came into being',
+  );
+  assert.deepEqual(forge.calls, ['findOpen'], 'it looked, and nothing else');
+});
+
+test('an incomplete scan does not close what is open', async () => {
+  const forge = fake();
+  const where = await base([fixing('a', 'One.\n')]);
+  await write(forge, { ...where, dryRun: false });
+  const result = await write(forge, { ...where, findings: [], complete: false, dryRun: false });
+  assert.equal(result.action, 'noop');
+  assert.ok(!forge.calls.includes('close'));
+});
+
+test('work pushed to the remote by somebody else is not replaced', async () => {
+  const forge = fake();
+  const where = await base([fixing('a', 'One.\n')]);
+  await write(forge, { ...where, dryRun: false });
+
+  // Somebody commits to the branch and pushes it, so this clone has not heard.
+  const theirs = execFileSync('git', ['-C', where.repo, 'remote', 'get-url', 'origin']).toString().trim();
+  const clone = await mkdtemp(path.join(tmpdir(), 'pagebeam-them-'));
+  execFileSync('git', ['clone', '-q', theirs, clone]);
+  execFileSync('git', ['-C', clone, 'switch', '-q', 'pagebeam/drift']);
+  await writeFile(path.join(clone, 'docs/theirs.md'), 'Theirs.\n');
+  execFileSync('git', ['-C', clone, 'add', '-A']);
+  execFileSync('git', ['-C', clone, '-c', 'user.email=p@p', '-c', 'user.name=p', 'commit', '-qm', 'their push']);
+  execFileSync('git', ['-C', clone, 'push', '-q', 'origin', 'pagebeam/drift']);
+
+  const result = await write(forge, {
+    ...where,
+    findings: [fixing('a', 'One.\n'), fixing('b', 'Two.\n')],
+    dryRun: false,
+  });
+  assert.equal(result.action, 'append', 'this clone never saw their commit, and it still counts');
 });

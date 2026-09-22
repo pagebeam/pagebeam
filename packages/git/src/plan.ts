@@ -23,10 +23,16 @@ export interface PlanInput {
   open: Open | null;
   // False when a person has pushed to the branch, which changes everything.
   ours: boolean;
+  // False when a check was asked for and could not run. Finding nothing is
+  // not the same as having looked everywhere.
+  complete: boolean;
 }
 
-export function planFor({ findings, open, ours }: PlanInput): Plan {
-  const state = stateOf(findings);
+export function planFor({ findings, open, ours, complete }: PlanInput): Plan {
+  // State records what was proposed. A finding nothing can mend was reported
+  // and never offered as a change, so counting it as settled would silence it
+  // for every run after this one.
+  const state = stateOf(findings.filter((f) => f.fix !== undefined));
 
   if (open === null) {
     return findings.length === 0
@@ -35,6 +41,22 @@ export function planFor({ findings, open, ours }: PlanInput): Plan {
   }
 
   if (findings.length === 0) {
+    if (!complete) {
+      return {
+        action: 'noop',
+        reason: 'nothing was found, but not everything was checked, so nothing is closed',
+        findings,
+        state,
+      };
+    }
+    if (!ours) {
+      return {
+        action: 'noop',
+        reason: 'somebody has pushed to this branch, so it is theirs to close',
+        findings,
+        state,
+      };
+    }
     return { action: 'close', reason: 'everything raised has been dealt with', findings, state };
   }
 
