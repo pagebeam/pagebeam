@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 import process from 'node:process';
 import { json, pretty, run } from '@pagebeam/engine';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { configFor, discover, readIfPresent } from '@pagebeam/engine';
 import { propose } from './propose.js';
 
 const USAGE = `pagebeam - find documentation that no longer matches the product
 
   pagebeam check [--cwd <dir>] [--json] [--profile observe|enforce]
   pagebeam fix   [--cwd <dir>] [--publish]
+  pagebeam init  [--cwd <dir>]
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
   --json     machine-readable output
@@ -75,6 +79,32 @@ if (args.command === 'help' || args.command === '--help' || args.command === '-h
   process.exit(0);
 }
 
+// Writing the configuration by looking at the repository, so trying this does
+// not begin with reading about how to describe one.
+if (args.command === 'init') {
+  const found = await discover(args.cwd);
+  const at = path.join(args.cwd, 'pagebeam.config.yaml');
+  if (await readIfPresent(at) !== null) {
+    process.stderr.write('pagebeam.config.yaml is already there. Nothing was written.\n');
+    process.exit(2);
+  }
+  await writeFile(at, configFor(found));
+
+  const said = [`Wrote pagebeam.config.yaml`];
+  said.push(
+    found.docs === null
+      ? '  docs: nothing written in a documentation format was found, so docs.root is a guess'
+      : `  docs: ${found.docs.root}, ${found.docs.pages} page(s)`,
+  );
+  for (const app of found.apps) said.push(`  app:  ${app.name} at ${app.path}, ${app.routes} route(s)`);
+  if (found.apps.length === 0) {
+    said.push('  app:  none found. Add one, or only the documentation can be checked against itself');
+  }
+  said.push('', 'Read it, then run: pagebeam check');
+  process.stdout.write(said.join('\n') + '\n');
+  process.exit(0);
+}
+
 if (args.command !== 'check' && args.command !== 'fix') {
   process.stderr.write(`unknown command: ${args.command}\n\n${USAGE}`);
   process.exit(2);
@@ -82,6 +112,24 @@ if (args.command !== 'check' && args.command !== 'fix') {
 
 // Only a run that will propose something has a reason to draft it.
 const result = await run(args.cwd, { proposing: args.command === 'fix' });
+
+// Guessing where the documentation is and then reporting a clean run tells
+// somebody their documentation is fine when nothing read it.
+if (result.problem !== null && result.configFrom === null) {
+  const found = await discover(args.cwd);
+  process.stderr.write(
+    [
+      'No pagebeam.config.yaml here, so there is nothing to check documentation against.',
+      '',
+      'Run: pagebeam init',
+      '',
+      'It would write:',
+      '',
+      configFor(found).split('\n').map((l) => (l === '' ? l : `  ${l}`)).join('\n'),
+    ].join('\n'),
+  );
+  process.exit(2);
+}
 
 if (args.command === 'fix') {
   try {

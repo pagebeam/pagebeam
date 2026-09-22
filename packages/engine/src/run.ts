@@ -13,7 +13,7 @@ import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
 import { compose, draft, withheld, type Target } from '@pagebeam/model';
-import { loadConfig, loadIgnores } from './load.js';
+import { loadConfig, loadIgnores, NoConfig } from './load.js';
 import { publishedPaths } from './published.js';
 import { reacher } from './reach.js';
 import { settles } from './settles.js';
@@ -581,6 +581,9 @@ export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> 
 
 async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
   const { config, from, asked } = await loadConfig(cwd);
+  // Without one, the only thing to check documentation against is a guess at
+  // where it is, and a clean answer from a guess is worse than no answer.
+  if (from === null) throw new NoConfig(cwd);
   const ignores = new Ignores(await loadIgnores(cwd));
   const docsRoot = path.resolve(cwd, config.docs.root);
   const files = await discover(docsRoot, config.docs.include, config.docs.exclude);

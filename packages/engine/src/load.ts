@@ -40,6 +40,15 @@ export async function loadConfig(
   return { config: parseConfig({ docs: { root: '.' } }), from: null, asked: new Set() };
 }
 
+// Nothing says where the documentation is or what it describes. Guessing and
+// reporting a clean run tells somebody their documentation is fine when
+// nothing read it.
+export class NoConfig extends Error {
+  constructor(readonly cwd: string) {
+    super('no configuration was found, so there is nothing to check documentation against');
+  }
+}
+
 export async function loadIgnores(cwd: string): Promise<IgnoreFile> {
   const text = await readIfPresent(path.join(cwd, '.pagebeam/ignore.yml'));
   if (text === null) return ignoreFileSchema.parse({});
