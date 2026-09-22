@@ -107,6 +107,10 @@ export function checkUndocumented(
       evidence: [
         { kind: 'in', detail: `${area.app}/${area.where}` },
         { kind: 'described', detail: `${area.documented.length} of ${area.controls.length}` },
+        // Every one of them, not the handful a person is shown. Anything
+        // proposing to cover this area needs the whole list or it will cover
+        // the first few and leave the rest exactly as undocumented as before.
+        { kind: 'undocumented', detail: subject.join('\n') },
       ],
     });
   }

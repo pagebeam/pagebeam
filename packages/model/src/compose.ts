@@ -63,9 +63,14 @@ export async function compose(
 ): Promise<Finding | null> {
   if (finding.fix !== undefined) return finding;
 
+  // The detail is what a person is shown, and it stops after a few names.
+  // The evidence carries all of them.
+  const every = finding.evidence.find((e) => e.kind === 'undocumented')?.detail;
   const asked = [
     `Product area: ${finding.doc.path}`,
-    `Controls nothing describes: ${finding.detail}`,
+    every === undefined
+      ? `Controls nothing describes: ${finding.detail}`
+      : `Controls nothing describes, one per line:\n${every}`,
     '',
     target.existing === undefined
       ? target.example === undefined
