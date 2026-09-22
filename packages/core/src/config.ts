@@ -72,6 +72,16 @@ export const configSchema = z.strictObject({
   history: z
     .strictObject({ sinceDays: z.number().int().positive().default(30) })
     .default({}),
+  propose: z
+    .strictObject({
+      repo: z.string().default('.'),
+      branch: z.string().default('pagebeam/drift'),
+      base: z.string().default('main'),
+      labels: z.array(z.string()).default([]),
+      reviewers: z.array(z.string()).default([]),
+      draft: z.boolean().default(false),
+    })
+    .default({}),
   checks: checksSchema.default({}),
 });
 

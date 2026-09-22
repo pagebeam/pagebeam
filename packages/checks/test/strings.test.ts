@@ -102,3 +102,33 @@ test('a phrase sharing words with another label is not a match', () => {
   );
   assert.equal(findings.length, 1, 'only a placeholder label may be matched word by word');
 });
+
+test('an absence rests on how the application reads today, not yesterday', () => {
+  const parsedThen = dictionaryOf(app(['Create a report']));
+  const rawNow = dictionaryOf({
+    app: 'dashboard', rev: null, source: 'raw', whole: true, covered: false, unparsed: [],
+    labels: [], envKeys: [], files: [{ path: 'a.py', text: 'nothing like it' }],
+  });
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [rawNow],
+    [parsedThen],
+    PARSED_PAIRED,
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(
+    findings[0]!.standing,
+    'review',
+    'it was read properly once; it cannot be read properly now',
+  );
+});
+
+test('an absence both sides can read properly is still proven', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(app(['Something else']))],
+    [dictionaryOf(app(['Create a report']))],
+    PARSED_PAIRED,
+  );
+  assert.equal(findings[0]!.standing, 'proven');
+});

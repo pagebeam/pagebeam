@@ -32,11 +32,25 @@ export async function filesAt(root: string, rev: string): Promise<string[]> {
 // ls-tree names files from the directory it runs in, but `show rev:path`
 // resolves from the repository root unless the path is explicitly relative.
 // Without the prefix every read from a nested directory returns nothing.
+export class CannotRead extends Error {
+  constructor(readonly file: string, readonly rev: string, readonly reason: string) {
+    super(`${file} at ${rev} could not be read: ${reason}`);
+  }
+}
+
+// A file that was not there at that revision is an answer. Anything else went
+// wrong, and a reading with a hole in it is not the same as a smaller reading.
+const ABSENT = /does not exist in|exists on disk, but not in|no such path/i;
+
 export async function readAt(root: string, rev: string, file: string): Promise<string | null> {
   const relative = file.startsWith('./') || file.startsWith('../') ? file : `./${file}`;
   return run('git', ['-C', root, 'show', `${rev}:${relative}`], { maxBuffer: BUFFER })
     .then(({ stdout }) => stdout)
-    .catch(() => null);
+    .catch((error: unknown) => {
+      const said = String((error as { stderr?: string }).stderr ?? (error as Error).message);
+      if (ABSENT.test(said)) return null;
+      throw new CannotRead(file, rev, said.split('\n')[0] ?? 'the read failed');
+    });
 }
 
 // A repository younger than the window still has a past. Falling back to its

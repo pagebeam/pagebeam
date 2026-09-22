@@ -1,5 +1,5 @@
 import type { Finding } from '@pagebeam/core';
-import { apply, commit, commitsOn, exists, open, push, remoteCommits } from './branch.js';
+import { apply, baseRef, commit, commitsOn, exists, open, push, remoteCommits } from './branch.js';
 import { bodyFor, titleFor } from './body.js';
 import type { Forge, PullRequest } from './forge.js';
 import { planFor, type Action } from './plan.js';
@@ -39,8 +39,9 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
   // anything is thrown away.
   // Not being able to ask is not an answer. Nothing is replaced or closed on
   // the strength of a question that went unanswered.
-  const onRemote = await remoteCommits(repo, branch, base);
-  const locally = (await exists(repo, branch)) ? await commitsOn(repo, branch, base) : [];
+  const onRemote = await remoteCommits(repo, branch, await baseRef(repo, base));
+  const from = await baseRef(repo, base);
+  const locally = (await exists(repo, branch)) ? await commitsOn(repo, branch, from) : [];
   const theirs =
     (onRemote !== null && onRemote.length > 0 && !byPagebeam(onRemote)) ||
     (locally.length > 0 && !byPagebeam(locally));

@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import process from 'node:process';
 import { json, pretty, run } from '@pagebeam/engine';
+import { propose } from './propose.js';
 
 const USAGE = `pagebeam - find documentation that no longer matches the product
 
   pagebeam check [--cwd <dir>] [--json] [--profile observe|enforce]
+  pagebeam fix   [--cwd <dir>] [--publish]
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
   --json     machine-readable output
+  --publish  actually open or update the pull request. Without it, fix says
+             what it would propose and touches nothing
   --profile  observe: report everything, block nothing (default)
              enforce: block on proven findings this change introduced.
                       A finding of unknown age never blocks here
@@ -23,6 +27,7 @@ interface Args {
   command: string;
   cwd: string;
   json: boolean;
+  publish: boolean;
   profile: 'observe' | 'enforce' | 'enforce-all';
 }
 
@@ -31,10 +36,17 @@ const PROFILES = new Set(['observe', 'enforce', 'enforce-all']);
 class BadUsage extends Error {}
 
 function parse(argv: string[]): Args {
-  const args: Args = { command: argv[0] ?? 'check', cwd: process.cwd(), json: false, profile: 'observe' };
+  const args: Args = {
+    command: argv[0] ?? 'check',
+    cwd: process.cwd(),
+    json: false,
+    publish: false,
+    profile: 'observe',
+  };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '--json') args.json = true;
+    else if (a === '--publish') args.publish = true;
     else if (a === '--cwd') {
       const value = argv[++i];
       if (value === undefined) throw new BadUsage('--cwd needs a directory');
@@ -63,12 +75,24 @@ if (args.command === 'help' || args.command === '--help' || args.command === '-h
   process.exit(0);
 }
 
-if (args.command !== 'check') {
+if (args.command !== 'check' && args.command !== 'fix') {
   process.stderr.write(`unknown command: ${args.command}\n\n${USAGE}`);
   process.exit(2);
 }
 
 const result = await run(args.cwd);
+
+if (args.command === 'fix') {
+  try {
+    const outcome = await propose(args.cwd, result, args.publish);
+    process.stdout.write(outcome.said + '\n');
+    process.exit(outcome.code);
+  } catch (error) {
+    process.stderr.write(`${(error as Error).message}\nNothing was proposed.\n`);
+    process.exit(2);
+  }
+}
+
 process.stdout.write((args.json ? json(result) : pretty(result)) + '\n');
 
 if (result.problem !== null || result.degraded.length > 0) process.exit(2);

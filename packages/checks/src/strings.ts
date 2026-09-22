@@ -60,6 +60,7 @@ export interface Candidate {
   normalised: string;
   page: string;
   line: number;
+  at?: [number, number] | undefined;
 }
 
 export function candidates(pages: DocPage[], strict = true): Candidate[] {
@@ -88,7 +89,13 @@ export function candidates(pages: DocPage[], strict = true): Candidate[] {
       const key = `${page.path}|${normalised}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ literal, normalised, page: page.path, line: run.line });
+      out.push({
+        literal,
+        normalised,
+        page: page.path,
+        line: run.line,
+        ...(run.at ? { at: run.at } : {}),
+      });
     }
   }
   return out;
@@ -97,6 +104,7 @@ export function candidates(pages: DocPage[], strict = true): Candidate[] {
 export interface Dictionary {
   app: string;
   labels: Map<string, string>;
+  details: Map<string, { text: string; kind: string; file: string }>;
   text: string[];
   parsed: boolean;
   source: Source;
@@ -105,13 +113,17 @@ export interface Dictionary {
 
 export function dictionaryOf(snapshot: Snapshot): Dictionary {
   const labels = new Map<string, string>();
+  const details = new Map<string, { text: string; kind: string; file: string }>();
   for (const label of snapshot.labels) {
     const key = normalise(label.text);
-    if (key.length >= 3 && !labels.has(key)) labels.set(key, label.kind);
+    if (key.length < 3 || labels.has(key)) continue;
+    labels.set(key, label.kind);
+    details.set(key, { text: label.text, kind: label.kind, file: label.file });
   }
   return {
     app: snapshot.app,
     labels,
+    details,
     text: snapshot.files.map((f) => normalise(f.text)),
     parsed: snapshot.covered,
     source: snapshot.source,
@@ -181,6 +193,62 @@ export function locate(
   return { app: '', kind: 'assembled', source: bestSource(dictionaries.map((d) => d.source)) };
 }
 
+function similarity(a: string, b: string): number {
+  const grams = (s: string): Set<string> => {
+    const out = new Set<string>();
+    const padded = ` ${s} `;
+    for (let i = 0; i < padded.length - 2; i++) out.add(padded.slice(i, i + 3));
+    return out;
+  };
+  const left = grams(a);
+  const right = grams(b);
+  if (left.size === 0 || right.size === 0) return 0;
+  let shared = 0;
+  for (const g of left) if (right.has(g)) shared += 1;
+  return shared / (left.size + right.size - shared);
+}
+
+export interface Rename {
+  to: string;
+  confidence: number;
+  because: string;
+}
+
+// Only labels that have appeared since are candidates, which is a few dozen
+// rather than every string in the application, and it is why this can be
+// specific rather than a guess dressed up as one.
+export function renameOf(
+  gone: { normalised: string; kind: string; file: string },
+  now: Dictionary,
+  before: Dictionary,
+): Rename | null {
+  const arrived = [...now.details.entries()].filter(([key]) => !before.labels.has(key));
+  if (arrived.length === 0) return null;
+
+  let best: Rename | null = null;
+  for (const [, detail] of arrived) {
+    const sameFile = detail.file === gone.file;
+    const sameKind = detail.kind === gone.kind;
+    const alike = similarity(gone.normalised, normalise(detail.text));
+
+    const [confidence, because] =
+      sameFile && sameKind
+        ? ([0.95, `the same ${detail.kind} in the same file now reads this way`] as const)
+        : sameFile
+          ? ([0.8, 'it appeared in the same file'] as const)
+          : alike > 0.6
+            ? ([0.7, 'it is close to what was there'] as const)
+            : ([0, ''] as const);
+
+    if (confidence > 0 && (best === null || confidence > best.confidence)) {
+      best = { to: detail.text, confidence, because };
+    }
+  }
+  return best;
+}
+
+const AUTOFIX_ABOVE = 0.8;
+
 export function compare(
   found_: Candidate[],
   now: Dictionary[],
@@ -201,17 +269,44 @@ export function compare(
       if (was === null) continue;
     }
 
-    // A claim about one application cannot borrow another's parser, nor a
-    // completeness the application it came from did not have.
+    // The claim is that a control is gone, and only today's reading can carry
+    // that. Yesterday's reading proves it was once there, which is a different
+    // thing; if the application can only be searched as text today, then that
+    // is what the absence rests on however well it was read before.
     const owner = was?.app;
     const seen = now.find((d) => d.app === owner);
     const mine: Grade = {
-      source: was?.source ?? grade.source,
+      source: seen?.source ?? was?.source ?? grade.source,
       depth: grade.depth,
       whole: seen?.whole ?? grade.whole ?? true,
     };
     const words = candidate.literal.split(/\s+/).length;
     const confidence = confidenceOf(mine, words >= 2 ? 0.9 : 0.6);
+
+    // A replacement is only proposed when the old label really was there, the
+    // new one really is, and the page says exactly where to write.
+    const wasIn = before?.find((d) => d.app === was?.app);
+    const nowIs = now.find((d) => d.app === was?.app);
+    const detail = wasIn?.details.get(candidate.normalised);
+    const rename =
+      wasIn !== undefined && nowIs !== undefined && detail !== undefined
+        ? renameOf({ normalised: candidate.normalised, kind: detail.kind, file: detail.file }, nowIs, wasIn)
+        : null;
+
+    const fix =
+      rename !== null && rename.confidence >= AUTOFIX_ABOVE && candidate.at !== undefined
+        ? {
+            kind: 'text-splice' as const,
+            author: 'deterministic' as const,
+            changes: [
+              {
+                path: candidate.page,
+                mode: 'write' as const,
+                splice: { start: candidate.at[0], end: candidate.at[1], text: rename.to },
+              },
+            ],
+          }
+        : undefined;
 
     findings.push({
       id: findingId('strings', candidate.page, candidate.normalised),
@@ -222,14 +317,19 @@ export function compare(
       severity: severityOf(mine),
       confidence,
       doc: { path: candidate.page, line: candidate.line },
+      ...(fix ? { fix } : {}),
       title:
-        was === null
-          ? `"${candidate.literal}" is in no application`
-          : `"${candidate.literal}" was removed from ${was.app}`,
+        rename !== null && fix !== undefined
+          ? `"${candidate.literal}" is now called "${rename.to}"`
+          : was === null
+            ? `"${candidate.literal}" is in no application`
+            : `"${candidate.literal}" was removed from ${was.app}`,
       detail:
-        (was === null
-          ? `This page tells the reader to look for "${candidate.literal}". Nothing in ${searched} has it.`
-          : `This page tells the reader to look for "${candidate.literal}". It was a ${was.kind} in ${was.app} and is gone.`) +
+        (rename !== null && fix !== undefined
+          ? `This page tells the reader to look for "${candidate.literal}". It was a ${was?.kind} in ${was?.app} and ${rename.because}.`
+          : was === null
+            ? `This page tells the reader to look for "${candidate.literal}". Nothing in ${searched} has it.`
+            : `This page tells the reader to look for "${candidate.literal}". It was a ${was.kind} in ${was.app} and is gone.`) +
         (() => {
           const caveat = caveatOf(mine) ?? runCaveat;
           return caveat === null ? '' : ` ${caveat}`;

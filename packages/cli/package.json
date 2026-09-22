@@ -2,11 +2,21 @@
   "name": "pagebeam",
   "version": "0.0.1",
   "type": "module",
-  "bin": { "pagebeam": "./dist/main.js" },
+  "bin": {
+    "pagebeam": "./dist/main.js"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b" },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
   "license": "MIT",
-  "dependencies": { "@pagebeam/core": "0.0.1", "@pagebeam/engine": "0.0.1" }
+  "dependencies": {
+    "@pagebeam/core": "0.0.1",
+    "@pagebeam/engine": "0.0.1",
+    "@pagebeam/git": "0.0.1"
+  }
 }

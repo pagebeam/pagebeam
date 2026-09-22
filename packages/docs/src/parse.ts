@@ -118,10 +118,14 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
         .map((c: any) => c.value)
         .join('');
       if (text !== '') {
+        const inner = (node.children ?? []).filter((c: any) => c.type === 'text');
+        const from = inner[0]?.position?.start?.offset;
+        const to = inner[inner.length - 1]?.position?.end?.offset;
         emphasised.push({
           value: text,
           line: start?.line ?? 1,
           marker: node.type === 'strong' ? 'strong' : 'emphasis',
+          ...(typeof from === 'number' && typeof to === 'number' ? { at: [from, to] as [number, number] } : {}),
           ...around(raw, node.position?.start?.offset ?? 0, node.position?.end?.offset ?? 0),
         });
       }
@@ -217,10 +221,17 @@ async function parseAstro(
       if (name !== null && name in EMPHASIS_TAGS) {
         const text = textOf(node).replace(/\s+/g, ' ').trim();
         if (text !== '') {
+          const opens = raw.indexOf('>', offset);
+          const closes = opens === -1 ? -1 : raw.indexOf('</', opens);
+          const exact =
+            opens !== -1 && closes !== -1 && raw.slice(opens + 1, closes).trim() === text
+              ? ([opens + 1, closes] as [number, number])
+              : undefined;
           emphasised.push({
             value: text,
             line,
             marker: EMPHASIS_TAGS[name] as 'strong' | 'emphasis' | 'code',
+            ...(exact ? { at: exact } : {}),
             ...around(raw, offset, offset),
           });
           if (name === 'code') codeSpans.push({ value: text, line });

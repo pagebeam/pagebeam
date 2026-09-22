@@ -18,6 +18,9 @@ export interface DocEmphasis {
   marker: 'strong' | 'emphasis' | 'code';
   before: string;
   after: string;
+  // Where the text itself sits in the file, so a replacement can change those
+  // bytes and nothing else. Absent where the parser cannot say.
+  at?: [number, number];
 }
 
 export interface DocCodeBlock {

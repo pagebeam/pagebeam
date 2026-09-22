@@ -9,9 +9,20 @@ import { messageFor } from './trailers.js';
 const run = promisify(execFile);
 const BUFFER = 1 << 28;
 
+// An error that does not say what went wrong costs more than it saves.
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await run('git', ['-C', cwd, ...args], { maxBuffer: BUFFER });
-  return stdout;
+  try {
+    const { stdout } = await run('git', ['-C', cwd, ...args], { maxBuffer: BUFFER });
+    return stdout;
+  } catch (error) {
+    const said = String((error as { stderr?: string }).stderr ?? '').trim();
+    throw Object.assign(
+      new Error(`git ${args.join(' ')} failed${said === '' ? '' : `: ${said}`}`),
+      // Callers distinguish "no such ref" from "the remote refused", and that
+      // distinction is the exit code.
+      { code: (error as { code?: number }).code ?? null },
+    );
+  }
 }
 
 export async function exists(repo: string, branch: string): Promise<boolean> {
@@ -34,12 +45,23 @@ export interface Session {
 
 // The tool works in a checkout of its own. Somebody's branch, their staged
 // work and their open editor are none of its business.
+// What is proposed is proposed against what everybody else can see. Building
+// on a local base would sweep up commits sitting here unpushed and offer them
+// as part of the change, and they would then read as somebody else's work.
+export async function baseRef(repo: string, base: string): Promise<string> {
+  const fetched = await git(repo, 'fetch', '--quiet', 'origin', `${base}:refs/pagebeam/base`)
+    .then(() => true)
+    .catch(() => false);
+  return fetched ? 'refs/pagebeam/base' : base;
+}
+
 export async function open(repo: string, branch: string, base: string, fresh: boolean): Promise<Session> {
   const dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-branch-'));
   const at = path.join(dir, 'tree');
+  const from = await baseRef(repo, base);
 
   if (fresh || !(await exists(repo, branch))) {
-    await git(repo, 'worktree', 'add', '--detach', at, base);
+    await git(repo, 'worktree', 'add', '--detach', at, from);
     await git(at, 'switch', '-C', branch);
     return session(repo, dir, at);
   }
@@ -167,8 +189,26 @@ export async function commit(dir: string, finding: Finding, subject: string): Pr
   return true;
 }
 
+// A lease with nothing named is a lease against a remote-tracking ref, and a
+// worktree made from the base has none, so the expectation is stated outright:
+// replace the branch only if it is still exactly what was read a moment ago.
 export async function push(dir: string, branch: string, force: boolean): Promise<void> {
-  await git(dir, 'push', ...(force ? ['--force-with-lease'] : []), 'origin', `HEAD:${branch}`);
+  if (!force) {
+    await git(dir, 'push', 'origin', `HEAD:${branch}`);
+    return;
+  }
+
+  const expected = await git(dir, 'ls-remote', 'origin', `refs/heads/${branch}`)
+    .then((out) => out.split(/\s+/)[0] ?? '')
+    .catch(() => '');
+
+  await git(
+    dir,
+    'push',
+    expected === '' ? '--force-with-lease' : `--force-with-lease=${branch}:${expected}`,
+    'origin',
+    `HEAD:${branch}`,
+  );
 }
 
 // Ownership decided from a local ref is decided from whatever this clone last
