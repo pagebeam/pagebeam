@@ -82,6 +82,7 @@ export async function propose(
 
   const outcome = await write(host, {
     repo,
+    apps: result.apps,
     branch: config.propose.branch,
     base: config.propose.base,
     findings,

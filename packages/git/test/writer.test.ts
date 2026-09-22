@@ -181,3 +181,66 @@ test('a remote that cannot be asked stops the run rather than proceeding', async
   );
   assert.ok(!forge.calls.includes('close'));
 });
+
+// Two product repositories writing into one documentation repository. Each
+// run only knows its own findings, and must not undo the other's.
+const forApp = (id: string, app: string, file: string, text: string): Finding => ({
+  id, revision: text, check: 'strings', standing: 'proven', severity: 'error', confidence: 1,
+  app,
+  doc: { path: `docs/${file}` }, title: `${id} was renamed`, detail: 'It moved.', evidence: [],
+  fix: {
+    kind: 'text-splice', author: 'deterministic',
+    changes: [{ path: `docs/${file}`, mode: 'write', contents: text }],
+  },
+});
+
+const both = async (dir: string): Promise<void> => {
+  await writeFile(path.join(dir, 'docs/b.md'), 'Original.\n');
+  execFileSync('git', ['-C', dir, 'add', '-A']);
+  execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'second']);
+  execFileSync('git', ['-C', dir, 'push', '-q', 'origin', 'main']);
+};
+
+test('a second application does not undo what the first proposed', async () => {
+  const dir = await repo();
+  await both(dir);
+  const forge = fake();
+  const shared = { repo: dir, branch: 'pagebeam/drift', base: 'main', comparedWith: null, complete: true };
+
+  await write(forge, { ...shared, findings: [forApp('ui-1', 'ui', 'a.md', 'From the ui.\n')] });
+  await write(forge, { ...shared, findings: [forApp('api-1', 'webservice', 'b.md', 'From the api.\n')] });
+
+  const onBranch = execFileSync('git', ['-C', dir, 'log', '--format=%B%x00', 'main..pagebeam/drift'])
+    .toString()
+    .split('\u0000')
+    .filter((m) => m.trim() !== '');
+  assert.equal(onBranch.length, 2, 'both applications are still represented');
+  assert.ok(onBranch.some((m) => m.includes('Pagebeam-App: ui')), 'the first was kept');
+  assert.ok(onBranch.some((m) => m.includes('Pagebeam-App: webservice')), 'the second was added');
+});
+
+test('one application going quiet does not close the other out', async () => {
+  const dir = await repo();
+  await both(dir);
+  const forge = fake();
+  const shared = { repo: dir, branch: 'pagebeam/drift', base: 'main', comparedWith: null, complete: true };
+
+  await write(forge, { ...shared, findings: [forApp('ui-1', 'ui', 'a.md', 'From the ui.\n')] });
+  const outcome = await write(forge, { ...shared, findings: [] });
+
+  assert.equal(outcome.action, 'noop');
+  assert.match(outcome.reason, /another application still has findings open/);
+  assert.ok(!forge.calls.includes('close'), 'the pull request stays open');
+});
+
+test('an application that fixed everything still closes its own pull request', async () => {
+  const dir = await repo();
+  const forge = fake();
+  const shared = { repo: dir, branch: 'pagebeam/drift', base: 'main', comparedWith: null, complete: true, apps: ['ui'] };
+
+  await write(forge, { ...shared, findings: [forApp('ui-1', 'ui', 'a.md', 'From the ui.\n')] });
+  const outcome = await write(forge, { ...shared, findings: [] });
+
+  assert.equal(outcome.action, 'close', 'its own commits are not somebody else to wait for');
+  assert.ok(forge.calls.includes('close'));
+});

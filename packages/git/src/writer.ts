@@ -1,15 +1,29 @@
 import type { Finding } from '@pagebeam/core';
-import { apply, baseRef, commit, commitsOn, exists, open, push, remoteCommits } from './branch.js';
+import {
+  apply,
+  baseRef,
+  commit,
+  commitsOn,
+  entriesOn,
+  exists,
+  open,
+  push,
+  remoteCommits,
+  replay,
+} from './branch.js';
 import { bodyFor, titleFor } from './body.js';
 import type { Forge, PullRequest } from './forge.js';
 import { planFor, type Action } from './plan.js';
-import { byPagebeam } from './trailers.js';
+import { byPagebeam, readTrailers } from './trailers.js';
 
 export interface WriteRequest {
   repo: string;
   branch: string;
   base: string;
   findings: Finding[];
+  // Every application this run examined. A run owns the commits raised for the
+  // applications it looked at, whether or not it still has findings for them.
+  apps?: string[] | undefined;
   comparedWith: string | null;
   // False when a check was asked for and could not run.
   complete: boolean;
@@ -30,6 +44,9 @@ export interface Outcome {
 
 export async function write(forge: Forge, request: WriteRequest): Promise<Outcome> {
   const { repo, branch, base, findings } = request;
+  const mine = new Set(
+    request.apps ?? findings.map((f) => f.app).filter((a): a is string => a !== undefined),
+  );
 
   const openPr = await forge.findOpen(branch);
 
@@ -56,10 +73,26 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
   const title = titleFor(findings);
   const body = bodyFor(findings, plan.state, request.comparedWith);
   const nothing = { action: plan.action, reason: plan.reason, title, body };
+  const done = (): typeof nothing => ({ ...nothing, action });
 
   if (plan.action === 'noop') return { ...nothing, url: openPr?.url ?? null, commits: 0 };
 
   if (plan.action === 'close') {
+    // Everything this run raised is dealt with. Another application's findings
+    // may not be, and they live on the same branch.
+    const left = (await entriesOn(repo, branch, from)).filter((entry) => {
+      const trailers = readTrailers(entry.message);
+      return trailers !== null && trailers.app !== null && !mine.has(trailers.app);
+    });
+    if (left.length > 0) {
+      return {
+        ...nothing,
+        action: 'noop',
+        reason: 'another application still has findings open on this branch',
+        url: openPr?.url ?? null,
+        commits: 0,
+      };
+    }
     if (!request.dryRun && openPr !== null) {
       await forge.close(openPr.number, 'Everything raised here has been dealt with.');
     }
@@ -82,22 +115,42 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
       : { ...nothing, url: openPr?.url ?? null, commits: fixable.length };
   }
 
-  const session = await open(repo, branch, base, plan.action !== 'append');
+  // One documentation repository can be written to by several product
+  // repositories. Rebuilding from the base is what keeps this branch honest as
+  // findings come and go, but it would throw away work another application
+  // raised, so that work is replayed first and this run only replaces its own.
+  const others =
+    plan.action === 'update' && mine.size > 0
+      ? (await entriesOn(repo, branch, from)).filter((entry) => {
+          const trailers = readTrailers(entry.message);
+          return trailers !== null && trailers.app !== null && !mine.has(trailers.app);
+        })
+      : [];
+
+  let session = await open(repo, branch, base, plan.action !== 'append');
+  let action = plan.action;
   let written = 0;
   try {
+    if (others.length > 0 && !(await replay(session.dir, others.map((e) => e.sha)))) {
+      // Their edits and ours meet in the same bytes. Adding to the branch
+      // leaves both intact; rebuilding would drop theirs.
+      await session.end();
+      session = await open(repo, branch, base, false);
+      action = 'append';
+    }
 
     for (const finding of fixable) {
       await apply(session.dir, finding.fix!.changes);
       if (await commit(session.dir, finding, finding.title)) written += 1;
     }
-    if (written > 0) await push(session.dir, branch, plan.action === 'update');
+    if (written > 0 || others.length > 0) await push(session.dir, branch, action === 'update');
   } finally {
     await session.end();
   }
 
   // A pull request needs something to propose. Findings nothing can mend are
   // reported by the run itself rather than raised as a change to review.
-  if (written === 0) {
+  if (written === 0 && others.length === 0) {
     return {
       ...nothing,
       action: 'noop',
@@ -120,5 +173,5 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
         })
       : await forge.update(openPr.number, title, body);
 
-  return { ...nothing, url: pr.url, commits: written };
+  return { ...done(), url: pr.url, commits: written };
 }
