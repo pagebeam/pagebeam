@@ -6,8 +6,32 @@ pagebeam checks every page against the application it describes, tells you how
 sure it is, and opens the pull request that fixes what it can. Open source, in
 the repo you already have.
 
+## Try it
+
+Two commands, in the repository holding your documentation:
+
 ```
+npx pagebeam init
 npx pagebeam check
+```
+
+`init` looks at what is there and writes `pagebeam.config.yaml`: the directory
+your prose lives in, and any application beside it. It says what it worked out
+and what it could not, so you can correct it before the first run rather than
+after.
+
+Nothing is written outside that one file, and nothing reaches a remote. `check`
+reads and reports.
+
+If your product lives in a different repository from its documentation, check
+out both and point at them:
+
+```yaml
+docs:
+  root: ../docs/content
+apps:
+  - name: dashboard
+    path: .
 ```
 
 ## Checks
@@ -41,6 +65,7 @@ Only `proven` findings can fail a build, and only under an enforcing profile.
 ## Usage
 
 ```
+pagebeam init                      write a config by looking at the repository
 pagebeam check                     report everything, block nothing
 pagebeam check --profile enforce   fail on proven findings this change introduced
 pagebeam fix                       say what it would propose
