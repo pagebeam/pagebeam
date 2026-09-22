@@ -3,3 +3,4 @@ export * from './run.js';
 export * from './report.js';
 export * from './reach.js';
 export * from './published.js';
+export * from './settles.js';

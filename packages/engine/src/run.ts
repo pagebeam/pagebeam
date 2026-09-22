@@ -16,6 +16,7 @@ import { compose, draft, withheld, type Target } from '@pagebeam/model';
 import { loadConfig, loadIgnores } from './load.js';
 import { publishedPaths } from './published.js';
 import { reacher } from './reach.js';
+import { settles } from './settles.js';
 
 export interface RunResult {
   problem: string | null;
@@ -430,6 +431,25 @@ function readingFor(
   return sending;
 }
 
+// A draft is a claim that the problem is gone. Nothing is proposed on the
+// strength of a claim: the page is read back, and what it was asked to settle
+// has to have stopped being true of it.
+async function accepted(
+  finding: Finding,
+  drafted: Finding,
+  was: string | null,
+  told: string[],
+): Promise<Finding> {
+  const contents = drafted.fix?.changes[0]?.contents;
+  if (typeof contents !== 'string') return finding;
+
+  const refused = await settles(drafted, was, contents);
+  if (refused === null) return drafted;
+
+  told.push(`model: the page drafted for ${finding.doc.path} was not proposed: ${refused.because}`);
+  return finding;
+}
+
 async function mend(
   cwd: string,
   config: PagebeamConfig,
@@ -484,7 +504,10 @@ async function mend(
       if (finding.fix !== undefined || !asking(finding.check)) return finding;
 
       const page = sourceOf.get(finding.doc.path);
-      if (page !== undefined) return (await draft(router, finding, page, skills)) ?? finding;
+      if (page !== undefined) {
+        const drafted = await draft(router, finding, page, skills);
+        return drafted === null ? finding : await accepted(finding, drafted, page, told);
+      }
 
       // A screen nobody documented names no page, because the page is what is
       // missing. Where one would sit is worked out from the area it covers.
@@ -493,7 +516,10 @@ async function mend(
       if (target === null) return finding;
       const source = settings.sendSource ? readingFor(finding, snapshots, told) : [];
       const withSource: Target = source.length === 0 ? target : { ...target, source };
-      return (await compose(router, finding, withSource, skills)) ?? finding;
+      const written = await compose(router, finding, withSource, skills);
+      return written === null
+        ? finding
+        : await accepted(finding, written, target.existing ?? null, told);
     }),
   );
 }
