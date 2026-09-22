@@ -63,7 +63,7 @@ jobs:
       # instead of refusing because of the part that already worked.
       - name: Publish
         run: |
-          for p in probe core docs app checks git model engine cli; do
+          for p in core docs app checks git model engine cli; do
             name=$(node -p "require('./packages/$p/package.json').name")
             version=$(node -p "require('./packages/$p/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then
