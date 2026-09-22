@@ -23,9 +23,13 @@ export interface Area {
   documented: string[];
 }
 
+// The directory a file sits in, because that is the nearest thing in a source
+// tree to a part of the product somebody would meet. Taking the file itself
+// would make one screen of every component and report them one at a time,
+// which is what this check exists not to do.
 function areaOf(file: string): string {
   const parts = file.split('/');
-  return parts.length <= 2 ? file : parts.slice(0, 2).join('/');
+  return parts.length <= 1 ? '.' : parts.slice(0, -1).join('/');
 }
 
 // What the application offers, gathered the way somebody would meet it: a

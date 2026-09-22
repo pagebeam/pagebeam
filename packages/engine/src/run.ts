@@ -12,7 +12,7 @@ import { history, snapshot } from '@pagebeam/app';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
-import { draft } from '@pagebeam/model';
+import { compose, draft, type Target } from '@pagebeam/model';
 import { loadConfig, loadIgnores } from './load.js';
 import { reacher } from './reach.js';
 
@@ -397,11 +397,46 @@ async function mend(
 
   return Promise.all(
     findings.map(async (finding) => {
+      if (finding.fix !== undefined) return finding;
+
       const page = sourceOf.get(finding.doc.path);
-      if (finding.fix !== undefined || page === undefined) return finding;
-      return (await draft(router, finding, page, skills)) ?? finding;
+      if (page !== undefined) return (await draft(router, finding, page, skills)) ?? finding;
+
+      // A screen nobody documented names no page, because the page is what is
+      // missing. Where one would sit is worked out from the area it covers.
+      if (finding.check !== 'undocumented') return finding;
+      const target = placeFor(finding, pages);
+      return target === null ? finding : ((await compose(router, finding, target, skills)) ?? finding);
     }),
   );
+}
+
+// Where a page covering this area would go, and something to model it on. The
+// name is taken from the area rather than invented, so the same area proposes
+// the same page every run instead of a new one.
+function placeFor(finding: Finding, pages: DocPage[]): Target | null {
+  const example = pages.find((page) => page.raw.trim() !== '');
+  if (example === undefined) return null;
+
+  const extension = path.extname(example.path) || '.md';
+  const directory = path.dirname(example.path);
+  // Named after the area, with the shape of a source tree taken off it: a
+  // reader looks for "dashboard", not for the file extension it happens to
+  // have been written in.
+  const named = (finding.doc.path.split('/').pop() ?? finding.doc.path)
+    .replace(/\.[a-zA-Z0-9]+$/, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+  if (named === '') return null;
+
+  const at = path.posix.join(directory === '.' ? '' : directory, `${named}${extension}`);
+  const already = pages.find((page) => page.path === at);
+
+  return already === undefined
+    ? { path: at, example: { path: example.path, text: example.raw } }
+    : { path: at, existing: already.raw };
 }
 
 export async function run(cwd: string): Promise<RunResult> {
