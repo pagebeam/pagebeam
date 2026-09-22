@@ -1,5 +1,14 @@
 import type { Label, Source } from '@pagebeam/core';
 
+export class CannotParse extends Error {
+  constructor(
+    readonly file: string,
+    readonly reason: string,
+  ) {
+    super(`${file} could not be parsed: ${reason}`);
+  }
+}
+
 export interface Extractor {
   readonly name: string;
   readonly source: Source;

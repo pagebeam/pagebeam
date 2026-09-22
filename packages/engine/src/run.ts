@@ -82,22 +82,32 @@ async function routeSet(
   earlier: boolean,
 ): Promise<links.RouteSet> {
   const publicDir = config.docs.publicDir ? path.resolve(cwd, config.docs.publicDir) : undefined;
+  const prefix = config.docs.routeBase.replace(/\/+$/, '');
   const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
   const candidates = declared ? [declared] : [path.join(cwd, 'dist'), path.join(cwd, 'build')];
 
   // The build on disk is today's. Comparing yesterday's pages against it would
   // let a route deleted today make an old link look like it was always broken.
+  const fromSource = links.routesOf(pages, links.baseFromPatterns(config.docs.include), prefix);
+
   for (const dir of earlier ? [] : candidates) {
     if (!(await exists(dir))) continue;
     const routes = await links.routesFromBuild(dir);
-    if (routes.size > 0) {
-      return { routes, source: 'build', docsRoot, ...(publicDir ? { publicDir } : {}) };
+    if (routes.size === 0) continue;
+
+    // A build guessed at rather than declared has to be shown to belong to
+    // this documentation: most of what the source publishes must be in it.
+    if (declared === null) {
+      const shared = [...fromSource].filter((r) => routes.has(r)).length;
+      if (fromSource.size === 0 || shared / fromSource.size < 0.5) continue;
     }
+    return { routes, source: 'build', docsRoot, ...(publicDir ? { publicDir } : {}) };
   }
-  const base = links.baseFromPatterns(config.docs.include);
-  const prefix = config.docs.routeBase.replace(/\/+$/, '');
-  return { routes: links.routesOf(pages, base, prefix), source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
+  return { routes: fromSource, source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
 }
+
+let routeModelNow: 'build' | 'content' | null = null;
+let routeModelThen: 'build' | 'content' | null = null;
 
 async function runLinks(
   pages: DocPage[],
@@ -110,6 +120,8 @@ async function runLinks(
   if (config.checks.links === false) return [];
   const options = config.checks.links;
   const set = await routeSet(pages, cwd, config, docsRoot, earlier);
+  if (earlier) routeModelThen = set.source;
+  else routeModelNow = set.source;
   if (options.external && !earlier) {
     set.reach = reacher({
       timeoutMs: options.timeoutMs,
@@ -411,7 +423,9 @@ async function attempt(cwd: string): Promise<RunResult> {
   const appsHaveAPast = evidence !== null && evidence.before !== null && evidence.complete;
   const comparable = (check: string): boolean => {
     if (then === null) return false;
-    if (NEEDS_DOCS.has(check)) return true;
+    // The earlier pass never reads today's build, so when the present one did,
+    // the two are judging routes by different rules and no age follows.
+    if (NEEDS_DOCS.has(check)) return routeModelNow === routeModelThen;
     return NEEDS_APPS.has(check) && appsHaveAPast;
   };
 

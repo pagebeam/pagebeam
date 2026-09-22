@@ -98,7 +98,7 @@ export function checkCitations(
   const seen = new Set<string>();
 
   for (const c of cited) {
-    const key = `${c.method} ${templatise(c.path, ops)}`;
+    const key = `${c.method} ${templatise(c.path, ops, c.method)}`;
     if (known.has(key) || seen.has(`${c.page}|${key}`)) continue;
     seen.add(`${c.page}|${key}`);
     findings.push({
@@ -119,14 +119,16 @@ export function checkCitations(
 }
 
 // /users/123 in a worked example is the same operation as /users/{id}.
-export function templatise(p: string, against: Operation[]): string {
-  if (against.some((o) => o.path === p)) return p;
+export function templatise(p: string, against: Operation[], method?: string): string {
+  const candidates = method === undefined ? against : against.filter((o) => o.method === method);
+  const pool = candidates.length > 0 ? candidates : against;
+  if (pool.some((o) => o.path === p)) return p;
+
   const segments = p.split('/');
-  for (const op of against) {
+  for (const op of pool) {
     const parts = op.path.split('/');
     if (parts.length !== segments.length) continue;
-    const fits = parts.every((part, i) => part.startsWith('{') || part === segments[i]);
-    if (fits) return op.path;
+    if (parts.every((part, i) => part.startsWith('{') || part === segments[i])) return op.path;
   }
   return p;
 }
@@ -138,7 +140,7 @@ export function checkCoverage(
   app: string,
 ): Finding[] {
   const documented = new Set(
-    citations(pages).map((c) => `${c.method} ${templatise(c.path, ops)}`),
+    citations(pages).map((c) => `${c.method} ${templatise(c.path, ops, c.method)}`),
   );
   const undocumented = ops.filter((o) => !documented.has(`${o.method} ${o.path}`));
   if (undocumented.length === 0) return [];

@@ -93,6 +93,10 @@ export interface Snapshot {
   whole: boolean;
   // Why the running application could not be read, when it was asked for.
   refused?: string;
+  // Whether a parser claimed this application's files at all, which is a
+  // different question from whether it found any controls in them.
+  covered: boolean;
+  unparsed: { file: string; reason: string }[];
   labels: Label[];
   envKeys: string[];
   files: { path: string; text: string }[];

@@ -11,7 +11,7 @@ const page = (value: string): DocPage => ({
 });
 
 const app = (text: string, file: string): Snapshot => ({
-  app: 'dashboard', rev: null, source: 'parsed',
+  app: 'dashboard', rev: null, source: 'parsed', whole: true, covered: true, unparsed: [],
   labels: [{ text, kind: 'button', file }], envKeys: [], files: [],
 });
 
@@ -81,7 +81,7 @@ test('several controls on one page make one finding, not several', () => {
 });
 
 const withLabels = (labels: [string, string][], file: string): Snapshot => ({
-  app: 'dashboard', rev: null, source: 'parsed',
+  app: 'dashboard', rev: null, source: 'parsed', whole: true, covered: true, unparsed: [],
   labels: labels.map(([text, kind]) => ({ text, kind, file })), envKeys: [], files: [],
 });
 
@@ -120,7 +120,7 @@ test('a control changing what kind of thing it is counts', () => {
 });
 
 const noParser = (files: [string, string][]): Snapshot => ({
-  app: 'core', rev: null, source: 'raw', labels: [], envKeys: [],
+  app: 'core', rev: null, source: 'raw', whole: true, covered: false, unparsed: [], labels: [], envKeys: [],
   files: files.map(([path, text]) => ({ path, text })),
 });
 

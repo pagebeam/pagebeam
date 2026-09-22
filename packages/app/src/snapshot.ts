@@ -3,7 +3,7 @@ import path from 'node:path';
 import { glob } from 'tinyglobby';
 import picomatch from 'picomatch';
 import { bestSource, type Label, type Snapshot, type Source } from '@pagebeam/core';
-import { Extractors } from './extractor.js';
+import { CannotParse, Extractors } from './extractor.js';
 import { filesAt, readAt } from './git.js';
 import { raw } from './raw.js';
 import { render, unavailable, type Auth, type Route } from './render.js';
@@ -69,11 +69,12 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
   const labels: Label[] = [];
   const files_: { path: string; text: string }[] = [];
   const sources: Source[] = [];
+  const unparsed: { file: string; reason: string }[] = [];
 
   for (const file of files) {
     const source =
       rev === undefined
-        ? await readFile(path.join(request.root, file), 'utf8').catch(() => null)
+        ? await readOrThrow(path.join(request.root, file))
         : await readAt(request.root, rev, file);
     if (source === null) continue;
 
@@ -81,7 +82,12 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     const extractor = extractors.for(file);
     if (extractor === null) continue;
     sources.push(extractor.source);
-    labels.push(...extractor.extract(source, file));
+    try {
+      labels.push(...extractor.extract(source, file));
+    } catch (error) {
+      if (!(error instanceof CannotParse)) throw error;
+      unparsed.push({ file, reason: error.reason });
+    }
   }
 
   const envKeys = new Set<string>();
@@ -129,6 +135,8 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     rev: rev ?? null,
     source,
     whole,
+    covered: sources.some((s) => s !== 'raw'),
+    unparsed,
     ...(refused === null ? {} : { refused }),
     labels,
     envKeys: [...envKeys],

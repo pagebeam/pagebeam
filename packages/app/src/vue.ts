@@ -1,7 +1,7 @@
 import { parse } from '@vue/compiler-sfc';
 import { parseExpression } from '@babel/parser';
 import type { Label } from '@pagebeam/core';
-import type { Extractor } from './extractor.js';
+import { CannotParse, type Extractor } from './extractor.js';
 
 import { CONTROL, LABEL_ATTRS, usable } from './rules.js';
 
@@ -90,10 +90,13 @@ export const vue: Extractor = {
     let descriptor;
     try {
       const parsed = parse(source, { filename: file });
-      if (parsed.errors.length > 0) return [];
+      if (parsed.errors.length > 0) {
+        throw new CannotParse(file, String(parsed.errors[0]?.message ?? 'unparseable'));
+      }
       descriptor = parsed.descriptor;
-    } catch {
-      return [];
+    } catch (error) {
+      if (error instanceof CannotParse) throw error;
+      throw new CannotParse(file, (error as Error).message.split('\n')[0] ?? 'unparseable');
     }
     if (!descriptor.template?.ast) return [];
     const out: Label[] = [];

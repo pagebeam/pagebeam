@@ -62,3 +62,25 @@ test('a reference outside the document is reported, not silently dropped', async
   assert.deepEqual(operations, []);
   assert.equal(unresolved.length, 1);
 });
+
+test('a worked example resolves against its own method', () => {
+  const ops = [
+    { method: 'GET', path: '/users/{id}' },
+    { method: 'DELETE', path: '/users/{key}' },
+  ];
+  assert.equal(templatise('/users/7', ops, 'DELETE'), '/users/{key}');
+  assert.equal(templatise('/users/7', ops, 'GET'), '/users/{id}');
+});
+
+test('an endpoint documented with a concrete value is not called absent', () => {
+  const ops = [
+    { method: 'GET', path: '/users/{id}' },
+    { method: 'DELETE', path: '/users/{key}' },
+  ];
+  const findings = checkCitations(
+    [{ method: 'DELETE', path: '/users/7', page: 'a.md', line: 1 }],
+    ops,
+    'api',
+  );
+  assert.deepEqual(findings, [], 'DELETE /users/7 is DELETE /users/{key}');
+});

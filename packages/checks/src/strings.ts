@@ -113,7 +113,7 @@ export function dictionaryOf(snapshot: Snapshot): Dictionary {
     app: snapshot.app,
     labels,
     text: snapshot.files.map((f) => normalise(f.text)),
-    parsed: snapshot.labels.length > 0,
+    parsed: snapshot.covered,
     source: snapshot.source,
     whole: snapshot.whole,
   };

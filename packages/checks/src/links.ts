@@ -3,7 +3,7 @@ import path from 'node:path';
 import { findingId, findingRevision, type Finding } from '@pagebeam/core';
 import type { DocLink, DocPage } from '@pagebeam/docs';
 
-export type Verdict = 'alive' | 'dead' | 'unknown';
+export type Verdict = 'alive' | 'dead' | 'unknown' | 'skipped';
 
 export interface RouteSet {
   routes: Set<string>;
@@ -86,7 +86,7 @@ async function isFile(candidate: string): Promise<boolean> {
 
 export interface LinkOutcome {
   findings: Finding[];
-  external: { alive: number; dead: number; unknown: number };
+  external: { alive: number; dead: number; unknown: number; skipped: number };
 }
 
 export async function checkLinks(
@@ -140,7 +140,7 @@ export async function checkLinks(
     }
   }
 
-  const counted = { alive: 0, dead: 0, unknown: 0 };
+  const counted = { alive: 0, dead: 0, unknown: 0, skipped: 0 };
   if (external.length > 0 && set.reach !== undefined) {
     const unique = [...new Set(external.map((e) => e.href))];
     const verdicts = new Map(
