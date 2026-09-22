@@ -30,6 +30,16 @@ export interface Area {
 // tree to a part of the product somebody would meet. Taking the file itself
 // would make one screen of every component and report them one at a time,
 // which is what this check exists not to do.
+// Everything that is not a letter or a number becomes a single space, so a
+// label and the prose describing it are compared as the words they are and a
+// phrase has to appear whole.
+function wordsOf(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
 function areaOf(file: string): string {
   const parts = file.split('/');
   return parts.length <= 1 ? '.' : parts.slice(0, -1).join('/');
@@ -38,9 +48,12 @@ function areaOf(file: string): string {
 // What the application offers, gathered the way somebody would meet it: a
 // screen at a time, not a control at a time.
 export function areasOf(snapshots: Snapshot[], pages: DocPage[]): Area[] {
-  const corpus = normalise(
-    pages.map((p) => `${p.prose} ${p.emphasised.map((e) => e.value).join(' ')}`).join(' '),
-  );
+  // Matched between boundaries, never as a run of characters. "Save" occurs
+  // inside "autosave" and inside "saved", and a page that says either has not
+  // described the button.
+  const corpus = ` ${wordsOf(
+    normalise(pages.map((p) => `${p.prose} ${p.emphasised.map((e) => e.value).join(' ')}`).join(' ')),
+  )} `;
 
   const grouped = new Map<string, Area>();
   for (const snapshot of snapshots) {
@@ -58,7 +71,7 @@ export function areasOf(snapshots: Snapshot[], pages: DocPage[]): Area[] {
       }
       area.controls.push(label.text);
       if (!area.files.includes(label.file)) area.files.push(label.file);
-      if (corpus.includes(text)) area.documented.push(label.text);
+      if (corpus.includes(` ${wordsOf(text)} `)) area.documented.push(label.text);
       grouped.set(key, area);
     }
   }

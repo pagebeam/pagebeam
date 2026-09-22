@@ -86,3 +86,47 @@ test('a name the running application showed is not something to document', () =>
     'those are the names of somebody systems, not controls',
   );
 });
+
+// A label occurring inside a longer word is not that label. "Save" is in
+// "autosave" and in "saved", and a page saying either has described neither.
+test('a word inside a longer word has not described the control', () => {
+  const controls: [string, string][] = [
+    ['Save', 'pages/editor.vue'],
+    ['Undo', 'pages/editor.vue'],
+    ['Redo', 'pages/editor.vue'],
+  ];
+  const found = checkUndocumented([page('Your work is autosaved, and saved drafts are kept.')], [app(controls)], null);
+  assert.equal(found.length, 1);
+  assert.match(found[0]!.detail, /"Save"/, 'autosaved is not Save');
+});
+
+test('a phrase has to appear whole', () => {
+  const controls: [string, string][] = [
+    ['Start Your Plan', 'pages/billing.vue'],
+    ['Cancel Plan', 'pages/billing.vue'],
+    ['Change Card', 'pages/billing.vue'],
+  ];
+  const apart = checkUndocumented([page('You can start something. Your plan is shown here.')], [app(controls)], null);
+  assert.equal(apart.length, 1, 'the words are all there, the phrase is not');
+
+  const whole = checkUndocumented(
+    [page('Press Start Your Plan, then Cancel Plan, then Change Card.')],
+    [app(controls)],
+    null,
+  );
+  assert.deepEqual(whole, [], 'said whole, all three are described');
+});
+
+test('punctuation between a label and the prose is not a difference', () => {
+  const controls: [string, string][] = [
+    ['Save changes', 'pages/editor.vue'],
+    ['Undo', 'pages/editor.vue'],
+    ['Redo', 'pages/editor.vue'],
+  ];
+  const found = checkUndocumented(
+    [page('Press **Save changes**. Then Undo, or Redo.')],
+    [app(controls)],
+    null,
+  );
+  assert.deepEqual(found, []);
+});
