@@ -37,6 +37,19 @@ jobs:
       - run: npm ci
       - run: npm test
 
+      # Tests build with the compiler, which leaves every package importing the
+      # others. What is published is built by the bundler, and publishing
+      # without this step ships a command whose first line asks for a package
+      # nobody installs.
+      - run: npm run build
+      - name: Check the command stands on its own
+        run: |
+          if grep -q "@pagebeam/" packages/cli/dist/main.js; then
+            echo "packages/cli/dist/main.js still reaches for a package it does not ship with"
+            exit 1
+          fi
+          echo "the command carries what it needs"
+
       # A tag says which version is being released, so one that disagrees with
       # the packages would publish something nobody asked for. Started by hand
       # there is no tag and nothing to disagree with.
