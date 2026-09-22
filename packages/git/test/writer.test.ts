@@ -167,3 +167,17 @@ test('work pushed to the remote by somebody else is not replaced', async () => {
   });
   assert.equal(result.action, 'append', 'this clone never saw their commit, and it still counts');
 });
+
+test('a remote that cannot be asked stops the run rather than proceeding', async () => {
+  const forge = fake();
+  const where = await base([fixing('a', 'One.\n')]);
+  await write(forge, { ...where, dryRun: false });
+
+  execFileSync('git', ['-C', where.repo, 'remote', 'set-url', 'origin', '/nowhere/at/all.git']);
+  await assert.rejects(
+    () => write(forge, { ...where, findings: [], dryRun: false }),
+    /could not be established/,
+    'not knowing whether the branch is ours is not permission to close it',
+  );
+  assert.ok(!forge.calls.includes('close'));
+});

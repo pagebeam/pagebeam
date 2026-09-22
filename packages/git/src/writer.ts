@@ -37,6 +37,8 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
   // local ref only says what this clone last heard. But work committed here
   // and not yet pushed is still somebody's work, so both have to agree before
   // anything is thrown away.
+  // Not being able to ask is not an answer. Nothing is replaced or closed on
+  // the strength of a question that went unanswered.
   const onRemote = await remoteCommits(repo, branch, base);
   const locally = (await exists(repo, branch)) ? await commitsOn(repo, branch, base) : [];
   const theirs =

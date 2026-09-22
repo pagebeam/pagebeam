@@ -56,16 +56,23 @@ export async function open(repo: string, branch: string, base: string, fresh: bo
     const merged = await git(at, 'merge', '--ff-only', 'refs/pagebeam/onto')
       .then(() => true)
       .catch(() => false);
-    await git(repo, 'update-ref', '-d', 'refs/pagebeam/onto').catch(() => undefined);
+
+    let diverged = false;
     if (!merged) {
+      // Counted while the ref still exists. A count that cannot be taken is
+      // not a count of zero, and treating it as one accepts a branch that has
+      // gone its own way.
       const ahead = await git(at, 'rev-list', '--count', `${branch}..refs/pagebeam/onto`)
         .then((n) => Number(n.trim()))
-        .catch(() => 0);
-      if (ahead > 0) {
-        await git(repo, 'worktree', 'remove', '--force', at).catch(() => undefined);
-        await rm(dir, { recursive: true, force: true }).catch(() => undefined);
-        throw new Diverged(branch);
-      }
+        .catch(() => Number.NaN);
+      diverged = !Number.isFinite(ahead) || ahead > 0;
+    }
+    await git(repo, 'update-ref', '-d', 'refs/pagebeam/onto').catch(() => undefined);
+
+    if (diverged) {
+      await git(repo, 'worktree', 'remove', '--force', at).catch(() => undefined);
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      throw new Diverged(branch);
     }
   }
   return session(repo, dir, at);
@@ -104,9 +111,37 @@ export function within(dir: string, proposed: string): string {
   return file;
 }
 
+// Reading the text of a path is not enough: a link inside the checkout points
+// wherever it likes. Every directory on the way has to really be inside it.
+export async function reallyWithin(dir: string, proposed: string): Promise<string> {
+  const { realpath } = await import('node:fs/promises');
+  const file = within(dir, proposed);
+  const root = await realpath(path.resolve(dir));
+
+  let at = path.dirname(file);
+  const seen: string[] = [];
+  while (at.startsWith(root) || at === root || seen.length === 0) {
+    const real = await realpath(at).catch(() => null);
+    if (real !== null) {
+      if (real !== root && !real.startsWith(`${root}${path.sep}`)) throw new Escapes(proposed);
+      break;
+    }
+    seen.push(at);
+    const up = path.dirname(at);
+    if (up === at) break;
+    at = up;
+  }
+
+  const existing = await realpath(file).catch(() => null);
+  if (existing !== null && !existing.startsWith(`${root}${path.sep}`) && existing !== root) {
+    throw new Escapes(proposed);
+  }
+  return file;
+}
+
 export async function apply(dir: string, changes: FileChange[]): Promise<void> {
   for (const change of changes) {
-    const file = within(dir, change.path);
+    const file = await reallyWithin(dir, change.path);
     if (change.mode === 'delete') {
       await rm(file, { force: true });
       continue;
@@ -138,14 +173,34 @@ export async function push(dir: string, branch: string, force: boolean): Promise
 
 // Ownership decided from a local ref is decided from whatever this clone last
 // heard. Before anything is replaced, the remote is asked directly.
+export class CannotAsk extends Error {
+  constructor(readonly branch: string, readonly reason: string) {
+    super(`whether ${branch} on the remote is ours could not be established: ${reason}`);
+  }
+}
+
+// Absent means the branch is not on the remote, which is knowledge. An error
+// is not knowledge, and is not treated as permission.
 export async function remoteCommits(
   repo: string,
   branch: string,
   base: string,
 ): Promise<string[] | null> {
+  const known = await git(repo, 'ls-remote', '--exit-code', '--heads', 'origin', branch).then(
+    () => true,
+    (error: unknown) => {
+      const code = (error as { code?: number }).code;
+      if (code === 2) return false;
+      throw new CannotAsk(branch, (error as Error).message.split('\n')[0] ?? 'the remote refused');
+    },
+  );
+  if (!known) return null;
+
   const fetched = await git(repo, 'fetch', '--quiet', 'origin', `${branch}:refs/pagebeam/remote`)
     .then(() => true)
-    .catch(() => false);
+    .catch((error: unknown) => {
+      throw new CannotAsk(branch, (error as Error).message.split('\n')[0] ?? 'the fetch failed');
+    });
   if (!fetched) return null;
 
   try {

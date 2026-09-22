@@ -15,11 +15,15 @@ const finding = (id: string): Finding => ({
 
 async function repo(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-repo-'));
+  const remote = await mkdtemp(path.join(tmpdir(), 'pagebeam-origin-'));
+  execFileSync('git', ['-C', remote, 'init', '-q', '--bare', '-b', 'main']);
   execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
+  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', remote]);
   await mkdir(path.join(dir, 'docs'), { recursive: true });
   await writeFile(path.join(dir, 'docs/a.md'), 'Original line.\n');
   execFileSync('git', ['-C', dir, 'add', '-A']);
   execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'first']);
+  execFileSync('git', ['-C', dir, 'push', '-q', 'origin', 'main']);
   return dir;
 }
 
@@ -121,4 +125,55 @@ test('a proposal cannot write outside the checkout', async () => {
   } finally {
     await session.end();
   }
+});
+
+test('a path under a link that leaves the checkout is refused', async () => {
+  const dir = await repo();
+  const outside = await mkdtemp(path.join(tmpdir(), 'pagebeam-outside-'));
+  const session = await open(dir, 'pagebeam/drift', 'main', true);
+  try {
+    const { symlink } = await import('node:fs/promises');
+    await symlink(outside, path.join(session.dir, 'escape'), 'dir');
+    await assert.rejects(
+      () => apply(session.dir, [{ path: 'escape/loot.md', mode: 'write', contents: 'no' }]),
+      /outside the checkout/,
+      'the text of the path stays inside; where it lands does not',
+    );
+  } finally {
+    await session.end();
+  }
+});
+
+test('an ordinary path inside the checkout is still written', async () => {
+  const dir = await repo();
+  const session = await open(dir, 'pagebeam/drift', 'main', true);
+  try {
+    await apply(session.dir, [{ path: 'docs/deep/new.md', mode: 'write', contents: 'yes\n' }]);
+    assert.equal(await readFile(path.join(session.dir, 'docs/deep/new.md'), 'utf8'), 'yes\n');
+  } finally {
+    await session.end();
+  }
+});
+
+test('a branch that has gone its own way is refused rather than merged', async () => {
+  const dir = await repo();
+  const remote = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin']).toString().trim();
+
+  const first = await open(dir, 'pagebeam/drift', 'main', true);
+  await apply(first.dir, [{ path: 'docs/a.md', mode: 'write', contents: 'Ours.\n' }]);
+  await commit(first.dir, finding('a'), 'docs: ours');
+  execFileSync('git', ['-C', first.dir, 'push', '-q', 'origin', 'HEAD:pagebeam/drift']);
+  await first.end();
+
+  // Somebody rewrites the branch on the remote while we also move on locally.
+  const clone = await mkdtemp(path.join(tmpdir(), 'pagebeam-them-'));
+  execFileSync('git', ['clone', '-q', remote, clone]);
+  execFileSync('git', ['-C', clone, 'switch', '-q', 'pagebeam/drift']);
+  execFileSync('git', ['-C', clone, 'reset', '-q', '--hard', 'HEAD~1']);
+  await writeFile(path.join(clone, 'docs/theirs.md'), 'Theirs.\n');
+  execFileSync('git', ['-C', clone, 'add', '-A']);
+  execFileSync('git', ['-C', clone, '-c', 'user.email=p@p', '-c', 'user.name=p', 'commit', '-qm', 'theirs']);
+  execFileSync('git', ['-C', clone, 'push', '-qf', 'origin', 'pagebeam/drift']);
+
+  await assert.rejects(() => open(dir, 'pagebeam/drift', 'main', false), /gone different ways/);
 });
