@@ -1,4 +1,4 @@
-import { findingRevision, type Finding } from '@pagebeam/core';
+import type { Finding } from '@pagebeam/core';
 import { ask, Unanswered, type Router } from './client.js';
 
 // Writing a page that does not exist yet, rather than correcting one that does.
@@ -110,7 +110,9 @@ export async function compose(
 
   return {
     ...finding,
-    revision: findingRevision(said),
+    // What is being asserted is what the finding found. A model asked the same
+    // question twice does not answer it the same way, and hashing what it
+    // wrote would rebuild the branch on every run over wording nobody changed.
     fix: {
       kind: 'new-file',
       author: 'model',

@@ -1,4 +1,4 @@
-import { findingRevision, type Finding } from '@pagebeam/core';
+import type { Finding } from '@pagebeam/core';
 import { ask, Unanswered, type Router } from './client.js';
 
 // What the model is allowed to do, stated as narrowly as it can be. It is
@@ -92,10 +92,10 @@ export async function draft(
 
   return {
     ...finding,
-    // Identity follows the text the model produced. The same page next run is
-    // the same revision and nothing is rewritten; a different draft is a
-    // different revision and replaces the commit rather than adding to it.
-    revision: findingRevision(said),
+    // What is being asserted is what the finding found, and a model asked the
+    // same question twice does not answer it the same way. Hashing what it
+    // wrote would rebuild the branch on every run over wording nobody
+    // changed, so the finding keeps the revision its own facts gave it.
     fix: {
       kind: 'new-file',
       author: 'model',

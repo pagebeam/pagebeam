@@ -126,7 +126,7 @@ test('a finding that already has an exact fix is not put to a model', async () =
   }
 });
 
-test('the same draft twice is the same revision, a different one is not', async () => {
+test('a finding keeps its own revision however the model words the answer', async () => {
   const a = await router(CORRECTED);
   const b = await router(CORRECTED + '\n\nAlso this.');
   try {
@@ -134,7 +134,8 @@ test('the same draft twice is the same revision, a different one is not', async 
     const again = await draft({ baseUrl: a.url, model: 'local' }, finding(), PAGE);
     const other = await draft({ baseUrl: b.url, model: 'local' }, finding(), PAGE);
     assert.equal(one?.revision, again?.revision, 'nothing is rewritten for the same answer');
-    assert.notEqual(one?.revision, other?.revision, 'a new answer replaces the old commit');
+    assert.equal(one?.revision, other?.revision, 'nor for a differently worded one, since nothing it is about changed');
+    assert.equal(one?.revision, finding().revision, 'the revision belongs to the finding');
   } finally {
     await a.stop();
     await b.stop();
