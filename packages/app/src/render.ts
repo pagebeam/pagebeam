@@ -158,7 +158,9 @@ export async function render(request: RenderRequest): Promise<Rendered | Unavail
 
         if (route.prepare !== undefined) await (await moduleDefault(route.prepare))(page);
         const markup = await page.content();
-        labels.push(...html.extract(markup, route.path));
+        labels.push(
+          ...html.extract(markup, route.path).map((l) => ({ ...l, from: 'rendered' as const })),
+        );
         visited.push(route.path);
       } catch (error) {
         failed.push({

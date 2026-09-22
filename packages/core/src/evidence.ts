@@ -82,6 +82,10 @@ export interface Label {
   kind: string;
   file: string;
   line?: number;
+  // Source says what the product calls things. A running application says
+  // what one person saw, which includes their own data wearing the same
+  // clothes as a label.
+  from?: 'source' | 'rendered';
 }
 
 export interface Snapshot {

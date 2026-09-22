@@ -69,3 +69,20 @@ test('a fragment or an identifier is not a control anybody looks up', () => {
   ];
   assert.deepEqual(checkUndocumented([page('')], [app(noise)], null), []);
 });
+
+test('a name the running application showed is not something to document', () => {
+  const rendered: Snapshot = {
+    app: 'dashboard', rev: null, source: 'rendered', whole: false, covered: true, unparsed: [],
+    labels: [
+      { text: 'Billing', kind: 'h2', file: '/systems', from: 'rendered' },
+      { text: 'Payments API', kind: 'h2', file: '/systems', from: 'rendered' },
+      { text: 'Customer Records', kind: 'h2', file: '/systems', from: 'rendered' },
+    ],
+    envKeys: [], files: [],
+  };
+  assert.deepEqual(
+    checkUndocumented([page('')], [rendered], null),
+    [],
+    'those are the names of somebody systems, not controls',
+  );
+});
