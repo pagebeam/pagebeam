@@ -150,7 +150,7 @@ test('a branch somebody took over is theirs to close', () => {
 
 test('state records what was proposed, not what was merely noticed', () => {
   const mendable = finding('a');
-  const reported: Finding = { ...finding('b'), fix: undefined };
+  const { fix: _unmendable, ...reported } = finding('b');
   const plan = planFor({ findings: [mendable, reported], open: null, ours: true, complete: true });
   assert.deepEqual(plan.state.findings.map((f) => f.id), ['a'], 'b was never offered as a change');
 });

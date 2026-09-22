@@ -12,7 +12,7 @@ function page(value: string, lang: string | null = 'ini'): DocPage {
     links: [],
     codeSpans: [],
     codeBlocks: [{ value, lang, line: 1 }],
-    directives: [],
+    directives: [], emphasised: [], slug: null,
   };
 }
 

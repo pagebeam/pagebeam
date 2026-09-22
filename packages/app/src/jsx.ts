@@ -1,7 +1,7 @@
 import { parse } from '@babel/parser';
 import type { Label } from '@pagebeam/core';
 import { CannotParse, type Extractor } from './extractor.js';
-import { aboutNothing, announcing, CONTROL, HEADING, LABEL_ATTRS, usable } from './rules.js';
+import { announcing, CONTROL, HEADING, LABEL_ATTRS, otherwise, shows, usable, type Shows } from './rules.js';
 
 // Only where components actually live. An ordinary .ts file yields nothing
 // and parsing it under JSX rules invites failures that mean nothing.
@@ -49,16 +49,18 @@ function conditionText(node: any, source: string): string {
 // `{error && <h2>…</h2>}` and `{empty ? <A/> : <B/>}`. What a branch is about
 // is carried down into it, the same as a template directive, so a heading
 // inside one is read as the message it is.
-function branchesOf(node: any, source: string): { child: any; nothing: boolean }[] | null {
+// A question has two answers and they are opposites. `items.length === 0 ? A
+// : B` puts A where there is nothing and B where there is something, so
+// taking both as the same silences the heading of the populated screen.
+function branchesOf(node: any, source: string): { child: any; about: Shows }[] | null {
   if (node?.type === 'LogicalExpression' && (node.operator === '&&' || node.operator === '||')) {
-    const nothing = aboutNothing(conditionText(node.left, source));
-    return [{ child: node.right, nothing }];
+    return [{ child: node.right, about: shows(conditionText(node.left, source)) }];
   }
   if (node?.type === 'ConditionalExpression') {
-    const nothing = aboutNothing(conditionText(node.test, source));
+    const asked = shows(conditionText(node.test, source));
     return [
-      { child: node.consequent, nothing },
-      { child: node.alternate, nothing },
+      { child: node.consequent, about: asked },
+      { child: node.alternate, about: otherwise(asked) },
     ];
   }
   return null;
@@ -69,16 +71,17 @@ function walk(node: any, file: string, out: Label[], source: string, here = fals
 
   const branches = branchesOf(node, source);
   if (branches !== null) {
-    for (const branch of branches) walk(branch.child, file, out, source, here || branch.nothing);
+    for (const branch of branches) walk(branch.child, file, out, source, here || branch.about === 'nothing');
     for (const key of ['test', 'left']) walk(node[key], file, out, source, here);
     return;
   }
 
   if (node.type === 'JSXElement') {
     const tag = nameOf(node);
-    if (announcing(tag)) return;
+    // What it stands in for is not a control. What it holds still is.
+    const standingIn = announcing(tag);
 
-    if (tag !== null && CONTROL.has(tag) && !(here && HEADING.has(tag))) {
+    if (!standingIn && tag !== null && CONTROL.has(tag) && !(here && HEADING.has(tag))) {
       const line = node.loc?.start?.line;
       const text = textOf(node).replace(/\s+/g, ' ').trim();
       if (usable(text)) out.push({ text, kind: tag, file, ...(line ? { line } : {}) });
@@ -93,7 +96,7 @@ function walk(node: any, file: string, out: Label[], source: string, here = fals
       }
     }
 
-    for (const attribute of node.openingElement?.attributes ?? []) {
+    for (const attribute of standingIn ? [] : (node.openingElement?.attributes ?? [])) {
       if (attribute?.type !== 'JSXAttribute') continue;
       const name = String(attribute.name?.name ?? '').toLowerCase();
       if (!LABEL_ATTRS.has(name)) continue;

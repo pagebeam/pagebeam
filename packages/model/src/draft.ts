@@ -35,7 +35,17 @@ export function systemFor(skills: string[] = []): string {
 }
 
 function askingFor(finding: Finding, page: string): string {
-  const evidence = finding.evidence.length === 0 ? '' : `\nEvidence:\n${finding.evidence.join('\n')}`;
+  // Each one is a kind, what it says, and where it was seen. Run together as
+  // text they say nothing at all.
+  const evidence =
+    finding.evidence.length === 0
+      ? ''
+      : `\nEvidence:\n${finding.evidence
+          .map((e) => {
+            const at = e.ref === undefined ? '' : ` (${e.ref.path}${e.ref.line === undefined ? '' : `:${e.ref.line}`})`;
+            return `- ${e.kind}: ${e.detail}${at}`;
+          })
+          .join('\n')}`;
   return [
     `Problem: ${finding.title}`,
     `Detail: ${finding.detail}`,

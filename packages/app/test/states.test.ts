@@ -31,9 +31,16 @@ test('what a reader can act on inside that branch is still a control', () => {
   assert.deepEqual(found.map((l) => l.text), ['Try again']);
 });
 
-test('a branch that follows one about nothing is about nothing too', () => {
-  const found = labels('<div v-if="items.length === 0"><h2>Nothing yet</h2></div><div v-else><h2>Also nothing</h2></div>');
-  assert.deepEqual(found, []);
+test('the branch beside one about nothing is the one about something', () => {
+  const found = labels(
+    '<div v-if="items.length === 0"><h2>Nothing yet</h2></div><div v-else><h2>Your projects</h2></div>',
+  );
+  assert.deepEqual(found.map((l) => l.text), ['Your projects']);
+});
+
+test('what a state component holds is still on the screen', () => {
+  const found = labels('<UiEmpty title="No projects"><button>Create one</button></UiEmpty>');
+  assert.deepEqual(found.map((l) => l.text), ['Create one'], 'its own title is not a control, its button is');
 });
 
 test('an ordinary heading is a landmark and is read', () => {
@@ -66,8 +73,33 @@ test('a heading guarded on nothing being there is the same', () => {
   assert.deepEqual(react('{items.length === 0 && <h2>Nothing yet</h2>}'), []);
 });
 
-test('both sides of a question about emptiness are about it', () => {
-  assert.deepEqual(react('{isEmpty ? <h2>Nothing yet</h2> : <h2>Also nothing</h2>}'), []);
+test('a question has two answers and they are opposites', () => {
+  assert.deepEqual(
+    react('{items.length === 0 ? <h2>No projects</h2> : <h2>Your projects</h2>}').map((l) => l.text),
+    ['Your projects'],
+    'the populated screen still has a heading',
+  );
+});
+
+test('the same question asked the other way round', () => {
+  assert.deepEqual(
+    react('{items.length !== 0 ? <h2>Your projects</h2> : <h2>No projects</h2>}').map((l) => l.text),
+    ['Your projects'],
+  );
+});
+
+test('a condition that settles neither leaves both alone', () => {
+  assert.deepEqual(
+    react('{mode === "grid" ? <h2>Grid</h2> : <h2>List</h2>}').map((l) => l.text).sort(),
+    ['Grid', 'List'],
+  );
+});
+
+test('what an empty state holds is still on the screen', () => {
+  assert.deepEqual(
+    react('<EmptyCart><button>Continue shopping</button></EmptyCart>').map((l) => l.text),
+    ['Continue shopping'],
+  );
 });
 
 test('what a reader can act on inside that branch is still a control', () => {

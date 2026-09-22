@@ -36,14 +36,14 @@ function textOf(node: any): string {
 function walk(node: any, file: string, out: Label[], within: string | null): void {
   const tag = typeof node.nodeName === 'string' ? node.nodeName.toLowerCase() : null;
 
-  if (announcing(tag)) return;
+  const standingIn = announcing(tag);
 
-  if (tag !== null && CONTROL.has(tag)) {
+  if (!standingIn && tag !== null && CONTROL.has(tag)) {
     const text = textOf(node).replace(/\s+/g, ' ').trim();
     if (usable(text)) out.push({ text, kind: tag, file, line: node.sourceCodeLocation?.startLine });
   }
 
-  for (const attr of node.attrs ?? []) {
+  for (const attr of standingIn ? [] : (node.attrs ?? [])) {
     if (!LABEL_ATTRS.has(attr.name)) continue;
     const value = String(attr.value ?? '').trim();
     if (usable(value)) {

@@ -26,11 +26,27 @@ export const HEADING = new Set(['h1', 'h2', 'h3', 'h4']);
 // The heading inside one is the message, not a landmark of the screen, so a
 // reader will never find it by looking. Anything they can act on there, a
 // button offering to try again, is still a control and is still read.
-const NOTHING_THERE =
-  /(===\s*0|!==\s*0|!\w+[.\w]*\.length|fail|error|empty|missing|\bnone\b|notfound)/i;
+// Whether a branch shows what is there, or what stands in when nothing is.
+// A condition that settles neither leaves both branches alone, because
+// guessing wrongly here silences a real heading.
+export type Shows = 'nothing' | 'something' | null;
 
-export function aboutNothing(expression: string | null | undefined): boolean {
-  return typeof expression === 'string' && NOTHING_THERE.test(expression);
+const HAS_NONE = /(===\s*0|==\s*0|<\s*1|!\w+[.\w]*\.length|\blength\s*\?|fail|error|empty|missing|\bnone\b|notfound)/i;
+const HAS_SOME = /(!==\s*0|!=\s*0|>\s*0|>=\s*1)/;
+
+export function shows(expression: string | null | undefined): Shows {
+  if (typeof expression !== 'string') return null;
+  // Asked first: `items.length !== 0` contains `!== 0` and means the opposite
+  // of what a test for zero means.
+  if (HAS_SOME.test(expression)) return 'something';
+  return HAS_NONE.test(expression) ? 'nothing' : null;
+}
+
+// The branch beside one about nothing is the branch about something, and the
+// other way round.
+export function otherwise(what: Shows): Shows {
+  if (what === 'nothing') return 'something';
+  return what === 'something' ? 'nothing' : null;
 }
 
 export const MIN_LABEL = 3;

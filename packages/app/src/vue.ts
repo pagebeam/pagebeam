@@ -3,7 +3,7 @@ import { parseExpression } from '@babel/parser';
 import type { Label } from '@pagebeam/core';
 import { CannotParse, type Extractor } from './extractor.js';
 
-import { aboutNothing, announcing, CONTROL, HEADING, LABEL_ATTRS, usable } from './rules.js';
+import { announcing, CONTROL, HEADING, LABEL_ATTRS, otherwise, shows, usable, type Shows } from './rules.js';
 
 // A label chosen at runtime is still written in the source. Pulling the string
 // literals out of the expression finds every label the element can show.
@@ -55,24 +55,27 @@ function alternativesIn(node: any): string[] {
 // v-else carries no condition of its own. What it is about is whatever the
 // branch beside it was about, which is a sibling, not an ancestor, so it has
 // to be carried along the children rather than down into them.
-function branchOf(node: any): { kind: 'if' | 'else-if' | 'else' | null; about: boolean } {
+function branchOf(node: any): { kind: 'if' | 'else-if' | 'else' | null; about: Shows } {
   for (const prop of node?.props ?? []) {
     if (prop.type !== 7) continue;
-    if (prop.name === 'else') return { kind: 'else', about: false };
+    if (prop.name === 'else') return { kind: 'else', about: null };
     if (prop.name === 'if' || prop.name === 'else-if') {
-      return { kind: prop.name, about: aboutNothing(prop.exp?.content) };
+      return { kind: prop.name, about: shows(prop.exp?.content) };
     }
   }
-  return { kind: null, about: false };
+  return { kind: null, about: null };
 }
 
 function walk(node: any, file: string, out: Label[], within: string | null, here = false): void {
   if (node === null || node === undefined) return;
   const tag = typeof node.tag === 'string' ? node.tag.toLowerCase() : null;
 
-  if (announcing(tag)) return;
+  // A component that stands in for something says nothing itself, but what it
+  // holds is still on the screen: the button offering the way out of an empty
+  // list is the most useful thing on it.
+  const standingIn = announcing(tag);
 
-  if (tag !== null && CONTROL.has(tag) && !(here && HEADING.has(tag))) {
+  if (!standingIn && tag !== null && CONTROL.has(tag) && !(here && HEADING.has(tag))) {
     const text = textOf(node).replace(/\s+/g, ' ').trim();
     if (usable(text)) out.push({ text, kind: tag, file, line: node.loc?.start?.line });
     for (const alternative of alternativesIn(node)) {
@@ -82,6 +85,7 @@ function walk(node: any, file: string, out: Label[], within: string | null, here
   }
 
   for (const prop of node.props ?? []) {
+    if (standingIn) break;
     if (prop.type !== 6) continue;
     if (!LABEL_ATTRS.has(prop.name)) continue;
     const value = prop.value?.content?.trim();
@@ -95,12 +99,19 @@ function walk(node: any, file: string, out: Label[], within: string | null, here
     }
   }
 
-  let beside = false;
+  let previous: Shows = null;
   for (const child of node.children ?? []) {
     const branch = branchOf(child);
-    if (branch.kind === 'if' || branch.kind === 'else-if') beside = branch.about;
-    else if (branch.kind !== 'else') beside = false;
-    walk(child, file, out, within, here || beside);
+    let about: Shows = null;
+    if (branch.kind === 'if' || branch.kind === 'else-if') {
+      about = branch.about;
+      previous = branch.about;
+    } else if (branch.kind === 'else') {
+      about = otherwise(previous);
+    } else {
+      previous = null;
+    }
+    walk(child, file, out, within, here || about === 'nothing');
   }
 }
 

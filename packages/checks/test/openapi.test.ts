@@ -8,7 +8,7 @@ import type { DocPage } from '@pagebeam/docs';
 
 const page = (prose: string): DocPage => ({
   path: 'a.md', format: 'markdown', raw: '', prose, links: [], codeSpans: [],
-  codeBlocks: [], emphasised: [], directives: [],
+  codeBlocks: [], emphasised: [], directives: [], slug: null,
 });
 
 async function spec(name: string, body: string): Promise<string> {

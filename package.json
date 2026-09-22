@@ -10,8 +10,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "tsc --build && node --experimental-strip-types --test packages/*/test/*.test.ts",
-    "typecheck": "tsc --build"
+    "test": "tsc --build && tsc -p tsconfig.test.json && node --experimental-strip-types --test packages/*/test/*.test.ts",
+    "typecheck": "tsc --build && tsc -p tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

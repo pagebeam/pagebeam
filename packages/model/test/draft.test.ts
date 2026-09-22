@@ -13,7 +13,7 @@ const finding = (): Finding => ({
   doc: { path: 'docs/guide.md' },
   title: '"Add transaction" was removed from ui',
   detail: 'It was a button in ui and is gone.',
-  evidence: ['labels were read from source'],
+  evidence: [{ kind: 'read', detail: 'labels were read from source', ref: { path: 'a.vue', line: 12 } }],
 });
 
 // Stands in for a router. What it is given matters as much as what it returns.
@@ -186,6 +186,18 @@ test('no skills leaves the model told exactly what it was told before', async ()
   try {
     await draft({ baseUrl: api.url, model: 'm' }, finding(), PAGE, []);
     assert.equal(api.seen[0].body.messages[0].content, systemFor());
+  } finally {
+    await api.stop();
+  }
+});
+
+test('evidence reaches the model as what it says, not as what it is', async () => {
+  const api = await router(CORRECTED);
+  try {
+    await draft({ baseUrl: api.url, model: 'm' }, finding(), PAGE);
+    const asked = api.seen[0].body.messages[1].content;
+    assert.ok(!asked.includes('[object Object]'), 'an object run together as text says nothing');
+    assert.match(asked, /read: labels were read from source \(a\.vue:12\)/);
   } finally {
     await api.stop();
   }
