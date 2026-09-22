@@ -54,8 +54,9 @@ jobs:
           done
           echo "every package is $tagged"
 
-      # In the order they depend on each other, so one is never published
-      # against a version of another that is not there yet.
+      # One package. The rest are how this repository is divided and are built
+      # into the command, so there is one thing to install, one version to
+      # keep, and one registry setting to maintain.
       #
       # A version already on the registry is left alone rather than failing the
       # run. Releasing is then something that can be repeated: a tag pushed
@@ -63,7 +64,7 @@ jobs:
       # instead of refusing because of the part that already worked.
       - name: Publish
         run: |
-          for p in core docs app checks git model engine cli; do
+          for p in cli; do
             name=$(node -p "require('./packages/$p/package.json').name")
             version=$(node -p "require('./packages/$p/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then

@@ -31,7 +31,5 @@
     "url": "git+https://github.com/pagebeam/pagebeam.git",
     "directory": "packages/checks"
   },
-  "publishConfig": {
-    "access": "public"
-  }
+  "private": true
 }

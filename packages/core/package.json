@@ -27,7 +27,5 @@
     "url": "git+https://github.com/pagebeam/pagebeam.git",
     "directory": "packages/core"
   },
-  "publishConfig": {
-    "access": "public"
-  }
+  "private": true
 }
