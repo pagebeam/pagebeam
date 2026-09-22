@@ -88,11 +88,18 @@ export function citations(pages: DocPage[]): { method: string; path: string; pag
   return out;
 }
 
+// An operation named on a page belongs to no one application when several
+// declare a specification: it is absent from all of them together. The
+// applications are named for a reader, and the finding is left without an
+// owner, because a name that is really a list belongs to nothing and would be
+// read by anything counting ownership as work somebody else did.
 export function checkCitations(
   cited: ReturnType<typeof citations>,
   ops: Operation[],
-  app: string,
+  apps: string[],
 ): Finding[] {
+  const app = apps.length === 1 ? apps[0]! : apps.join(', ');
+  const owner = apps.length === 1 ? { app } : {};
   const known = new Set(ops.map((o) => `${o.method} ${o.path}`));
   const findings: Finding[] = [];
   const seen = new Set<string>();
@@ -106,7 +113,7 @@ export function checkCitations(
       revision: findingRevision(key),
       check: 'openapi',
       standing: 'review',
-      app,
+      ...owner,
       severity: 'error',
       confidence: 0.95,
       doc: { path: c.page, line: c.line },

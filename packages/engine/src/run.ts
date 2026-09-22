@@ -312,8 +312,7 @@ async function runOpenapi(
     findings.push(...openapi.checkCoverage(pages, operations, shown, app.name, served));
   }
 
-  const names = withSpec.map((a) => a.name).join(', ');
-  findings.push(...openapi.checkCitations(cited, every, names));
+  findings.push(...openapi.checkCitations(cited, every, withSpec.map((a) => a.name)));
   return findings;
 }
 

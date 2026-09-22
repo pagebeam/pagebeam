@@ -53,6 +53,22 @@ export async function readAt(root: string, rev: string, file: string): Promise<s
     });
 }
 
+// A question git could not answer is not the answer "nothing". Reading an
+// empty list of changed files as a quiet repository lets a bad revision, a
+// missing object or a broken checkout report that nothing moved.
+export class Unreadable extends Error {
+  constructor(what: string, because: string) {
+    super(`${what}: ${because}`);
+  }
+}
+
+function refuse(what: string): (error: unknown) => never {
+  return (error: unknown) => {
+    const said = String((error as { stderr?: string }).stderr ?? (error as Error).message ?? '').trim();
+    throw new Unreadable(what, said.split('\n')[0] ?? 'git failed');
+  };
+}
+
 // A repository younger than the window still has a past. Falling back to its
 // first commit is the difference between comparing and not comparing at all.
 export async function changedBetween(
@@ -62,22 +78,22 @@ export async function changedBetween(
 ): Promise<string[]> {
   return run('git', ['-C', root, 'diff', '--name-only', from, to], { maxBuffer: BUFFER })
     .then(({ stdout }) => stdout.split('\n').filter((f) => f !== ''))
-    .catch(() => []);
+    .catch(refuse('the files changed since a revision could not be read'));
 }
 
 export async function revisionBefore(root: string, days: number): Promise<string | null> {
   const dated = await run('git', ['-C', root, 'rev-list', '-1', `--before=${days}.days.ago`, 'HEAD'])
     .then(({ stdout }) => stdout.trim())
-    .catch(() => '');
+    .catch(refuse('the revision to compare against could not be read'));
   if (dated !== '') return dated;
 
   const first = await run('git', ['-C', root, 'rev-list', '--max-parents=0', 'HEAD'])
     .then(({ stdout }) => stdout.trim().split('\n').at(-1) ?? '')
-    .catch(() => '');
+    .catch(refuse('the first commit could not be read'));
   if (first === '') return null;
 
   const head = await run('git', ['-C', root, 'rev-parse', 'HEAD'])
     .then(({ stdout }) => stdout.trim())
-    .catch(() => '');
+    .catch(refuse('the current revision could not be read'));
   return first === head ? null : first;
 }

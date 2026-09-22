@@ -90,7 +90,7 @@ export async function propose(
     complete: result.degraded.length === 0,
     labels: config.propose.labels,
     reviewers: config.propose.reviewers,
-    draft: config.propose.draft,
+    ...(config.propose.draft === undefined ? {} : { draft: config.propose.draft }),
     dryRun: false,
   });
 

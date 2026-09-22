@@ -98,7 +98,10 @@ export const configSchema = z.strictObject({
       base: z.string().default('main'),
       labels: z.array(z.string()).default([]),
       reviewers: z.array(z.string()).default([]),
-      draft: z.boolean().default(false),
+      // Left unsaid, a pull request opens as a draft when anything in it was
+      // written by a model and as a normal one when everything was worked out
+      // from the source. Saying so either way settles it outright.
+      draft: z.boolean().optional(),
     })
     .default({}),
   checks: checksSchema.default({}),

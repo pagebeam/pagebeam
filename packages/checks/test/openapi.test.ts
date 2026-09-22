@@ -34,7 +34,7 @@ test('a documented endpoint the specification lacks is reported', () => {
   const findings = checkCitations(
     [{ method: 'DELETE', path: '/users', page: 'a.md', line: 1 }],
     [{ method: 'GET', path: '/users' }],
-    'api',
+    ['api'],
   );
   assert.equal(findings.length, 1);
   assert.match(findings[0]!.title, /DELETE \/users/);
@@ -80,7 +80,7 @@ test('an endpoint documented with a concrete value is not called absent', () => 
   const findings = checkCitations(
     [{ method: 'DELETE', path: '/users/7', page: 'a.md', line: 1 }],
     ops,
-    'api',
+    ['api'],
   );
   assert.deepEqual(findings, [], 'DELETE /users/7 is DELETE /users/{key}');
 });
@@ -97,4 +97,26 @@ test('with nothing served, the source pages are all there is to go on', () => {
   const ops = [{ method: 'GET', path: '/api/v1/wallets' }];
   assert.equal(checkCoverage([], ops as never, 'spec.json', 'api', null).length, 1);
   assert.equal(checkCoverage([], ops as never, 'spec.json', 'api', new Set(['/api/v1/wallets'])).length, 0);
+});
+
+// A commit's owner decides whose work a later run may replace. A name that is
+// really a list of names belongs to no application, so anything counting
+// ownership reads it as somebody else's and keeps it for ever.
+test('one specification owns its finding', () => {
+  const found = checkCitations(
+    [{ method: 'DELETE', path: '/users', page: 'a.md', line: 1 }],
+    [{ method: 'GET', path: '/users' }],
+    ['api'],
+  );
+  assert.equal(found[0]?.app, 'api');
+});
+
+test('an operation absent from all of them together belongs to none of them', () => {
+  const found = checkCitations(
+    [{ method: 'DELETE', path: '/users', page: 'a.md', line: 1 }],
+    [{ method: 'GET', path: '/users' }],
+    ['api', 'admin'],
+  );
+  assert.equal(found[0]?.app, undefined, 'no application owns it');
+  assert.match(found[0]!.title, /api, admin/, 'and a reader is still told which were checked');
 });

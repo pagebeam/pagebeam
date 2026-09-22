@@ -34,7 +34,13 @@ export async function definedKeys(appRoot: string, patterns: string[]): Promise<
   const files = await glob(patterns, { cwd: appRoot, ignore: ['**/node_modules/**'], absolute: true });
   const keys = new Set<string>();
   for (const file of files) {
-    const text = await readFile(file, 'utf8').catch(() => '');
+    // A file that is not there declares no keys. One that cannot be read is
+    // not the same thing, and reading it as empty invents a removed setting.
+    const text = await readFile(file, 'utf8').catch((error: unknown) => {
+      const code = (error as { code?: string }).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return '';
+      throw error;
+    });
     ASSIGNMENT.lastIndex = 0;
     for (const m of text.matchAll(ASSIGNMENT)) keys.add(m[1] as string);
   }

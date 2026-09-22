@@ -253,6 +253,33 @@ const drafted = (id: string): Finding => ({
   },
 });
 
+// The command builds this request from the configuration. A test that leaves
+// `draft` out is not testing what the command sends, and the last one did not.
+test('what the command sends when the configuration says nothing', async () => {
+  const { parseConfig } = await import('@pagebeam/core');
+  const said = parseConfig({ docs: { root: 'docs' } }).propose.draft;
+  assert.equal(said, undefined, 'silence has to survive as silence, or nothing can read it');
+
+  const dir = await repo();
+  const forge = fake();
+  await write(forge, {
+    repo: dir, branch: 'pagebeam/drift', base: 'main',
+    findings: [drafted('m-1')], comparedWith: null, complete: true,
+    ...(said === undefined ? {} : { draft: said }),
+  });
+  assert.equal((forge.current as unknown as { draft?: boolean })?.draft, true);
+});
+
+test('a configuration that says so outright is obeyed', async () => {
+  const dir = await repo();
+  const forge = fake();
+  await write(forge, {
+    repo: dir, branch: 'pagebeam/drift', base: 'main',
+    findings: [drafted('m-1')], comparedWith: null, complete: true, draft: false,
+  });
+  assert.equal((forge.current as unknown as { draft?: boolean })?.draft, false);
+});
+
 test('a change a model wrote arrives as a draft', async () => {
   const dir = await repo();
   const forge = fake();
