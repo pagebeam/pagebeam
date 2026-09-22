@@ -1,4 +1,4 @@
-import { cancel, confirm, intro, isCancel, note, outro, select, text } from '@clack/prompts';
+import { cancel, confirm, intro, isCancel, multiselect, note, outro, text } from '@clack/prompts';
 import path from 'node:path';
 import { configFor, discover, type Found } from '@pagebeam/engine';
 
@@ -39,6 +39,10 @@ async function whereTheDocsAre(found: Found): Promise<string> {
   return said.trim() === '' ? 'docs' : said.trim();
 }
 
+// One page often describes more than one thing: a product and the plugins that
+// extend it, a dashboard and the service behind it, each in its own
+// repository. The configuration has always taken a list; only the question
+// took one answer, which quietly made the common case the unsupported one.
 async function whatItDescribes(found: Found, cwd: string): Promise<{ name: string; path: string }[]> {
   const here = path.basename(cwd);
   const options = [
@@ -49,36 +53,49 @@ async function whatItDescribes(found: Found, cwd: string): Promise<{ name: strin
     })),
     { value: '.', label: `this repository (${here})`, hint: 'the product is here' },
     { value: '', label: 'somewhere else', hint: 'a path you will type' },
-    { value: 'none', label: 'nothing yet', hint: 'only the documentation is checked' },
   ];
   const seen = new Set<string>();
   const offered = options.filter((o) => !seen.has(o.value) && seen.add(o.value));
 
-  const chosen = answered<string>(
-    await select({
-      message: 'Which application does this documentation describe?',
+  const chosen = answered<string[]>(
+    await multiselect({
+      message: 'Which applications does this documentation describe?',
       options: offered,
-      initialValue: offered[0]?.value ?? '.',
+      // Nothing is a real answer: the documentation can still be checked
+      // against itself, and an application added later starts the rest.
+      required: false,
+      initialValues: found.apps.length > 0 ? [found.apps[0]!.path] : [],
     }),
   );
 
-  if (chosen === 'none') return [];
-  if (chosen !== '') {
-    const named = found.apps.find((app) => app.path === chosen);
-    return [{ name: named?.name ?? here, path: chosen }];
+  const apps: { name: string; path: string }[] = [];
+  for (const one of chosen) {
+    if (one === '') continue;
+    const named = found.apps.find((app) => app.path === one);
+    apps.push({ name: named?.name ?? path.basename(path.resolve(cwd, one)), path: one });
   }
 
-  const where = answered<string>(
-    await text({
-      message: 'Where is it? A path from here, checked out beside this if it is another repository.',
-      placeholder: '../dashboard',
-      validate: (value) =>
-        value === undefined || value.trim() === ''
-          ? 'A path, or start again and choose nothing yet.'
-          : undefined,
-    }),
-  ).trim();
-  return [{ name: path.basename(path.resolve(cwd, where)), path: where }];
+  // Asked once for each, because somebody with plugins in separate
+  // repositories has several to name and being asked once is being asked to
+  // start again.
+  if (chosen.includes('')) {
+    for (;;) {
+      const where = answered<string>(
+        await text({
+          message:
+            apps.length === 0
+              ? 'Where is it? A path from here, checked out beside this if it is another repository.'
+              : 'Another one? A path from here, or leave it empty to stop.',
+          placeholder: '../dashboard',
+          defaultValue: '',
+        }),
+      ).trim();
+      if (where === '') break;
+      apps.push({ name: path.basename(path.resolve(cwd, where)), path: where });
+    }
+  }
+
+  return apps;
 }
 
 export async function askFor(cwd: string): Promise<string> {
