@@ -18,7 +18,7 @@ function fake(): Forge & { calls: string[]; current: PullRequest | null } {
     },
     async create(raise: Raise) {
       state.calls.push('create');
-      state.current = { number: 7, url: 'https://example.test/pull/7', body: raise.body, head: raise.head };
+      state.current = { number: 7, url: 'https://example.test/pull/7', body: raise.body, head: raise.head, draft: raise.draft } as PullRequest;
       return state.current;
     },
     async update(n: number, _t: string, body: string) {
@@ -243,4 +243,32 @@ test('an application that fixed everything still closes its own pull request', a
 
   assert.equal(outcome.action, 'close', 'its own commits are not somebody else to wait for');
   assert.ok(forge.calls.includes('close'));
+});
+
+const drafted = (id: string): Finding => ({
+  ...fixing(id, 'From a model.\n'),
+  fix: {
+    kind: 'new-file', author: 'model',
+    changes: [{ path: 'docs/a.md', mode: 'write', contents: 'From a model.\n' }],
+  },
+});
+
+test('a change a model wrote arrives as a draft', async () => {
+  const dir = await repo();
+  const forge = fake();
+  await write(forge, {
+    repo: dir, branch: 'pagebeam/drift', base: 'main',
+    findings: [drafted('m-1')], comparedWith: null, complete: true,
+  });
+  assert.equal((forge.current as unknown as { draft?: boolean })?.draft, true);
+});
+
+test('a change worked out from the source does not', async () => {
+  const dir = await repo();
+  const forge = fake();
+  await write(forge, {
+    repo: dir, branch: 'pagebeam/drift', base: 'main',
+    findings: [fixing('d-1', 'Exact.\n')], comparedWith: null, complete: true,
+  });
+  assert.equal((forge.current as unknown as { draft?: boolean })?.draft, false);
 });

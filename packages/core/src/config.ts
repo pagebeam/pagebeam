@@ -119,6 +119,11 @@ export const configSchema = z.strictObject({
       // On once a provider is named. Set false to keep the provider configured
       // and stop asking it.
       enrich: z.boolean().default(true),
+      // Whether the product's own source may leave this machine. A page and
+      // the evidence for a finding are about the documentation; the source is
+      // the product itself, and sending it to somebody else's service is a
+      // separate decision from asking for a draft. Off unless said.
+      sendSource: z.boolean().default(false),
       // Files the project already keeps for whoever writes its documentation.
       // Named rather than guessed at, because what is in them is the project's
       // business: voice, terminology, structure, or anything else. They are

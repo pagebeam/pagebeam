@@ -78,10 +78,31 @@ A file named here that cannot be read stops the run. Anyone who can commit to
 the repository can change what these say, which is the same trust you already
 place in what CI runs.
 
+### What leaves this machine
+
+By default: the documentation page, the finding, and the evidence for it.
+
+Describing a control needs more than its name, so `sendSource: true` also
+sends the source the controls were found in. That is the product itself
+rather than its documentation, so it is off until you say otherwise. Every
+file sent is named in the run's output, and one that looks like it holds a
+credential is held back and reported rather than sent.
+
+```yaml
+model:
+  sendSource: false   # the default
+```
+
+### What is refused
+
 A draft that comes back unchanged, or shorter than half the page it was given,
 is refused rather than proposed. A provider that cannot answer leaves the
-finding exactly as it was. Every draft is marked as written by a model, so it
-is never confused with a replacement worked out from the source.
+finding exactly as it was.
+
+Every draft is marked as written by a model. A pull request containing one
+opens as a draft, because a change worked out from the source says exactly
+what it replaces and expects to find, while a drafted page is a suggestion
+about prose nobody has read yet. Set `propose.draft` to decide it yourself.
 
 ## Configuration
 

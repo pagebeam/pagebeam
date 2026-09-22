@@ -160,6 +160,13 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
     };
   }
 
+  // A change worked out from the source says exactly what it replaces and
+  // what it expects to find there. One a model wrote is a suggestion about
+  // prose nobody has read yet, so it arrives as a draft unless the
+  // configuration says otherwise outright.
+  const anyFromAModel = fixable.some((f) => f.fix?.author === 'model');
+  const asDraft = request.draft ?? anyFromAModel;
+
   const pr: PullRequest =
     openPr === null
       ? await forge.create({
@@ -169,7 +176,7 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
           body,
           ...(request.labels ? { labels: request.labels } : {}),
           ...(request.reviewers ? { reviewers: request.reviewers } : {}),
-          ...(request.draft === undefined ? {} : { draft: request.draft }),
+          draft: asDraft,
         })
       : await forge.update(openPr.number, title, body);
 

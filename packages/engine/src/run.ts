@@ -12,7 +12,7 @@ import { history, snapshot } from '@pagebeam/app';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
-import { compose, draft, type Target } from '@pagebeam/model';
+import { compose, draft, withheld, type Target } from '@pagebeam/model';
 import { loadConfig, loadIgnores } from './load.js';
 import { publishedPaths } from './published.js';
 import { reacher } from './reach.js';
@@ -398,7 +398,11 @@ async function docsAsThen(
 // much that the reading costs more than the page is worth.
 const SOURCE_BUDGET = 120_000;
 
-function readingFor(finding: Finding, snapshots: Snapshot[]): { path: string; text: string }[] {
+function readingFor(
+  finding: Finding,
+  snapshots: Snapshot[],
+  told: string[],
+): { path: string; text: string }[] {
   const named = finding.evidence.find((e) => e.kind === 'files')?.detail;
   if (named === undefined) return [];
   const wanted = new Set(named.split('\n').filter((f) => f !== ''));
@@ -413,7 +417,18 @@ function readingFor(finding: Finding, snapshots: Snapshot[]): { path: string; te
       spent += file.text.length;
     }
   }
-  return found;
+  // Nothing leaves without being named, and a file that looks like it carries
+  // a credential does not leave at all.
+  const { sending, held } = withheld(found);
+  for (const one of held) told.push(`model: ${one.path} was not sent: it looks like it holds ${one.because}`);
+  if (sending.length > 0) {
+    told.push(`model: sent ${sending.length} source file(s) to ${
+      ''}the configured provider: ${sending.map((f) => f.path).join(', ')}`);
+  }
+  if (spent >= SOURCE_BUDGET) {
+    told.push('model: the source did not all fit, so some of it was not sent');
+  }
+  return sending;
 }
 
 async function mend(
@@ -422,6 +437,7 @@ async function mend(
   pages: DocPage[],
   findings: Finding[],
   snapshots: Snapshot[],
+  told: string[],
 ): Promise<Finding[]> {
   const settings = config.model;
   if (settings === undefined) return findings;
@@ -476,7 +492,7 @@ async function mend(
       if (finding.check !== 'undocumented') return finding;
       const target = placeFor(finding, pages);
       if (target === null) return finding;
-      const source = readingFor(finding, snapshots);
+      const source = settings.sendSource ? readingFor(finding, snapshots, told) : [];
       const withSource: Target = source.length === 0 ? target : { ...target, source };
       return (await compose(router, finding, withSource, skills)) ?? finding;
     }),
@@ -616,7 +632,7 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
   const deduped = [...unique.values()];
 
   const mended = proposing
-    ? await mend(cwd, config, pass.pages, deduped, pass.evidence?.now ?? [])
+    ? await mend(cwd, config, pass.pages, deduped, pass.evidence?.now ?? [], skipped)
     : deduped;
 
   const order = { error: 0, warn: 1, info: 2 } as const;
