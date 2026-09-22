@@ -1,4 +1,5 @@
 import { findingId, findingRevision, type Finding, type Snapshot } from '@pagebeam/core';
+import { screensOf } from '@pagebeam/app';
 import type { DocPage } from '@pagebeam/docs';
 import { normalise } from './strings.js';
 
@@ -40,9 +41,27 @@ function wordsOf(value: string): string {
     .trim();
 }
 
-function areaOf(file: string): string {
+// Where a file sits, used only where a route can be found for nothing: a
+// library has no screens, and grouping its controls somehow beats reporting
+// none of them.
+function whereverItSits(file: string): string {
   const parts = file.split('/');
   return parts.length <= 1 ? '.' : parts.slice(0, -1).join('/');
+}
+
+// Every screen a file is part of. A component used by three routes is on
+// three screens, and a reader meeting it on any of them finds the same
+// nothing written about it. One that no route reaches is on no screen, and
+// nothing is owed for something nobody can arrive at.
+function screensFor(snapshot: Snapshot): (file: string) => string[] {
+  const { reaches, unreached } = screensOf(snapshot.files);
+  if (reaches.size === 0) return (file) => [whereverItSits(file)];
+
+  const on = new Map<string, string[]>();
+  for (const [address, files] of reaches) {
+    for (const file of files) on.set(file, [...(on.get(file) ?? []), address]);
+  }
+  return (file) => (unreached.has(file) ? [] : (on.get(file) ?? []));
 }
 
 // What the application offers, gathered the way somebody would meet it: a
@@ -57,22 +76,25 @@ export function areasOf(snapshots: Snapshot[], pages: DocPage[]): Area[] {
 
   const grouped = new Map<string, Area>();
   for (const snapshot of snapshots) {
+    const screens = screensFor(snapshot);
     for (const label of snapshot.labels) {
       // A rendered name may be somebody's own data rather than a label.
       if (label.from === 'rendered') continue;
-      const key = `${snapshot.app}|${areaOf(label.file)}`;
-      const area =
-        grouped.get(key) ??
-        ({ app: snapshot.app, where: areaOf(label.file), controls: [], documented: [], files: [] } as Area);
-      const text = normalise(label.text);
-      if (!asksAbout(label.text) || area.controls.includes(label.text)) {
+      for (const where of screens(label.file)) {
+        const key = `${snapshot.app}|${where}`;
+        const area =
+          grouped.get(key) ??
+          ({ app: snapshot.app, where, controls: [], documented: [], files: [] } as Area);
+        const text = normalise(label.text);
+        if (!asksAbout(label.text) || area.controls.includes(label.text)) {
+          grouped.set(key, area);
+          continue;
+        }
+        area.controls.push(label.text);
+        if (!area.files.includes(label.file)) area.files.push(label.file);
+        if (corpus.includes(` ${wordsOf(text)} `)) area.documented.push(label.text);
         grouped.set(key, area);
-        continue;
       }
-      area.controls.push(label.text);
-      if (!area.files.includes(label.file)) area.files.push(label.file);
-      if (corpus.includes(` ${wordsOf(text)} `)) area.documented.push(label.text);
-      grouped.set(key, area);
     }
   }
   return [...grouped.values()];
