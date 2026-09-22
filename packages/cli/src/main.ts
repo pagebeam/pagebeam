@@ -80,7 +80,8 @@ if (args.command !== 'check' && args.command !== 'fix') {
   process.exit(2);
 }
 
-const result = await run(args.cwd);
+// Only a run that will propose something has a reason to draft it.
+const result = await run(args.cwd, { proposing: args.command === 'fix' });
 
 if (args.command === 'fix') {
   try {

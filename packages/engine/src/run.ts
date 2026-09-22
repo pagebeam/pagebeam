@@ -465,9 +465,16 @@ function placeFor(finding: Finding, pages: DocPage[]): Target | null {
     : { path: at, existing: already.raw };
 }
 
-export async function run(cwd: string): Promise<RunResult> {
+export interface Asking {
+  // Whether anything will be done with a change if one is drafted. Reporting
+  // does not propose, so a run that only reports has no reason to put a
+  // finding to a model, and no reason to spend anything doing it.
+  proposing?: boolean | undefined;
+}
+
+export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> {
   try {
-    return await attempt(cwd);
+    return await attempt(cwd, asking.proposing === true);
   } catch (error) {
     // A file that could not be read is not a file with nothing in it.
     return {
@@ -485,7 +492,7 @@ export async function run(cwd: string): Promise<RunResult> {
   }
 }
 
-async function attempt(cwd: string): Promise<RunResult> {
+async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
   const { config, from, asked } = await loadConfig(cwd);
   const ignores = new Ignores(await loadIgnores(cwd));
   const docsRoot = path.resolve(cwd, config.docs.root);
@@ -562,7 +569,9 @@ async function attempt(cwd: string): Promise<RunResult> {
   for (const f of findings) if (!unique.has(f.id)) unique.set(f.id, f);
   const deduped = [...unique.values()];
 
-  const mended = await mend(cwd, config, pass.pages, deduped, pass.evidence?.now ?? []);
+  const mended = proposing
+    ? await mend(cwd, config, pass.pages, deduped, pass.evidence?.now ?? [])
+    : deduped;
 
   const order = { error: 0, warn: 1, info: 2 } as const;
   mended.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));
