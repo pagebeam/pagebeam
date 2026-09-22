@@ -7,9 +7,12 @@
 name: publish
 
 on:
+  # Started by hand while the version still moves. A tag is for a release, and
+  # releasing is a decision somebody makes rather than something that follows
+  # from pushing.
+  workflow_dispatch:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,9 +37,11 @@ jobs:
       - run: npm ci
       - run: npm test
 
-      # The tag is what says which version is being released, so a tag that
-      # disagrees with the packages would publish something nobody asked for.
+      # A tag says which version is being released, so one that disagrees with
+      # the packages would publish something nobody asked for. Started by hand
+      # there is no tag and nothing to disagree with.
       - name: Check the tag matches what the packages say
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           tagged="${GITHUB_REF_NAME#v}"
           for dir in packages/*/; do
@@ -65,5 +70,11 @@ jobs:
               echo "$name@$version is already published"
               continue
             fi
-            ( cd "packages/$p" && npm publish --access public --provenance )
+            # Anything with a hyphen in its version is not finished, and
+            # nothing unfinished becomes what `npm install` gives people.
+            case "$version" in
+              *-*) tag=next ;;
+              *)   tag=latest ;;
+            esac
+            ( cd "packages/$p" && npm publish --access public --provenance --tag "$tag" )
           done

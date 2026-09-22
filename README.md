@@ -168,9 +168,10 @@ GitHub issues for the run, so there is no long-lived credential to leak or
 rotate. Each package carries provenance saying which commit and which workflow
 built it.
 
-Tag the version and push the tag. The workflow refuses to publish if any
-package disagrees with the tag.
+While the version is still moving, run the workflow by hand from the Actions
+tab. A version carrying a hyphen is published under `next` rather than
+`latest`, so nothing unfinished becomes what an install gives people, and a
+version already on the registry is left alone.
 
-```
-git tag v0.1.1 && git push origin v0.1.1
-```
+A tag is for a release. The workflow refuses to publish if any package
+disagrees with the tag it was asked to release.
