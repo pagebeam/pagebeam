@@ -1,0 +1,58 @@
+# Publishing without a token anybody has to keep. npm is told to trust this
+# workflow in this repository, and the identity GitHub issues for a run is what
+# it checks, so there is no long-lived credential to leak or rotate.
+#
+# Every package names this file by name on npmjs.com. Renaming it stops
+# publishing until they are told the new name.
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # What npm checks instead of a token. Without it the run has no identity.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # The runner's npm is older than the one that knows how to do this.
+      - run: npm install -g npm@latest
+      - run: npm -v
+
+      - run: npm ci
+      - run: npm test
+
+      # The tag is what says which version is being released, so a tag that
+      # disagrees with the packages would publish something nobody asked for.
+      - name: Check the tag matches what the packages say
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          for dir in packages/*/; do
+            said=$(node -p "require('./${dir}package.json').version")
+            name=$(node -p "require('./${dir}package.json').name")
+            if [ "$said" != "$tagged" ]; then
+              echo "$name is $said but the tag says $tagged"
+              exit 1
+            fi
+          done
+          echo "every package is $tagged"
+
+      # In the order they depend on each other, so one is never published
+      # against a version of another that is not there yet.
+      - name: Publish
+        run: |
+          for p in core docs app checks git model engine cli; do
+            ( cd "packages/$p" && npm publish --access public --provenance )
+          done

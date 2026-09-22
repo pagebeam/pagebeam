@@ -159,3 +159,18 @@ gone, because a page nobody opened shows nothing.
 Parsers: Vue, React, Svelte, Astro, HTML and server-side templates, each
 through that framework's own compiler. Anything else is searched as text and
 says so.
+
+## Releasing
+
+Published from GitHub Actions without a token. npm is told to trust
+`.github/workflows/publish.yml` in this repository, and checks the identity
+GitHub issues for the run, so there is no long-lived credential to leak or
+rotate. Each package carries provenance saying which commit and which workflow
+built it.
+
+Tag the version and push the tag. The workflow refuses to publish if any
+package disagrees with the tag.
+
+```
+git tag v0.1.1 && git push origin v0.1.1
+```
