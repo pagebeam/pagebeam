@@ -64,3 +64,36 @@ test('the same attributes in plain markdown are not components', async () => {
   const parsed = await page('a.md', '<Link to="/broken">Read it</Link>\n');
   assert.deepEqual(parsed!.links.map((l) => l.href), [], 'markdown has no components to read');
 });
+
+test('astro structure is read, not guessed at from text', async () => {
+  const parsed = await page(
+    'a.astro',
+    '---\nconst x = 1;\n---\n<a href="/guide">Read</a>\n<strong>Create a <em>report</em></strong>\n<pre><code>npm run dev</code></pre>\n',
+  );
+  assert.deepEqual(parsed!.links.map((l) => l.href), ['/guide']);
+  assert.ok(parsed!.emphasised.some((e) => e.value === 'Create a report' && e.marker === 'strong'));
+  assert.equal(parsed!.codeBlocks.length, 1);
+  assert.ok(!parsed!.prose.includes('const x = 1'), 'frontmatter is not prose');
+});
+
+test('an astro component attribute can carry a link', async () => {
+  const parsed = await page('a.astro', '<Figure src="/shots/a.png" caption="The Save button" />\n');
+  assert.deepEqual(parsed!.links.map((l) => l.href), ['/shots/a.png']);
+  assert.ok(parsed!.emphasised.some((e) => e.value === 'The Save button'));
+});
+
+test('a component showing an address as text is not a link', async () => {
+  const parsed = await page('a.astro', '<Browser url="app.example.com/systems" />\n');
+  assert.deepEqual(parsed!.links, [], 'no scheme and no slash, so it is being displayed');
+});
+
+test('a component genuinely linking somewhere still is one', async () => {
+  const parsed = await page('a.astro', '<Link to="/real">Go</Link>\n');
+  assert.deepEqual(parsed!.links.map((l) => l.href), ['/real']);
+});
+
+test('script and style contents are not prose', async () => {
+  const parsed = await page('a.astro', '<script>const secret = "hello";</script><p>Visible.</p>\n');
+  assert.ok(!parsed!.prose.includes('secret'));
+  assert.match(parsed!.prose, /Visible/);
+});

@@ -18,6 +18,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@astrojs/compiler": "^4.0.0",
     "@pagebeam/core": "0.0.1",
     "acorn": "^8.18.0",
     "mdast-util-from-markdown": "^2.0.2",

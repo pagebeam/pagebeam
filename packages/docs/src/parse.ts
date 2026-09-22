@@ -20,8 +20,18 @@ const HTML_HREF = /\b(?:href|src)\s*=\s*"([^"{}]+)"/g;
 
 // A React documentation site writes most of its links and every image as a
 // component attribute rather than as Markdown, so these carry the address.
-const LINK_ATTRS = new Set(['href', 'src', 'to', 'url', 'poster']);
-const EMPHASIS_ATTRS = new Set(['title', 'label', 'alt', 'heading']);
+// href and src are links wherever they appear. The others are links in some
+// frameworks and ordinary text in others, so they have to look like an address
+// before they are followed: a component may well be showing one to the reader.
+const LINK_ATTRS = new Set(['href', 'src']);
+const MAYBE_LINK_ATTRS = new Set(['to', 'url', 'poster']);
+const ADDRESS = /^([a-z][a-z0-9+.-]*:|\/|\.\.?\/|#)/i;
+
+function linkValue(name: string, value: string): boolean {
+  if (LINK_ATTRS.has(name)) return true;
+  return MAYBE_LINK_ATTRS.has(name) && ADDRESS.test(value.trim());
+}
+const EMPHASIS_ATTRS = new Set(['title', 'label', 'alt', 'heading', 'caption']);
 const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const SLUG = /^\s*slug\s*:\s*["']?([^"'\r\n#]+)["']?\s*$/m;
 const ASTRO_FENCE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
@@ -123,7 +133,7 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
         const name = String(attribute.name ?? '').toLowerCase();
         if (typeof attribute.value !== 'string') continue;
         const at = node.position?.start?.offset ?? 0;
-        if (LINK_ATTRS.has(name)) {
+        if (linkValue(name, attribute.value)) {
           links.push({
             href: attribute.value,
             line: start?.line ?? 1,
@@ -149,51 +159,89 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
   return { prose: prose.join('\n'), links, codeSpans, codeBlocks, emphasised };
 }
 
-function parseAstro(raw: string): Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
-  const fence = raw.match(ASTRO_FENCE);
-  const body = fence ? raw.slice(fence[0].length) : raw;
-  const from = fence ? fence[0].length : 0;
-  const links = htmlLinks(body, from).map((l) => ({
-    ...l,
-    line: l.line + (fence ? lineAt(raw, from) - 1 : 0),
-  }));
-  const prose = body
-    .replace(/<script[\s\S]*?<\/script>/g, ' ')
-    .replace(/<style[\s\S]*?<\/style>/g, ' ')
-    .replace(/<[^>]+>/g, ' ');
+const SKIP = new Set(['script', 'style']);
+const EMPHASIS_TAGS: Record<string, 'strong' | 'emphasis' | 'code'> = {
+  strong: 'strong',
+  b: 'strong',
+  em: 'emphasis',
+  i: 'emphasis',
+  code: 'code',
+};
+
+// Astro ships its own parser, so the structure of a page is read rather than
+// guessed at from its text. A tag inside a heading, an attribute on a
+// component and a fenced block are all distinguishable.
+async function parseAstro(
+  raw: string,
+): Promise<Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'>> {
+  const { parse } = await import('@astrojs/compiler');
+  const { ast } = await parse(raw, { position: true });
+
+  const links: DocLink[] = [];
   const codeSpans: DocCodeSpan[] = [];
-  for (const m of body.matchAll(/<code>([^<]{1,200})<\/code>/g)) {
-    codeSpans.push({ value: m[1] as string, line: lineAt(body, m.index ?? 0) });
-  }
   const codeBlocks: DocCodeBlock[] = [];
-  for (const m of body.matchAll(/<pre[^>]*>([\s\S]*?)<\/pre>/g)) {
-    codeBlocks.push({
-      value: (m[1] as string).replace(/<[^>]+>/g, ''),
-      lang: null,
-      line: lineAt(body, m.index ?? 0),
-    });
-  }
   const emphasised: DocEmphasis[] = [];
-  const TAGS: [RegExp, DocEmphasis['marker']][] = [
-    [/<strong>([\s\S]{1,120}?)<\/strong>/g, 'strong'],
-    [/<em>([\s\S]{1,120}?)<\/em>/g, 'emphasis'],
-    [/<code>([\s\S]{1,120}?)<\/code>/g, 'code'],
-  ];
-  for (const [pattern, marker] of TAGS) {
-    for (const m of body.matchAll(pattern)) {
-      const text = (m[1] as string).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
-      if (text !== '') {
-        const at = m.index ?? 0;
-        emphasised.push({
-          value: text,
-          line: lineAt(body, at),
-          marker,
-          ...around(body, at, at + m[0].length, true),
-        });
+  const prose: string[] = [];
+
+  const textOf = (node: any): string =>
+    node?.type === 'text'
+      ? String(node.value ?? '')
+      : (node?.children ?? []).map(textOf).join('');
+
+  const walk = (node: any, inside: string | null): void => {
+    const name = typeof node?.name === 'string' ? node.name.toLowerCase() : null;
+    const at = node?.position?.start;
+    const line = at?.line ?? 1;
+    const offset = at?.offset ?? 0;
+
+    if (node?.type === 'text' && inside === null && typeof node.value === 'string') {
+      prose.push(node.value);
+    }
+
+    if (node?.type === 'element' || node?.type === 'component') {
+      for (const attribute of node.attributes ?? []) {
+        if (attribute?.kind !== 'quoted' || typeof attribute.value !== 'string') continue;
+        const key = String(attribute.name ?? '').toLowerCase();
+        if (linkValue(key, attribute.value)) {
+          links.push({ href: attribute.value, line, offset: [offset, offset], kind: 'html' });
+        } else if (EMPHASIS_ATTRS.has(key) && attribute.value.trim() !== '') {
+          emphasised.push({
+            value: attribute.value,
+            line,
+            marker: 'strong',
+            ...around(raw, offset, offset),
+          });
+        }
+      }
+
+      if (name !== null && name in EMPHASIS_TAGS) {
+        const text = textOf(node).replace(/\s+/g, ' ').trim();
+        if (text !== '') {
+          emphasised.push({
+            value: text,
+            line,
+            marker: EMPHASIS_TAGS[name] as 'strong' | 'emphasis' | 'code',
+            ...around(raw, offset, offset),
+          });
+          if (name === 'code') codeSpans.push({ value: text, line });
+        }
+      }
+
+      if (name === 'pre') {
+        codeBlocks.push({ value: textOf(node), lang: null, line });
+        return;
       }
     }
+
+    const next = name !== null && SKIP.has(name) ? name : inside;
+    for (const child of node?.children ?? []) walk(child, next);
+  };
+
+  for (const child of ast.children ?? []) {
+    if (child?.type === 'frontmatter') continue;
+    walk(child, null);
   }
-  return { prose, links, codeSpans, codeBlocks, emphasised };
+  return { prose: prose.join(' '), links, codeSpans, codeBlocks, emphasised };
 }
 
 export type Read = (relative: string) => Promise<string | null>;
@@ -209,7 +257,7 @@ export async function parsePage(
       : await read(relative);
   if (raw === null) return null;
   const format = formatOf(relative);
-  const parsed = format === 'astro' ? parseAstro(raw) : parseMarkdown(raw, format);
+  const parsed = format === 'astro' ? await parseAstro(raw) : parseMarkdown(raw, format);
   const front = format === 'astro' ? null : raw.match(FRONT_MATTER);
   const slug = front?.[1]?.match(SLUG)?.[1]?.trim() ?? null;
   return { path: relative, format, raw, slug, directives: parseDirectives(raw), ...parsed };
