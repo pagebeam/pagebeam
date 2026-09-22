@@ -130,3 +130,53 @@ test('punctuation between a label and the prose is not a difference', () => {
   );
   assert.deepEqual(found, []);
 });
+
+// One corpus for a whole product means a page describing a control on one
+// screen marks the same word documented on every other screen, and a page
+// about one application satisfies another.
+const on = (where: string, labels: string[]): Snapshot => ({
+  app: 'dashboard', rev: null, source: 'parsed', whole: true, covered: true, unparsed: [],
+  labels: labels.map((text) => ({ text, kind: 'button', file: `pages/${where}.vue` })), envKeys: [],
+  files: [{ path: `pages/${where}.vue`, text: '<template><div /></template>' }],
+});
+
+const about = (path: string, href: string, prose: string): DocPage => ({
+  path, format: 'markdown', raw: '', prose,
+  links: [{ href, line: 1 }] as never, codeSpans: [], codeBlocks: [], slug: null,
+  emphasised: [], directives: [],
+});
+
+test('a page about one screen does not document another', () => {
+  const billing = about('billing.md', '/billing', 'Press Start Your Plan, Cancel Plan and Change Card.');
+  const both: Snapshot = {
+    ...on('billing', ['Start Your Plan', 'Cancel Plan', 'Change Card']),
+    labels: [
+      ...on('billing', ['Start Your Plan', 'Cancel Plan', 'Change Card']).labels,
+      ...on('reports', ['Start Your Plan', 'Cancel Plan', 'Change Card']).labels,
+    ],
+    files: [
+      { path: 'pages/billing.vue', text: '<template><div /></template>' },
+      { path: 'pages/reports.vue', text: '<template><div /></template>' },
+    ],
+  };
+  const found = checkUndocumented([billing], [both], null);
+  assert.equal(found.length, 1, 'the words are documented, just not for the screen that has none');
+  assert.match(found[0]!.doc.path, /reports/);
+});
+
+test('a page about the screen does document it', () => {
+  const reports = about('reports.md', '/reports', 'Press Start Your Plan, Cancel Plan and Change Card.');
+  assert.deepEqual(
+    checkUndocumented([reports], [on('reports', ['Start Your Plan', 'Cancel Plan', 'Change Card'])], null),
+    [],
+  );
+});
+
+test('where nothing ties a page to a screen, everything written is read', () => {
+  const loose = about('guide.md', '/somewhere-else', 'Press Start Your Plan, Cancel Plan and Change Card.');
+  assert.deepEqual(
+    checkUndocumented([loose], [on('reports', ['Start Your Plan', 'Cancel Plan', 'Change Card'])], null),
+    [],
+    'no evidence to scope by is not a reason to report everything',
+  );
+});

@@ -64,15 +64,61 @@ function screensFor(snapshot: Snapshot): (file: string) => string[] {
   return (file) => (unreached.has(file) ? [] : (on.get(file) ?? []));
 }
 
+// Which pages are about a screen. One corpus for the whole product means a
+// page describing "Delete" on one screen marks the Delete on every other
+// screen described, and a page about one application satisfies another.
+//
+// A page is about a screen when it says so: it links to that address, or it
+// is published at an address the screen shares. Where nothing ties any page
+// to a screen there is nothing to scope by, and everything written is read,
+// which is what happened before and is no worse.
+function pagesAbout(address: string, pages: DocPage[]): DocPage[] {
+  const tail = address.split('/').filter((s) => s !== '').pop();
+  if (tail === undefined || tail === '') return [];
+
+  return pages.filter((page) => {
+    if (page.links.some((link) => link.href === address || link.href.endsWith(address))) return true;
+    const where = page.slug ?? page.path;
+    return where.split(/[^\p{L}\p{N}]+/u).includes(tail);
+  });
+}
+
+function corpusOf(pages: DocPage[]): string {
+  return ` ${wordsOf(
+    normalise(pages.map((p) => `${p.prose} ${p.emphasised.map((e) => e.value).join(' ')}`).join(' ')),
+  )} `;
+}
+
 // What the application offers, gathered the way somebody would meet it: a
 // screen at a time, not a control at a time.
 export function areasOf(snapshots: Snapshot[], pages: DocPage[]): Area[] {
   // Matched between boundaries, never as a run of characters. "Save" occurs
   // inside "autosave" and inside "saved", and a page that says either has not
   // described the button.
-  const corpus = ` ${wordsOf(
-    normalise(pages.map((p) => `${p.prose} ${p.emphasised.map((e) => e.value).join(' ')}`).join(' ')),
-  )} `;
+  const everything = corpusOf(pages);
+  const scoped = new Map<string, string>();
+
+  // Whether this documentation is organised by screen is a question about the
+  // whole of it, asked once. Where some pages say which screen they are
+  // about, the ones that say nothing are about no screen, and a screen with
+  // no page is undocumented rather than covered by whatever else was written.
+  // Where no page anywhere says it, the documentation is not arranged that
+  // way and everything written is read.
+  const addresses = new Set<string>();
+  for (const snapshot of snapshots) {
+    const screens = screensFor(snapshot);
+    for (const label of snapshot.labels) for (const where of screens(label.file)) addresses.add(where);
+  }
+  const arranged = [...addresses].some((address) => pagesAbout(address, pages).length > 0);
+
+  const readingFor = (address: string): string => {
+    const already = scoped.get(address);
+    if (already !== undefined) return already;
+    const about = arranged ? pagesAbout(address, pages) : pages;
+    const corpus = about.length === 0 ? '' : corpusOf(about);
+    scoped.set(address, corpus);
+    return corpus;
+  };
 
   const grouped = new Map<string, Area>();
   for (const snapshot of snapshots) {
@@ -92,7 +138,7 @@ export function areasOf(snapshots: Snapshot[], pages: DocPage[]): Area[] {
         }
         area.controls.push(label.text);
         if (!area.files.includes(label.file)) area.files.push(label.file);
-        if (corpus.includes(` ${wordsOf(text)} `)) area.documented.push(label.text);
+        if (readingFor(where).includes(` ${wordsOf(text)} `)) area.documented.push(label.text);
         grouped.set(key, area);
       }
     }
