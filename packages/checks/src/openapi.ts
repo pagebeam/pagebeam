@@ -138,11 +138,16 @@ export function checkCoverage(
   ops: Operation[],
   specFile: string,
   app: string,
+  // The operations the built site was found to serve. Null where there is no
+  // build to read, and the source pages are all there is to go on.
+  served: Set<string> | null = null,
 ): Finding[] {
   const documented = new Set(
     citations(pages).map((c) => `${c.method} ${templatise(c.path, ops, c.method)}`),
   );
-  const undocumented = ops.filter((o) => !documented.has(`${o.method} ${o.path}`));
+  const undocumented = ops.filter(
+    (o) => !documented.has(`${o.method} ${o.path}`) && !(served?.has(o.path) ?? false),
+  );
   if (undocumented.length === 0) return [];
 
   // A path named in prose is not an operation described with its method.

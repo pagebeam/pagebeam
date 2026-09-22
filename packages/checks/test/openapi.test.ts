@@ -84,3 +84,17 @@ test('an endpoint documented with a concrete value is not called absent', () => 
   );
   assert.deepEqual(findings, [], 'DELETE /users/7 is DELETE /users/{key}');
 });
+
+test('an operation the site serves is documented, whatever named it', () => {
+  const ops = [{ method: 'GET', path: '/api/v1/wallets' }, { method: 'GET', path: '/api/v1/gone' }];
+  const served = new Set(['/api/v1/wallets']);
+  const findings = checkCoverage([], ops as never, 'spec.json', 'api', served);
+  assert.equal(findings.length, 1);
+  assert.match(findings[0]!.title, /1 of 2/);
+});
+
+test('with nothing served, the source pages are all there is to go on', () => {
+  const ops = [{ method: 'GET', path: '/api/v1/wallets' }];
+  assert.equal(checkCoverage([], ops as never, 'spec.json', 'api', null).length, 1);
+  assert.equal(checkCoverage([], ops as never, 'spec.json', 'api', new Set(['/api/v1/wallets'])).length, 0);
+});
