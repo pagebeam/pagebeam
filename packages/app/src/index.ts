@@ -6,3 +6,4 @@ export * from './jsx.js';
 export * from './render.js';
 export * from './raw.js';
 export * as history from './git.js';
+export * from './catalogue.js';

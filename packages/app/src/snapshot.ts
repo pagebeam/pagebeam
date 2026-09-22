@@ -3,6 +3,7 @@ import path from 'node:path';
 import { glob } from 'tinyglobby';
 import picomatch from 'picomatch';
 import { bestSource, type Label, type Snapshot, type Source } from '@pagebeam/core';
+import { catalogue } from './catalogue.js';
 import { CannotParse, Extractors } from './extractor.js';
 import { filesAt, readAt } from './git.js';
 import { raw } from './raw.js';
@@ -14,7 +15,7 @@ import { vue } from './vue.js';
 const ENV_ASSIGNMENT = /(?:^|\s)(?:-e\s+|--env\s+|export\s+|ENV\s+)?([A-Z][A-Z0-9_]{2,})\s*=/gm;
 
 export function defaultExtractors(): Extractors {
-  return new Extractors().add(vue).add(jsx).add(html).add(raw);
+  return new Extractors().add(vue).add(jsx).add(html).add(catalogue).add(raw);
 }
 
 function matches(file: string, include: string[], exclude: string[]): boolean {
