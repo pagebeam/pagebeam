@@ -1,12 +1,16 @@
 # pagebeam
 
-Finds documentation that no longer matches the product, and says how sure it is.
+Docs that keep up with your product.
+
+pagebeam checks every page against the application it describes, tells you how
+sure it is, and opens the pull request that fixes what it can. Open source, in
+the repo you already have.
 
 ```
 npx pagebeam check
 ```
 
-## What it looks for
+## Checks
 
 | Check | Finds |
 | --- | --- |
@@ -16,11 +20,11 @@ npx pagebeam check
 | `strings` | A control named in the documentation that the application no longer has |
 | `moved` | Code changing under a page that did not change with it |
 
-## What it will not do
+## Limitations
 
-Tell you whether a sentence is true. Every finding traces to something
-checkable: a route that does not resolve, a label no longer declared, a key
-absent from every example. Nothing here reads prose and judges it.
+pagebeam will not tell you whether a sentence is true. Every finding traces to
+something checkable: a route that does not resolve, a label no longer declared,
+a key absent from every example. Nothing here reads prose and judges it.
 
 ## Standing
 
@@ -35,7 +39,7 @@ live in an application no parser covers.
 
 Only `proven` findings can fail a build, and only under an enforcing profile.
 
-## Running it
+## Usage
 
 ```
 pagebeam check                     report everything, block nothing
@@ -83,7 +87,7 @@ propose:
 
 Every setting is checked. One that does not exist is an error, not a shrug.
 
-## How much it can see
+## Coverage
 
 Reading files sees every control an application declares. Opening a running
 application sees what a user sees, including labels assembled at runtime and
