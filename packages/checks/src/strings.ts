@@ -100,6 +100,7 @@ export interface Dictionary {
   text: string[];
   parsed: boolean;
   source: Source;
+  whole: boolean;
 }
 
 export function dictionaryOf(snapshot: Snapshot): Dictionary {
@@ -114,6 +115,7 @@ export function dictionaryOf(snapshot: Snapshot): Dictionary {
     text: snapshot.files.map((f) => normalise(f.text)),
     parsed: snapshot.labels.length > 0,
     source: snapshot.source,
+    whole: snapshot.whole,
   };
 }
 
@@ -199,8 +201,15 @@ export function compare(
       if (was === null) continue;
     }
 
-    // A claim about one application cannot borrow another's parser.
-    const mine: Grade = { source: was?.source ?? grade.source, depth: grade.depth };
+    // A claim about one application cannot borrow another's parser, nor a
+    // completeness the application it came from did not have.
+    const owner = was?.app;
+    const seen = now.find((d) => d.app === owner);
+    const mine: Grade = {
+      source: was?.source ?? grade.source,
+      depth: grade.depth,
+      whole: seen?.whole ?? grade.whole ?? true,
+    };
     const words = candidate.literal.split(/\s+/).length;
     const confidence = confidenceOf(mine, words >= 2 ? 0.9 : 0.6);
 

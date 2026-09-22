@@ -152,7 +152,13 @@ async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | n
       exclude: app.exclude,
       envFiles: app.envFiles,
     };
-    now.push(await snapshot(request));
+    // Only the present can be opened in a browser; an earlier revision is read
+    // from the repository, so history stays a file-level comparison.
+    const viewing =
+      app.url !== undefined && app.routes.length > 0
+        ? { baseUrl: app.url, routes: app.routes, timeoutMs: app.renderTimeoutMs }
+        : undefined;
+    now.push(await snapshot({ ...request, ...(viewing ? { viewing } : {}) }));
 
     const earlier = (await history.isRepository(root))
       ? await history.revisionBefore(root, config.history.sinceDays)
@@ -173,6 +179,7 @@ async function gather(cwd: string, config: PagebeamConfig): Promise<Evidence | n
     grade: {
       source: bestSource(now.map((s) => s.source)),
       depth: complete ? 'paired' : 'single',
+      whole: now.every((s) => s.whole),
     },
   };
 }
@@ -188,11 +195,6 @@ async function runStrings(
     skipped.push('strings: no application declares a local path');
     return [];
   }
-  if (evidence.now.every((s) => s.labels.length === 0)) {
-    skipped.push('strings: no parser covers any configured application, so no labels could be read');
-    return [];
-  }
-
   return strings.compare(
     strings.candidates(pages, !evidence.complete),
     evidence.now.map(strings.dictionaryOf),

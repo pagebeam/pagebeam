@@ -88,6 +88,9 @@ export interface Snapshot {
   app: string;
   rev: string | null;
   source: Source;
+  // False when only part of the application was examined, which is the case
+  // for anything read from a running application rather than from its files.
+  whole: boolean;
   labels: Label[];
   envKeys: string[];
   files: { path: string; text: string }[];

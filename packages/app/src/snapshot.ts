@@ -6,6 +6,7 @@ import { bestSource, type Label, type Snapshot, type Source } from '@pagebeam/co
 import { Extractors } from './extractor.js';
 import { filesAt, readAt } from './git.js';
 import { raw } from './raw.js';
+import { render, unavailable } from './render.js';
 import { html } from './html.js';
 import { jsx } from './jsx.js';
 import { vue } from './vue.js';
@@ -36,6 +37,12 @@ async function readOrThrow(file: string): Promise<string | null> {
   }
 }
 
+export interface Viewing {
+  baseUrl: string;
+  routes: string[];
+  timeoutMs?: number | undefined;
+}
+
 export interface SnapshotRequest {
   app: string;
   root: string;
@@ -44,6 +51,7 @@ export interface SnapshotRequest {
   envFiles: string[];
   rev?: string | undefined;
   extractors?: Extractors | undefined;
+  viewing?: Viewing | undefined;
 }
 
 export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
@@ -90,10 +98,32 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     for (const m of source.matchAll(ENV_ASSIGNMENT)) envKeys.add(m[1] as string);
   }
 
+  // Opening the running application adds what its files cannot show: a label
+  // a catalogue resolves, or one a framework with no parser renders. It never
+  // subtracts, because it only ever visited some of the pages.
+  let whole = true;
+  let source = bestSource(sources);
+  if (request.viewing !== undefined && rev === undefined) {
+    const seen = await render({
+      app: request.app,
+      baseUrl: request.viewing.baseUrl,
+      routes: request.viewing.routes,
+      timeoutMs: request.viewing.timeoutMs,
+    });
+    if (!unavailable(seen)) {
+      labels.push(...seen.labels);
+      if (sources.every((s) => s === 'raw')) {
+        source = 'rendered';
+        whole = false;
+      }
+    }
+  }
+
   return {
     app: request.app,
     rev: rev ?? null,
-    source: bestSource(sources),
+    source,
+    whole,
     labels,
     envKeys: [...envKeys],
     files: files_,

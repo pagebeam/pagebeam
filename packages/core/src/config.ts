@@ -16,6 +16,8 @@ const appSchema = z.strictObject({
   name: z.string(),
   path: z.string().optional(),
   url: z.string().url().optional(),
+  routes: z.array(z.string()).default([]),
+  renderTimeoutMs: z.number().int().positive().default(15_000),
   include: z.array(z.string()).default(['**/*.{ts,tsx,js,jsx,vue,svelte}']),
   exclude: z
     .array(z.string())
