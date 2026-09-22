@@ -20,12 +20,6 @@ npx pagebeam check
 | `strings` | A control named in the documentation that the application no longer has |
 | `moved` | Code changing under a page that did not change with it |
 
-## Limitations
-
-pagebeam will not tell you whether a sentence is true. Every finding traces to
-something checkable: a route that does not resolve, a label no longer declared,
-a key absent from every example. Nothing here reads prose and judges it.
-
 ## Standing
 
 A finding says what its evidence can carry.
