@@ -121,14 +121,24 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     });
     if (unavailable(seen)) {
       refused = seen.reason;
+    } else if (seen.visited.length === 0) {
+      // Asked to open the application and read nothing from it. A browser
+      // that started and then reached nowhere is not a reading.
+      refused =
+        seen.failed[0]?.reason ?? 'no page answered, so nothing was read from the application';
     } else {
       labels.push(...seen.labels);
+      if (seen.failed.length > 0) whole = false;
       if (sources.every((s) => s === 'raw')) {
         source = 'rendered';
         whole = false;
       }
     }
   }
+
+  // A component that would not parse is a part of the application nobody
+  // read, so nothing about this application can be called complete.
+  if (unparsed.length > 0) whole = false;
 
   return {
     app: request.app,

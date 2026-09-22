@@ -160,3 +160,39 @@ test('signing in with no way to confirm it is refused', async () => {
   assert.ok(unavailable(result));
   assert.match(result.reason, /confirm it worked/);
 });
+
+test('a page that drops out of the session is not read as the product', async (t) => {
+  let hits = 0;
+  const server: Server = createServer((req, res) => {
+    hits += 1;
+    // The first page is signed in; the second has been bounced to sign-in.
+    const signedIn = hits === 1;
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(
+      signedIn
+        ? '<!doctype html><body><button>Create a report</button><a>Sign out</a></body>'
+        : '<!doctype html><body><button>Sign in</button></body>',
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const a = server.address();
+  const port = typeof a === 'object' && a !== null ? a.port : 0;
+  try {
+    const result = await render({
+      app: 'd',
+      baseUrl: `http://127.0.0.1:${port}`,
+      routes: ['/one', '/two'],
+      auth: { confirm: 'text=Sign out' },
+    });
+    if (unavailable(result)) {
+      t.skip(`no browser to drive: ${result.reason}`);
+      return;
+    }
+    assert.deepEqual(result.visited, ['/one']);
+    assert.equal(result.failed.length, 1);
+    assert.match(result.failed[0]!.reason, /not signed in/);
+    assert.ok(!result.labels.some((l) => l.text === 'Sign in'), 'the login form was not harvested');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

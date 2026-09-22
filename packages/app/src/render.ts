@@ -110,12 +110,16 @@ export async function render(request: RenderRequest): Promise<Rendered | Unavail
   const timeout = request.timeoutMs ?? DEFAULT_TIMEOUT;
   const auth = request.auth;
   const browser = await chromium.launch({ executablePath, headless: true });
+  let credentials: string | null = null;
   const labels: Label[] = [];
   const visited: string[] = [];
   const failed: { route: string; reason: string }[] = [];
 
   try {
     const storageState = auth === undefined ? undefined : await storageFrom(auth);
+    if (auth?.storageStateEnv !== undefined && storageState !== undefined) {
+      credentials = storageState;
+    }
     const context = await browser.newContext(storageState ? { storageState } : {});
     const page = await context.newPage();
 
@@ -125,30 +129,33 @@ export async function render(request: RenderRequest): Promise<Rendered | Unavail
       await signIn(page);
     }
 
-    // Without this a dashboard that bounced every request to a login screen
-    // looks like a dashboard whose every control has been deleted.
-    if (auth?.confirm !== undefined) {
-      const first = request.routes[0];
-      const firstPath = typeof first === 'string' ? first : (first?.path ?? '/');
-      await page.goto(new URL(firstPath, request.baseUrl).href, {
-        waitUntil: 'networkidle',
-        timeout,
-      });
-      const present = await page
-        .locator(auth.confirm)
-        .first()
-        .isVisible({ timeout })
-        .catch(() => false);
-      if (!present) {
-        return { reason: `signed-in check ${auth.confirm} was not found, so nothing was read` };
-      }
-    }
-
     for (const entry of request.routes) {
       const route = typeof entry === 'string' ? { path: entry } : entry;
       const url = new URL(route.path, request.baseUrl).href;
       try {
         await page.goto(url, { waitUntil: 'networkidle', timeout });
+
+        // Checked on arrival at every page, not once at the start. A session
+        // expires, and one route in ten may be the one that demands a
+        // stronger sign-in; reading the login form as if it were the product
+        // is worse than not reading the page at all.
+        if (auth?.confirm !== undefined) {
+          const present = await page
+            .locator(auth.confirm)
+            .first()
+            .isVisible({ timeout })
+            .catch(() => false);
+          if (!present) {
+            if (visited.length === 0) {
+              return {
+                reason: `signed-in check ${auth.confirm} was not found, so nothing was read`,
+              };
+            }
+            failed.push({ route: route.path, reason: 'this page was not signed in' });
+            continue;
+          }
+        }
+
         if (route.prepare !== undefined) await (await moduleDefault(route.prepare))(page);
         const markup = await page.content();
         labels.push(...html.extract(markup, route.path));
@@ -164,6 +171,14 @@ export async function render(request: RenderRequest): Promise<Rendered | Unavail
     return { reason: (error as Error).message.split('\n')[0] ?? 'the application could not be read' };
   } finally {
     await browser.close();
+    // A saved session is a credential. It does not outlive the run.
+    if (credentials !== null) {
+      const { rm } = await import('node:fs/promises');
+      const nodePath = await import('node:path');
+      await rm(nodePath.dirname(credentials), { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    }
   }
   return { labels, visited, failed };
 }

@@ -165,3 +165,22 @@ test('documentation in a nested directory is still readable at an earlier revisi
     'a nested root must not make every finding look new',
   );
 });
+
+test('a file that will not parse means the reading is not whole', async () => {
+  const root = await site({
+    'pagebeam.config.yaml':
+      "docs:\n  root: docs\napps:\n  - name: ui\n    path: app\n    include: ['**/*.vue']\n",
+    'docs/a.md': '# A\n',
+    'app/Broken.vue': '<template><div v-if=></template>\n',
+  });
+  const { snapshot } = await import('@pagebeam/app');
+  const taken = await snapshot({
+    app: 'ui',
+    root: path.join(root, 'app'),
+    include: ['**/*.vue'],
+    exclude: [],
+    envFiles: [],
+  });
+  assert.ok(taken.unparsed.length > 0, 'the file was recorded as unreadable');
+  assert.equal(taken.whole, false, 'part of the application was never read');
+});

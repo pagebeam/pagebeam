@@ -106,8 +106,10 @@ async function routeSet(
   return { routes: fromSource, source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
 }
 
-let routeModelNow: 'build' | 'content' | null = null;
-let routeModelThen: 'build' | 'content' | null = null;
+export interface RouteModels {
+  now: 'build' | 'content' | null;
+  then: 'build' | 'content' | null;
+}
 
 async function runLinks(
   pages: DocPage[],
@@ -116,12 +118,12 @@ async function runLinks(
   docsRoot: string,
   skipped: string[],
   earlier: boolean,
+  models: RouteModels,
 ): Promise<Finding[]> {
   if (config.checks.links === false) return [];
   const options = config.checks.links;
   const set = await routeSet(pages, cwd, config, docsRoot, earlier);
-  if (earlier) routeModelThen = set.source;
-  else routeModelNow = set.source;
+  models[earlier ? 'then' : 'now'] = set.source;
   if (options.external && !earlier) {
     set.reach = reacher({
       timeoutMs: options.timeoutMs,
@@ -287,6 +289,7 @@ async function checkAll(
   evidence: Evidence | null,
   untouched: ((page: string) => boolean) | null = null,
   earlier = false,
+  models: RouteModels = { now: null, then: null },
 ): Promise<Pass> {
   const skipped: string[] = [];
   for (const snapshot of evidence?.now ?? []) {
@@ -303,7 +306,7 @@ async function checkAll(
 
   const findings = (
     await Promise.all([
-      runLinks(pages, cwd, config, docsRoot, skipped, earlier),
+      runLinks(pages, cwd, config, docsRoot, skipped, earlier, models),
       runConfigKeys(pages, cwd, config, skipped, earlier ? (evidence?.now ?? []) : null),
       runOpenapi(pages, cwd, config, skipped),
       runStrings(pages, config, evidence, skipped),
@@ -392,7 +395,8 @@ async function attempt(cwd: string): Promise<RunResult> {
     then === null ? null : new Set(await history.changedBetween(docsRoot, then.rev));
   const untouched =
     editedPages === null ? null : (page: string) => ![...editedPages].some((f) => f.endsWith(page));
-  const pass = await checkAll(pages, cwd, config, docsRoot, evidence, untouched);
+  const models: RouteModels = { now: null, then: null };
+  const pass = await checkAll(pages, cwd, config, docsRoot, evidence, untouched, false, models);
   const { ran, skipped } = pass;
 
   // Only the label and movement checks are fed a genuine earlier state. The
@@ -416,7 +420,7 @@ async function attempt(cwd: string): Promise<RunResult> {
             movement: [],
             grade: { source: evidence.grade.source, depth: 'single' },
           };
-    const earlier = await checkAll(then.pages, cwd, config, docsRoot, asThen, null, true);
+    const earlier = await checkAll(then.pages, cwd, config, docsRoot, asThen, null, true, models);
     for (const f of earlier.findings) known.add(f.id);
   }
 
@@ -425,7 +429,7 @@ async function attempt(cwd: string): Promise<RunResult> {
     if (then === null) return false;
     // The earlier pass never reads today's build, so when the present one did,
     // the two are judging routes by different rules and no age follows.
-    if (NEEDS_DOCS.has(check)) return routeModelNow === routeModelThen;
+    if (NEEDS_DOCS.has(check)) return models.now === models.then;
     return NEEDS_APPS.has(check) && appsHaveAPast;
   };
 
@@ -450,7 +454,15 @@ async function attempt(cwd: string): Promise<RunResult> {
     ['strings', 'strings'],
     ['links', 'links'],
   ]);
-  const degraded = [...skippedNames].filter((name) => asked.has(configured.get(name) ?? name));
+  // Declaring where an application runs is asking for it to be opened, so
+  // failing to open it leaves the answer short of what was asked for.
+  const refusedToOpen = (evidence?.now ?? [])
+    .filter((s) => s.refused !== undefined)
+    .map((s) => `opening ${s.app}`);
+  const degraded = [
+    ...[...skippedNames].filter((name) => asked.has(configured.get(name) ?? name)),
+    ...refusedToOpen,
+  ];
   return {
     problem: null,
     degraded,
