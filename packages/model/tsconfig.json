@@ -10,18 +10,6 @@
   "references": [
     {
       "path": "../core"
-    },
-    {
-      "path": "../docs"
-    },
-    {
-      "path": "../model"
-    },
-    {
-      "path": "../checks"
-    },
-    {
-      "path": "../app"
     }
   ]
 }

@@ -87,6 +87,17 @@ export const configSchema = z.strictObject({
     })
     .default({}),
   checks: checksSchema.default({}),
+  // Anything answering the OpenAI chat completions shape, which a router run
+  // beside this does. Absent means the deterministic checks answer alone and
+  // findings they cannot mend are reported without a change to propose.
+  model: z
+    .strictObject({
+      baseUrl: z.string().url(),
+      name: z.string(),
+      apiKeyEnv: z.string().optional(),
+      timeoutMs: z.number().int().positive().default(60_000),
+    })
+    .optional(),
 });
 
 export type PagebeamConfig = z.infer<typeof configSchema>;

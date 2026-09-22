@@ -12,6 +12,7 @@ import { history, snapshot } from '@pagebeam/app';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
+import { draft } from '@pagebeam/model';
 import { loadConfig, loadIgnores } from './load.js';
 import { reacher } from './reach.js';
 
@@ -359,6 +360,36 @@ async function docsAsThen(
   return { pages, rev };
 }
 
+// A check that proves a page is wrong cannot always say what it should say
+// instead. Where a router is configured it is asked, once per finding, with
+// the page and the evidence already gathered. It is never asked to find
+// anything: the problem was established before it was called, and a draft it
+// returns is marked as its own so nothing applies it unreviewed.
+async function mend(
+  config: PagebeamConfig,
+  pages: DocPage[],
+  findings: Finding[],
+): Promise<Finding[]> {
+  const settings = config.model;
+  if (settings === undefined) return findings;
+
+  const router = {
+    baseUrl: settings.baseUrl,
+    model: settings.name,
+    timeoutMs: settings.timeoutMs,
+    ...(settings.apiKeyEnv ? { apiKey: process.env[settings.apiKeyEnv] } : {}),
+  };
+  const sourceOf = new Map(pages.map((page) => [page.path, page.raw]));
+
+  return Promise.all(
+    findings.map(async (finding) => {
+      const page = sourceOf.get(finding.doc.path);
+      if (finding.fix !== undefined || page === undefined) return finding;
+      return (await draft(router, finding, page)) ?? finding;
+    }),
+  );
+}
+
 export async function run(cwd: string): Promise<RunResult> {
   try {
     return await attempt(cwd);
@@ -456,8 +487,10 @@ async function attempt(cwd: string): Promise<RunResult> {
   for (const f of findings) if (!unique.has(f.id)) unique.set(f.id, f);
   const deduped = [...unique.values()];
 
+  const mended = await mend(config, pass.pages, deduped);
+
   const order = { error: 0, warn: 1, info: 2 } as const;
-  deduped.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));
+  mended.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));
 
   const comparedWith = then?.rev ?? null;
   const skippedNames = new Set(skipped.map((s) => s.split(':')[0] as string));
@@ -486,7 +519,7 @@ async function attempt(cwd: string): Promise<RunResult> {
     configFrom: from,
     pages: pages.length,
     apps: config.apps.map((a) => a.name),
-    findings: deduped,
+    findings: mended,
     ran: ran.filter((r) => !skippedNames.has(r)),
     skipped,
   };
