@@ -14,7 +14,10 @@ const docsSchema = z.strictObject({
 
 const appSchema = z.strictObject({
   name: z.string(),
-  path: z.string().optional(),
+  // Required. Opening a running application adds to what its files say; it
+  // cannot stand in for them, so an application named by url alone would be
+  // accepted and then never read.
+  path: z.string(),
   url: z.string().url().optional(),
   routes: z
     .array(z.union([z.string(), z.strictObject({ path: z.string(), prepare: z.string().optional() })]))
