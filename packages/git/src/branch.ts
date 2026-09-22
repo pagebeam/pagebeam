@@ -304,3 +304,68 @@ export async function remoteCommits(
 export async function headOf(dir: string): Promise<string> {
   return (await git(dir, 'rev-parse', 'HEAD')).trim();
 }
+
+// The pull request belongs to the repository the branch was pushed to, which
+// is not always the repository the run started in. A remote address names it
+// outright; the environment only ever names the checkout CI happens to be in.
+export async function slugOf(repo: string, remote = 'origin'): Promise<{ owner: string; name: string } | null> {
+  const url = await git(repo, 'remote', 'get-url', remote).then((s) => s.trim(), () => '');
+  const match = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/);
+  if (match === null) return null;
+  const [, owner, name] = match;
+  return owner === undefined || name === undefined ? null : { owner, name };
+}
+
+export interface Entry {
+  sha: string;
+  message: string;
+}
+
+// Oldest first, because that is the order they have to be replayed in.
+export async function entriesOn(repo: string, branch: string, base: string): Promise<Entry[]> {
+  const known = await git(repo, 'ls-remote', '--exit-code', '--heads', 'origin', branch).then(
+    () => true,
+    () => false,
+  );
+  const ref = known
+    ? await git(repo, 'fetch', '--quiet', 'origin', `${branch}:refs/pagebeam/existing`)
+        .then(() => 'refs/pagebeam/existing')
+        .catch(() => null)
+    : (await exists(repo, branch))
+      ? `refs/heads/${branch}`
+      : null;
+  if (ref === null) return [];
+
+  try {
+    return (await git(repo, 'log', '--reverse', '--format=%H%x1f%B%x00', `${base}..${ref}`))
+      .split('\u0000')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '')
+      .flatMap((entry) => {
+        const [sha, message] = entry.split('\u001f');
+        return sha === undefined || message === undefined ? [] : [{ sha, message: message.trim() }];
+      });
+  } catch {
+    return [];
+  } finally {
+    if (ref === 'refs/pagebeam/existing') {
+      await git(repo, 'update-ref', '-d', 'refs/pagebeam/existing').catch(() => undefined);
+    }
+  }
+}
+
+// Replaying somebody else's work onto a rebuilt branch. A conflict means the
+// two edits touch the same bytes, and guessing which wins is not this tool's
+// business, so the caller is told and keeps the branch it already had.
+export async function replay(dir: string, shas: string[]): Promise<boolean> {
+  for (const sha of shas) {
+    const ok = await git(dir, 'cherry-pick', '--allow-empty', '--keep-redundant-commits', sha)
+      .then(() => true)
+      .catch(() => false);
+    if (!ok) {
+      await git(dir, 'cherry-pick', '--abort').catch(() => undefined);
+      return false;
+    }
+  }
+  return true;
+}

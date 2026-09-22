@@ -1,23 +1,38 @@
 import path from 'node:path';
 import process from 'node:process';
 import { loadConfig, type RunResult } from '@pagebeam/engine';
-import { github, write, type Forge } from '@pagebeam/git';
+import { github, slugOf, write, type Forge } from '@pagebeam/git';
 
 export interface Proposed {
   said: string;
   code: number;
 }
 
-function hostFrom(env: NodeJS.ProcessEnv): Forge | { missing: string } {
-  const slug = env['GITHUB_REPOSITORY'];
+// The branch is pushed to `repo`, so the pull request has to be opened there.
+// GITHUB_REPOSITORY names the checkout the job is running in, which is the
+// same repository only when the documentation lives beside the code.
+async function hostFrom(
+  env: NodeJS.ProcessEnv,
+  repo: string,
+): Promise<Forge | { missing: string }> {
   const token = env['GITHUB_TOKEN'] ?? env['GH_TOKEN'];
-  if (slug === undefined) return { missing: 'GITHUB_REPOSITORY' };
   if (token === undefined) return { missing: 'GITHUB_TOKEN' };
-  const [owner, repo] = slug.split('/');
-  if (owner === undefined || repo === undefined) {
+
+  const remote = await slugOf(repo);
+  const slug = remote === null ? env['GITHUB_REPOSITORY'] : `${remote.owner}/${remote.name}`;
+  if (slug === undefined) {
+    return { missing: 'a git remote on the repository being proposed to, or GITHUB_REPOSITORY' };
+  }
+  const [owner, name] = slug.split('/');
+  if (owner === undefined || name === undefined) {
     return { missing: 'GITHUB_REPOSITORY in the form owner/name' };
   }
-  return github({ owner, repo, token, ...(env['GITHUB_API_URL'] ? { apiUrl: env['GITHUB_API_URL'] } : {}) });
+  return github({
+    owner,
+    repo: name,
+    token,
+    ...(env['GITHUB_API_URL'] ? { apiUrl: env['GITHUB_API_URL'] } : {}),
+  });
 }
 
 export async function propose(
@@ -60,7 +75,7 @@ export async function propose(
     return { said: lines.join('\n'), code: 0 };
   }
 
-  const host = hostFrom(process.env);
+  const host = await hostFrom(process.env, repo);
   if ('missing' in host) {
     return { said: `${host.missing} is needed to open a pull request.`, code: 2 };
   }

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { apply, commit, commitsOn, exists, headOf, open, within } from '../dist/branch.js';
+import { apply, commit, commitsOn, exists, headOf, open, slugOf, within } from '../dist/branch.js';
 import type { Finding } from '@pagebeam/core';
 
 const finding = (id: string): Finding => ({
@@ -176,4 +176,19 @@ test('a branch that has gone its own way is refused rather than merged', async (
   execFileSync('git', ['-C', clone, 'push', '-qf', 'origin', 'pagebeam/drift']);
 
   await assert.rejects(() => open(dir, 'pagebeam/drift', 'main', false), /gone different ways/);
+});
+
+// The pull request goes to the repository the branch was pushed to. In CI that
+// is not the repository the job is running in.
+test('the repository is named by its own remote, whatever the job is running in', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-slug-'));
+  execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
+
+  assert.equal(await slugOf(dir), null, 'no remote is not a guess');
+
+  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:acme/handbook.git']);
+  assert.deepEqual(await slugOf(dir), { owner: 'acme', name: 'handbook' });
+
+  execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', 'https://github.com/acme/handbook']);
+  assert.deepEqual(await slugOf(dir), { owner: 'acme', name: 'handbook' });
 });
