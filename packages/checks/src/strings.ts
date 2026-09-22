@@ -208,6 +208,10 @@ function similarity(a: string, b: string): number {
   return shared / (left.size + right.size - shared);
 }
 
+// How alike two labels have to read before one can stand for the other.
+const NEARLY = 0.35;
+const STRONGLY = 0.6;
+
 export interface Rename {
   to: string;
   confidence: number;
@@ -225,24 +229,42 @@ export function renameOf(
   const arrived = [...now.details.entries()].filter(([key]) => !before.labels.has(key));
   if (arrived.length === 0) return null;
 
-  let best: Rename | null = null;
+  const scored: Rename[] = [];
   for (const [, detail] of arrived) {
     const sameFile = detail.file === gone.file;
     const sameKind = detail.kind === gone.kind;
     const alike = similarity(gone.normalised, normalise(detail.text));
 
-    const [confidence, because] =
-      sameFile && sameKind
-        ? ([0.95, `the same ${detail.kind} in the same file now reads this way`] as const)
-        : sameFile
-          ? ([0.8, 'it appeared in the same file'] as const)
-          : alike > 0.6
-            ? ([0.7, 'it is close to what was there'] as const)
-            : ([0, ''] as const);
+    // Where a label appeared is circumstance; what it says is evidence. A new
+    // control in the same file is only the old one renamed if it still reads
+    // like it, otherwise it is simply a different control that arrived.
+    if (alike < NEARLY) continue;
 
-    if (confidence > 0 && (best === null || confidence > best.confidence)) {
-      best = { to: detail.text, confidence, because };
-    }
+    const confidence =
+      sameFile && sameKind ? 0.95 : sameFile ? 0.85 : alike >= STRONGLY ? 0.7 : 0;
+    if (confidence === 0) continue;
+
+    scored.push({
+      to: detail.text,
+      confidence,
+      because:
+        sameFile && sameKind
+          ? `the same ${detail.kind} in the same file now reads this way`
+          : sameFile
+            ? 'it appeared in the same file and reads much the same'
+            : 'it is close to what was there',
+    });
+  }
+
+  scored.sort((a, b) => b.confidence - a.confidence || b.to.localeCompare(a.to));
+  const best = scored[0];
+  if (best === undefined) return null;
+
+  // Two equally good answers is no answer. Proposing either would be a guess
+  // wearing a confidence score.
+  const rival = scored[1];
+  if (rival !== undefined && rival.confidence === best.confidence) {
+    return { ...best, confidence: Math.min(best.confidence, 0.5), because: 'more than one label could be the replacement' };
   }
   return best;
 }
@@ -302,7 +324,12 @@ export function compare(
               {
                 path: candidate.page,
                 mode: 'write' as const,
-                splice: { start: candidate.at[0], end: candidate.at[1], text: rename.to },
+                splice: {
+                  start: candidate.at[0],
+                  end: candidate.at[1],
+                  text: rename.to,
+                  was: candidate.literal,
+                },
               },
             ],
           }

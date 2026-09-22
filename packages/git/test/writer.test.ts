@@ -176,8 +176,8 @@ test('a remote that cannot be asked stops the run rather than proceeding', async
   execFileSync('git', ['-C', where.repo, 'remote', 'set-url', 'origin', '/nowhere/at/all.git']);
   await assert.rejects(
     () => write(forge, { ...where, findings: [], dryRun: false }),
-    /could not be established/,
-    'not knowing whether the branch is ours is not permission to close it',
+    /could not be (established|read)/,
+    'not knowing what is on the remote is not permission to close it',
   );
   assert.ok(!forge.calls.includes('close'));
 });

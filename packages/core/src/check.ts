@@ -31,7 +31,9 @@ export interface FileChange {
   path: string;
   mode: 'write' | 'delete';
   contents?: Buffer | string;
-  splice?: { start: number; end: number; text: string };
+  // `was` is what those bytes held when the offsets were worked out. If the
+  // file has moved on, the offsets mean nothing and the change is refused.
+  splice?: { start: number; end: number; text: string; was?: string };
 }
 
 export interface Fix {

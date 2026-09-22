@@ -10,7 +10,7 @@ const PARSED_ALONE: Grade = { source: 'parsed', depth: 'single' };
 function doc(value: string, before = 'Click the ', after = ' button.'): DocPage {
   return {
     path: 'guide.md', format: 'markdown', raw: '', prose: '', links: [], codeSpans: [],
-    codeBlocks: [], emphasised: [{ value, line: 7, marker: 'strong', before, after }], directives: [], slug: null,
+    codeBlocks: [], emphasised: [{ value, line: 7, marker: 'strong', before, after, at: [10, 10 + value.length] }], directives: [], slug: null,
   };
 }
 
@@ -22,7 +22,7 @@ function app(labels: string[], text: string[] = []): Snapshot {
   };
 }
 
-test('a control removed since the earlier revision is reported', () => {
+test('a control renamed since the earlier revision is reported with its new name', () => {
   const findings = compare(
     candidates([doc('Create a report')], false),
     [dictionaryOf(app(['Compose a report']))],
@@ -30,8 +30,20 @@ test('a control removed since the earlier revision is reported', () => {
     PARSED_PAIRED,
   );
   assert.equal(findings.length, 1);
-  assert.match(findings[0]!.title, /was removed from dashboard/);
+  assert.match(findings[0]!.title, /"Create a report" is now called "Compose a report"/);
   assert.equal(findings[0]!.severity, 'error');
+  assert.equal(findings[0]!.fix?.changes[0]?.splice?.was, 'Create a report');
+});
+
+test('a control that simply went says so, with nothing to propose', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(app([]))],
+    [dictionaryOf(app(['Create a report']))],
+    PARSED_PAIRED,
+  );
+  assert.match(findings[0]!.title, /was removed from dashboard/);
+  assert.equal(findings[0]!.fix, undefined, 'nothing arrived to put in its place');
 });
 
 test('a control that never existed is not called removed', () => {
@@ -131,4 +143,45 @@ test('an absence both sides can read properly is still proven', () => {
     PARSED_PAIRED,
   );
   assert.equal(findings[0]!.standing, 'proven');
+});
+
+const twoLabels = (labels: [string, string, string][]): Snapshot => ({
+  app: 'dashboard', rev: null, source: 'parsed', whole: true, covered: true, unparsed: [],
+  labels: labels.map(([text, kind, file]) => ({ text, kind, file })), envKeys: [], files: [],
+});
+
+test('an unrelated new control is not proposed as the replacement', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(twoLabels([['Export to CSV', 'button', 'c.vue']]))],
+    [dictionaryOf(twoLabels([['Create a report', 'button', 'c.vue']]))],
+    PARSED_PAIRED,
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]!.fix, undefined, 'same file and kind is circumstance, not evidence');
+  assert.match(findings[0]!.title, /was removed/);
+});
+
+test('a control that still reads like the old one is proposed', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(twoLabels([['Create a report summary', 'button', 'c.vue']]))],
+    [dictionaryOf(twoLabels([['Create a report', 'button', 'c.vue']]))],
+    PARSED_PAIRED,
+  );
+  assert.notEqual(findings[0]!.fix, undefined);
+  assert.match(findings[0]!.title, /is now called "Create a report summary"/);
+});
+
+test('two equally good answers are no answer', () => {
+  const findings = compare(
+    candidates([doc('Create a report')], false),
+    [dictionaryOf(twoLabels([
+      ['Create a report now', 'button', 'c.vue'],
+      ['Create a report here', 'button', 'c.vue'],
+    ]))],
+    [dictionaryOf(twoLabels([['Create a report', 'button', 'c.vue']]))],
+    PARSED_PAIRED,
+  );
+  assert.equal(findings[0]!.fix, undefined, 'either could be it, so neither is proposed');
 });

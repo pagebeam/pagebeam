@@ -70,7 +70,14 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
     return { ...nothing, url: openPr?.url ?? null, commits: 0 };
   }
 
-  const fixable = findings.filter((f) => f.fix !== undefined);
+  // Each finding stays its own commit, so a reviewer reads them one at a time.
+  // Within a page they are made from the last span backwards, so that a change
+  // never moves the ground under the one after it.
+  const startOf = (finding: Finding): number =>
+    Math.max(...(finding.fix?.changes ?? []).map((c) => c.splice?.start ?? -1), -1);
+  const fixable = findings
+    .filter((f) => f.fix !== undefined)
+    .sort((a, b) => a.doc.path.localeCompare(b.doc.path) || startOf(b) - startOf(a));
 
   // A dry run says what it would do. Creating a branch and committing to it is
   // doing it, so nothing here goes near the repository.
@@ -83,9 +90,11 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
   const session = await open(repo, branch, base, plan.action !== 'append');
   let written = 0;
   try {
-    for (const finding of findings) {
-      if (finding.fix === undefined) continue;
-      await apply(session.dir, finding.fix.changes);
+    // Each finding is still its own commit, so a reviewer can read them one at
+    // a time, but a page's spans are resolved against the file as it stands
+    // when that commit is made.
+    for (const finding of fixable) {
+      await apply(session.dir, finding.fix!.changes);
       if (await commit(session.dir, finding, finding.title)) written += 1;
     }
     if (written > 0) await push(session.dir, branch, plan.action === 'update');

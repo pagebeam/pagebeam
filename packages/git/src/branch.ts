@@ -48,11 +48,29 @@ export interface Session {
 // What is proposed is proposed against what everybody else can see. Building
 // on a local base would sweep up commits sitting here unpushed and offer them
 // as part of the change, and they would then read as somebody else's work.
+export class NoBase extends Error {
+  constructor(readonly base: string, readonly reason: string) {
+    super(`${base} could not be read from the remote, so there is nothing to propose against: ${reason}`);
+  }
+}
+
 export async function baseRef(repo: string, base: string): Promise<string> {
-  const fetched = await git(repo, 'fetch', '--quiet', 'origin', `${base}:refs/pagebeam/base`)
-    .then(() => true)
-    .catch(() => false);
-  return fetched ? 'refs/pagebeam/base' : base;
+  const known = await git(repo, 'ls-remote', '--exit-code', '--heads', 'origin', base).then(
+    () => true,
+    (error: unknown) => {
+      if ((error as { code?: number }).code === 2) return false;
+      throw new NoBase(base, (error as Error).message.split(':').slice(-1)[0]?.trim() ?? 'the remote refused');
+    },
+  );
+  // A base the remote has never heard of is a local-only base, which is a
+  // coherent thing to work against. A base it refuses to talk about is not.
+  if (!known) return base;
+
+  return git(repo, 'fetch', '--quiet', 'origin', `${base}:refs/pagebeam/base`)
+    .then(() => 'refs/pagebeam/base')
+    .catch((error: unknown) => {
+      throw new NoBase(base, (error as Error).message.split('\n')[0] ?? 'the fetch failed');
+    });
 }
 
 export async function open(repo: string, branch: string, base: string, fresh: boolean): Promise<Session> {
@@ -161,22 +179,48 @@ export async function reallyWithin(dir: string, proposed: string): Promise<strin
   return file;
 }
 
+export class Moved extends Error {
+  constructor(readonly file: string, readonly expected: string) {
+    super(`${file} no longer holds "${expected}" where the change expected it`);
+  }
+}
+
+// Offsets are worked out against a file as it was read. Applying several of
+// them one at a time makes every later one wrong, so a page's changes go in
+// together, from the end backwards, and each says what it expects to find.
 export async function apply(dir: string, changes: FileChange[]): Promise<void> {
+  const byFile = new Map<string, FileChange[]>();
   for (const change of changes) {
-    const file = await reallyWithin(dir, change.path);
-    if (change.mode === 'delete') {
+    byFile.set(change.path, [...(byFile.get(change.path) ?? []), change]);
+  }
+
+  for (const [where, forFile] of byFile) {
+    const file = await reallyWithin(dir, where);
+
+    if (forFile.some((c) => c.mode === 'delete')) {
       await rm(file, { force: true });
       continue;
     }
     await mkdir(path.dirname(file), { recursive: true });
 
-    if (change.splice !== undefined) {
-      const before = await readFile(file, 'utf8');
-      const { start, end, text } = change.splice;
-      await writeFile(file, before.slice(0, start) + text + before.slice(end));
+    const whole = forFile.filter((c) => c.splice === undefined && c.contents !== undefined);
+    const spliced = forFile
+      .filter((c) => c.splice !== undefined)
+      .sort((a, b) => (b.splice?.start ?? 0) - (a.splice?.start ?? 0));
+
+    if (spliced.length > 0) {
+      let text = await readFile(file, 'utf8');
+      for (const change of spliced) {
+        const { start, end, text: replacement, was } = change.splice!;
+        if (was !== undefined && text.slice(start, end) !== was) throw new Moved(where, was);
+        text = text.slice(0, start) + replacement + text.slice(end);
+      }
+      await writeFile(file, text);
       continue;
     }
-    if (change.contents !== undefined) await writeFile(file, change.contents);
+
+    const last = whole[whole.length - 1];
+    if (last?.contents !== undefined) await writeFile(file, last.contents);
   }
 }
 
@@ -198,14 +242,21 @@ export async function push(dir: string, branch: string, force: boolean): Promise
     return;
   }
 
-  const expected = await git(dir, 'ls-remote', 'origin', `refs/heads/${branch}`)
-    .then((out) => out.split(/\s+/)[0] ?? '')
-    .catch(() => '');
+  // Replacing a branch without knowing what is being replaced is the thing
+  // a lease exists to prevent, so a lookup that failed stops the push.
+  const expected = await git(dir, 'ls-remote', 'origin', `refs/heads/${branch}`).catch(
+    (error: unknown) => {
+      throw new Error(
+        `what is on ${branch} could not be read, so it will not be replaced: ${(error as Error).message}`,
+      );
+    },
+  );
 
+  const sha = expected.split(/\s+/)[0] ?? '';
   await git(
     dir,
     'push',
-    expected === '' ? '--force-with-lease' : `--force-with-lease=${branch}:${expected}`,
+    sha === '' ? '--force-with-lease' : `--force-with-lease=${branch}:${sha}`,
     'origin',
     `HEAD:${branch}`,
   );
