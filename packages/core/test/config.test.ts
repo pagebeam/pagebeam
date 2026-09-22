@@ -74,3 +74,44 @@ test('a project names the instructions it keeps rather than having them guessed 
   assert.deepEqual(c.model?.skills, ['docs/writing-style.md', 'docs/TERMS.md']);
   assert.deepEqual(parseConfig({ ...base, model: { baseUrl: 'https://x.test/v1', name: 'm' } }).model?.skills, []);
 });
+
+test('a check says for itself whether a model is asked about what it found', () => {
+  const c = parseConfig({
+    ...base,
+    model: { baseUrl: 'https://x.test/v1', name: 'm' },
+    checks: { links: { enrich: false }, undocumented: { enrich: true }, strings: {} },
+  });
+  assert.equal((c.checks.links as { enrich?: boolean }).enrich, false);
+  assert.equal((c.checks.undocumented as { enrich?: boolean }).enrich, true);
+  assert.equal((c.checks.strings as { enrich?: boolean }).enrich, undefined, 'silence inherits');
+});
+
+test('counting how much of a specification the prose covers is decided, not assumed', () => {
+  assert.equal((parseConfig(base).checks.openapi as { coverage: string }).coverage, 'auto');
+  assert.equal(
+    (parseConfig({ ...base, checks: { openapi: { coverage: 'never' } } }).checks.openapi as { coverage: string })
+      .coverage,
+    'never',
+  );
+  assert.throws(() => parseConfig({ ...base, checks: { openapi: { coverage: 'sometimes' } } }));
+});
+
+test('a check says for itself whether a model is asked about what it found', () => {
+  const c = parseConfig({
+    ...base,
+    model: { baseUrl: 'https://x.test/v1', name: 'm' },
+    checks: { links: { enrich: false }, undocumented: { enrich: true }, strings: {} },
+  });
+  assert.equal((c.checks.links as { enrich?: boolean }).enrich, false, 'said here');
+  assert.equal((c.checks.undocumented as { enrich?: boolean }).enrich, true, 'said here too');
+  assert.equal((c.checks.strings as { enrich?: boolean }).enrich, undefined, 'silence inherits');
+});
+
+test('whether coverage is counted is decided, not assumed', () => {
+  assert.equal((parseConfig(base).checks.openapi as { coverage: string }).coverage, 'auto');
+  assert.equal(
+    (parseConfig({ ...base, checks: { openapi: { coverage: 'always' } } }).checks.openapi as { coverage: string }).coverage,
+    'always',
+  );
+  assert.throws(() => parseConfig({ ...base, checks: { openapi: { coverage: 'sometimes' } } }));
+});

@@ -50,22 +50,37 @@ const checksSchema = z.strictObject({
         timeoutMs: z.number().int().positive().default(10_000),
         concurrency: z.number().int().positive().default(8),
         allowlist: z.array(z.string()).default([]),
+        enrich: z.boolean().optional(),
       }),
     ])
     .default({}),
   configKeys: z
+    .union([z.literal(false), z.strictObject({ enrich: z.boolean().optional() })])
+    .default({}),
+  openapi: z
     .union([
       z.literal(false),
-      z.strictObject({}),
+      z.strictObject({
+        // Whether to count how many operations the prose describes.
+        // auto: not where the site builds its reference from the
+        // specification, because then the pages are the specification and
+        // counting the prose answers a question nobody asked.
+        coverage: z.enum(['auto', 'always', 'never']).default('auto'),
+        enrich: z.boolean().optional(),
+      }),
     ])
     .default({}),
-  openapi: z.union([z.literal(false), z.strictObject({})]).default({}),
-  moved: z.union([z.literal(false), z.strictObject({})]).default(false),
-  undocumented: z.union([z.literal(false), z.strictObject({})]).default({}),
+  moved: z.union([z.literal(false), z.strictObject({ enrich: z.boolean().optional() })]).default(false),
+  undocumented: z
+    .union([z.literal(false), z.strictObject({ enrich: z.boolean().optional() })])
+    .default({}),
   strings: z
     .union([
       z.literal(false),
-      z.strictObject({ minConfidence: z.number().min(0).max(1).default(0.5) }),
+      z.strictObject({
+        minConfidence: z.number().min(0).max(1).default(0.5),
+        enrich: z.boolean().optional(),
+      }),
     ])
     .default(false),
 });

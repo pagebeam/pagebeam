@@ -14,6 +14,7 @@ import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
 import { compose, draft, type Target } from '@pagebeam/model';
 import { loadConfig, loadIgnores } from './load.js';
+import { publishedPaths } from './published.js';
 import { reacher } from './reach.js';
 
 export interface RunResult {
@@ -73,6 +74,16 @@ async function exists(dir: string): Promise<boolean> {
   return stat(dir)
     .then((s) => s.isDirectory())
     .catch(() => false);
+}
+
+// The same directory the link check reads, found the same way, so both are
+// talking about one site rather than two.
+async function builtSite(cwd: string, config: PagebeamConfig): Promise<string | null> {
+  const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
+  for (const dir of declared ? [declared] : [path.join(cwd, 'dist'), path.join(cwd, 'build')]) {
+    if (await exists(dir)) return dir;
+  }
+  return null;
 }
 
 async function routeSet(
@@ -257,8 +268,10 @@ async function runOpenapi(
   cwd: string,
   config: PagebeamConfig,
   skipped: string[],
+  docsRoot: string,
 ): Promise<Finding[]> {
   if (config.checks.openapi === false) return [];
+  const wanted = config.checks.openapi.coverage;
   const withSpec = config.apps.filter((a) => a.openapi?.spec !== undefined);
   if (withSpec.length === 0) {
     skipped.push('openapi: no application declares a specification');
@@ -268,6 +281,19 @@ async function runOpenapi(
   const cited = openapi.citations(pages);
   const findings: Finding[] = [];
   const every: openapi.Operation[] = [];
+
+  // How much of a specification the documentation covers is a question about
+  // what a reader is served, not about which source files happen to name an
+  // address. A site may publish its whole reference from the specification,
+  // and then no source page names a single operation while every one of them
+  // is documented.
+  const built = await builtSite(cwd, config);
+  if (wanted === 'auto' && built === null) {
+    skipped.push(
+      'openapi: coverage needs the built site, and none was found. Set docs.buildDir, or build before running, or set checks.openapi.coverage to always to count what the source names instead',
+    );
+  }
+  const counting = wanted !== 'never' && (built !== null || wanted === 'always');
 
   for (const app of withSpec) {
     const spec = app.openapi!.spec;
@@ -280,7 +306,10 @@ async function runOpenapi(
       );
     }
     every.push(...operations);
-    findings.push(...openapi.checkCoverage(pages, operations, shown, app.name));
+    if (!counting) continue;
+    const served =
+      built === null ? null : await publishedPaths(built, operations.map((o) => o.path));
+    findings.push(...openapi.checkCoverage(pages, operations, shown, app.name, served));
   }
 
   const names = withSpec.map((a) => a.name).join(', ');
@@ -324,7 +353,7 @@ async function checkAll(
     await Promise.all([
       runLinks(pages, cwd, config, docsRoot, skipped, earlier, models),
       runConfigKeys(pages, cwd, config, skipped, earlier ? (evidence?.now ?? []) : null),
-      runOpenapi(pages, cwd, config, skipped),
+      runOpenapi(pages, cwd, config, skipped, docsRoot),
       runStrings(pages, config, evidence, skipped),
       runMoved(pages, config, evidence, untouched, skipped),
       runUndocumented(pages, config, evidence, skipped),
@@ -395,7 +424,24 @@ async function mend(
   snapshots: Snapshot[],
 ): Promise<Finding[]> {
   const settings = config.model;
-  if (settings === undefined || !settings.enrich) return findings;
+  if (settings === undefined) return findings;
+
+  // A check says whether a model is asked for what it found. Saying nothing
+  // means whatever was said for all of them.
+  const asking = (check: string): boolean => {
+    const named: Record<string, unknown> = {
+      links: config.checks.links,
+      'config-keys': config.checks.configKeys,
+      openapi: config.checks.openapi,
+      strings: config.checks.strings,
+      moved: config.checks.moved,
+      undocumented: config.checks.undocumented,
+    };
+    const own = named[check];
+    const said = own !== false && own !== undefined ? (own as { enrich?: boolean }).enrich : undefined;
+    return said ?? settings.enrich;
+  };
+  if (!config.checks && !settings.enrich) return findings;
 
   const router = {
     baseUrl: settings.baseUrl,
@@ -420,7 +466,7 @@ async function mend(
 
   return Promise.all(
     findings.map(async (finding) => {
-      if (finding.fix !== undefined) return finding;
+      if (finding.fix !== undefined || !asking(finding.check)) return finding;
 
       const page = sourceOf.get(finding.doc.path);
       if (page !== undefined) return (await draft(router, finding, page, skills)) ?? finding;
