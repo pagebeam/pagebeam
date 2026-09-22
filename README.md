@@ -12,13 +12,17 @@ npx pagebeam check
 
 ## Checks
 
-| Check | Finds |
-| --- | --- |
-| `links` | A page pointing at a route or a file that is not there |
-| `config-keys` | A setting the documentation describes that no example config declares |
-| `openapi` | An endpoint documented that the specification lacks, and operations nothing documents |
-| `strings` | A control named in the documentation that the application no longer has |
-| `moved` | Code changing under a page that did not change with it |
+| Check | Finds | Default |
+| --- | --- | --- |
+| `links` | A page pointing at a route or a file that is not there | on |
+| `configKeys` | A setting the documentation describes that no example config declares | on |
+| `openapi` | An endpoint documented that the specification lacks, and operations nothing documents | on |
+| `strings` | A control named in the documentation that the application no longer has | off |
+| `moved` | Code changing under a page that did not change with it | off |
+| `undocumented` | A screen of controls the documentation never mentions | off |
+
+The last three need more than the documentation. `strings` and `undocumented`
+read the application, `moved` reads its history. Turn them on in the config.
 
 ## Standing
 
@@ -73,6 +77,7 @@ apps:                           # every application the documentation describes
 checks:
   strings: { minConfidence: 0.4 }
   moved: {}
+  undocumented: {}
 
 propose:
   branch: pagebeam/drift
