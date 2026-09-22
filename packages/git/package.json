@@ -1,12 +1,33 @@
 {
   "name": "@pagebeam/git",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
   "license": "MIT",
-  "dependencies": { "@pagebeam/core": "0.0.1" }
+  "dependencies": {
+    "@pagebeam/core": "0.1.0"
+  },
+  "description": "Turns findings into a pull request that rewrites itself",
+  "homepage": "https://pagebeam.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pagebeam/pagebeam.git",
+    "directory": "packages/git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

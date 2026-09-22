@@ -1,6 +1,6 @@
 {
   "name": "@pagebeam/engine",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,12 +18,22 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@pagebeam/app": "0.0.1",
-    "@pagebeam/checks": "0.0.1",
-    "@pagebeam/core": "0.0.1",
-    "@pagebeam/docs": "0.0.1",
+    "@pagebeam/app": "0.1.0",
+    "@pagebeam/checks": "0.1.0",
+    "@pagebeam/core": "0.1.0",
+    "@pagebeam/docs": "0.1.0",
     "picomatch": "^4.0.7",
     "yaml": "^2.6.1",
-    "@pagebeam/model": "0.0.1"
+    "@pagebeam/model": "0.1.0"
+  },
+  "description": "Runs the checks and grades what they find",
+  "homepage": "https://pagebeam.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pagebeam/pagebeam.git",
+    "directory": "packages/engine"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

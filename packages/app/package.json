@@ -1,6 +1,6 @@
 {
   "name": "@pagebeam/app",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   "license": "MIT",
   "dependencies": {
     "@babel/parser": "^7.29.9",
-    "@pagebeam/core": "0.0.1",
+    "@pagebeam/core": "0.1.0",
     "@types/picomatch": "^4.0.3",
     "@vue/compiler-sfc": "^3.5.13",
     "parse5": "^8.0.1",
@@ -28,5 +28,15 @@
   },
   "optionalDependencies": {
     "playwright-core": "^1.63.0"
+  },
+  "description": "Reads the controls an application declares, from its source or a running page",
+  "homepage": "https://pagebeam.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pagebeam/pagebeam.git",
+    "directory": "packages/app"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@pagebeam/docs",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   "license": "MIT",
   "dependencies": {
     "@astrojs/compiler": "^4.0.0",
-    "@pagebeam/core": "0.0.1",
+    "@pagebeam/core": "0.1.0",
     "acorn": "^8.18.0",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-frontmatter": "^2.0.1",
@@ -28,5 +28,15 @@
     "micromark-extension-mdxjs": "^3.0.0",
     "tinyglobby": "^0.2.10",
     "unist-util-visit": "^5.0.0"
+  },
+  "description": "Reads documentation pages and everything they name",
+  "homepage": "https://pagebeam.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pagebeam/pagebeam.git",
+    "directory": "packages/docs"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "pagebeam",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "bin": {
     "pagebeam": "./dist/main.js"
@@ -11,12 +11,32 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE",
+    "postpack": "rm -f ./README.md ./LICENSE"
   },
   "license": "MIT",
   "dependencies": {
-    "@pagebeam/core": "0.0.1",
-    "@pagebeam/engine": "0.0.1",
-    "@pagebeam/git": "0.0.1"
-  }
+    "@pagebeam/core": "0.1.0",
+    "@pagebeam/engine": "0.1.0",
+    "@pagebeam/git": "0.1.0"
+  },
+  "description": "Docs that keep up with your product",
+  "homepage": "https://pagebeam.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pagebeam/pagebeam.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "documentation",
+    "docs",
+    "documentation-drift",
+    "docs-as-code",
+    "technical-writing",
+    "cli"
+  ]
 }

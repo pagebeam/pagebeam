@@ -1,12 +1,33 @@
 {
   "name": "@pagebeam/core",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
   "license": "MIT",
-  "dependencies": { "zod": "^3.24.1" }
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "description": "Findings, evidence grading and configuration shared across pagebeam",
+  "homepage": "https://pagebeam.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pagebeam/pagebeam.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

@@ -4,3 +4,5 @@ dist/
 .pagebeam/cache/
 .pagebeam/.state/
 .DS_Store
+packages/*/README.md
+packages/*/LICENSE
