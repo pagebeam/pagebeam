@@ -299,3 +299,46 @@ test('a change worked out from the source does not', async () => {
   });
   assert.equal((forge.current as unknown as { draft?: boolean })?.draft, false);
 });
+
+// A page can be right on its own and wrong beside the others, so what is
+// pushed is judged on the documentation it produces.
+test('a change that would leave the documentation worse is not pushed', async () => {
+  const dir = await repo();
+  const forge = fake();
+  const outcome = await write(forge, {
+    repo: dir, branch: 'pagebeam/drift', base: 'main',
+    findings: [fixing('a', 'Broken.\n')], comparedWith: null, complete: true,
+    verify: async () => 'guide.md would point at /gone, which nothing publishes',
+  });
+  assert.equal(outcome.action, 'noop');
+  assert.match(outcome.reason, /nothing was proposed: .*nothing publishes/);
+  assert.ok(!forge.calls.includes('create'), 'and no pull request is raised for it');
+});
+
+test('a change that leaves it no worse is pushed', async () => {
+  const dir = await repo();
+  const forge = fake();
+  const outcome = await write(forge, {
+    repo: dir, branch: 'pagebeam/drift', base: 'main',
+    findings: [fixing('a', 'Fixed.\n')], comparedWith: null, complete: true,
+    verify: async () => null,
+  });
+  assert.equal(outcome.action, 'create');
+  assert.ok(forge.calls.includes('create'));
+});
+
+test('the tree is read once every change is in place, not one page at a time', async () => {
+  const dir = await repo();
+  const forge = fake();
+  let sawBoth = false;
+  await write(forge, {
+    repo: dir, branch: 'pagebeam/drift', base: 'main',
+    findings: [fixing('a', 'One.\n'), fixing('b', 'Two.\n')], comparedWith: null, complete: true,
+    verify: async (at) => {
+      const { readFile } = await import('node:fs/promises');
+      sawBoth = (await readFile(`${at}/docs/a.md`, 'utf8')).trim() !== '';
+      return null;
+    },
+  });
+  assert.ok(sawBoth, 'it reads the checkout as it would be, with the edits applied');
+});

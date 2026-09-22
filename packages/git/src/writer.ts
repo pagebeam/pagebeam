@@ -27,6 +27,11 @@ export interface WriteRequest {
   apps?: string[] | undefined;
   // The type and scope every commit and the title are written under.
   commitPrefix?: string | undefined;
+  // Read the tree as it would be once every change is applied, and say what
+  // is wrong with it. Nothing is pushed when it answers. A change is judged
+  // on the documentation it produces, not on the page it came from, because
+  // a page can be right on its own and wrong beside the others.
+  verify?: ((dir: string) => Promise<string | null>) | undefined;
   comparedWith: string | null;
   // False when a check was asked for and could not run.
   complete: boolean;
@@ -146,6 +151,18 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
       await apply(session.dir, finding.fix!.changes);
       const subject = subjectFor(finding.title, { prefix: request.commitPrefix });
       if (await commit(session.dir, finding, subject)) written += 1;
+    }
+    if (written > 0 && request.verify !== undefined) {
+      const wrong = await request.verify(session.dir);
+      if (wrong !== null) {
+        return {
+          ...nothing,
+          action: 'noop',
+          reason: `nothing was proposed: ${wrong}`,
+          url: openPr?.url ?? null,
+          commits: 0,
+        };
+      }
     }
     if (written > 0 || others.length > 0) await push(session.dir, branch, action === 'update');
   } finally {
