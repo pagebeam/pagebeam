@@ -76,5 +76,10 @@ jobs:
               *-*) tag=next ;;
               *)   tag=latest ;;
             esac
-            ( cd "packages/$p" && npm publish --access public --provenance --tag "$tag" )
+            # Provenance needs a public source repository. A private one can
+            # still publish on the registry's trust; it just cannot prove to
+            # anybody else which commit built the package.
+            attest=""
+            if [ "${PUBLIC_SOURCE:-false}" = true ]; then attest=--provenance; fi
+            ( cd "packages/$p" && npm publish --access public $attest --tag "$tag" )
           done
