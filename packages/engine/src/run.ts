@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import {
   Ignores,
   bestSource,
@@ -366,6 +366,7 @@ async function docsAsThen(
 // anything: the problem was established before it was called, and a draft it
 // returns is marked as its own so nothing applies it unreviewed.
 async function mend(
+  cwd: string,
   config: PagebeamConfig,
   pages: DocPage[],
   findings: Finding[],
@@ -381,12 +382,24 @@ async function mend(
     ...(settings.apiKeyEnv ? { apiKey: process.env[settings.apiKeyEnv] } : {}),
   };
   const sourceOf = new Map(pages.map((page) => [page.path, page.raw]));
+  const skills = await Promise.all(
+    settings.skills.map(async (named) => {
+      const at = path.resolve(cwd, named);
+      try {
+        return `--- ${named} ---\n${await readFile(at, 'utf8')}`;
+      } catch {
+        // A file the configuration names and nobody can read is the same
+        // mistake as a setting that does not exist.
+        throw new Error(`model.skills names ${named}, which could not be read`);
+      }
+    }),
+  );
 
   return Promise.all(
     findings.map(async (finding) => {
       const page = sourceOf.get(finding.doc.path);
       if (finding.fix !== undefined || page === undefined) return finding;
-      return (await draft(router, finding, page)) ?? finding;
+      return (await draft(router, finding, page, skills)) ?? finding;
     }),
   );
 }
@@ -488,7 +501,7 @@ async function attempt(cwd: string): Promise<RunResult> {
   for (const f of findings) if (!unique.has(f.id)) unique.set(f.id, f);
   const deduped = [...unique.values()];
 
-  const mended = await mend(config, pass.pages, deduped);
+  const mended = await mend(cwd, config, pass.pages, deduped);
 
   const order = { error: 0, warn: 1, info: 2 } as const;
   mended.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));

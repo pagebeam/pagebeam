@@ -62,6 +62,22 @@ pagebeam ships no provider code and never sees a key, only the name of the
 variable holding one. Use `headers` where a provider wants more than a bearer
 token, and `enrich: false` to keep the provider configured and stop asking it.
 
+Point `skills` at whatever the project already keeps for the people who write
+its documentation. pagebeam does not read them or decide what counts: they are
+given to the model as they are, after the rules about how it must answer and
+what it may not invent, which they cannot displace.
+
+```yaml
+model:
+  skills:
+    - docs/writing-style.md
+    - docs/TERMS.md
+```
+
+A file named here that cannot be read stops the run. Anyone who can commit to
+the repository can change what these say, which is the same trust you already
+place in what CI runs.
+
 A draft that comes back unchanged, or shorter than half the page it was given,
 is refused rather than proposed. A provider that cannot answer leaves the
 finding exactly as it was. Every draft is marked as written by a model, so it

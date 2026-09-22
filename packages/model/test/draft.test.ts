@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { test } from 'node:test';
-import { draft } from '../dist/draft.js';
+import { draft, systemFor } from '../dist/draft.js';
 import { ask, Unanswered } from '../dist/client.js';
 import type { Finding } from '@pagebeam/core';
 
@@ -158,6 +158,34 @@ test('whatever the provider wants beyond a bearer token is sent as given', async
     );
     assert.equal(api.seen[0].auth, 'Bearer k');
     assert.equal(api.seen[0].headers?.['x-project'] ?? 'missing', 'p');
+  } finally {
+    await api.stop();
+  }
+});
+
+test('what a project keeps for its writers is given to the model', async () => {
+  const api = await router(CORRECTED);
+  try {
+    await draft({ baseUrl: api.url, model: 'm' }, finding(), PAGE, [
+      '--- docs/writing-style.md ---\nNever use an em dash. Say "is addressed".',
+    ]);
+    const system = api.seen[0].body.messages[0].content;
+    assert.match(system, /Never use an em dash/, 'the project instruction reached the model');
+    assert.match(system, /Do not invent behaviour/, 'and did not displace the contract');
+    assert.ok(
+      system.indexOf('Do not invent behaviour') < system.indexOf('Never use an em dash'),
+      'the contract is stated before anything can qualify it',
+    );
+  } finally {
+    await api.stop();
+  }
+});
+
+test('no skills leaves the model told exactly what it was told before', async () => {
+  const api = await router(CORRECTED);
+  try {
+    await draft({ baseUrl: api.url, model: 'm' }, finding(), PAGE, []);
+    assert.equal(api.seen[0].body.messages[0].content, systemFor());
   } finally {
     await api.stop();
   }

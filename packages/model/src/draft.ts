@@ -4,7 +4,11 @@ import { ask, Unanswered, type Router } from './client.js';
 // What the model is allowed to do, stated as narrowly as it can be. It is
 // rewriting one page that is already known to be wrong, and the evidence for
 // why it is wrong was worked out before the model was asked.
-const SYSTEM = [
+//
+// A project's own instructions are added after this and cannot displace it.
+// Everything here is the shape of the answer and the refusal to invent, which
+// a house style has no business changing.
+const CONTRACT = [
   'You correct technical documentation.',
   'You are given one page and one problem with it that has already been proven by inspecting the product.',
   'Rewrite the page so the problem is gone.',
@@ -13,6 +17,22 @@ const SYSTEM = [
   'Do not invent behaviour. If the problem says a control is gone, remove or correct the reference to it; do not describe a replacement you were not told about.',
   'Reply with the complete corrected page and nothing else. No code fence around it.',
 ].join('\n');
+
+// Whatever the project keeps for people who write its documentation. pagebeam
+// does not know or care what is in them: they may be voice, terminology,
+// structure, or things nobody outside the team would guess.
+export function systemFor(skills: string[] = []): string {
+  const given = skills.map((s) => s.trim()).filter((s) => s !== '');
+  if (given.length === 0) return CONTRACT;
+  return [
+    CONTRACT,
+    '',
+    'The project keeps its own instructions for writing its documentation.',
+    'Follow them wherever they do not contradict anything above.',
+    '',
+    ...given,
+  ].join('\n');
+}
 
 function askingFor(finding: Finding, page: string): string {
   const evidence = finding.evidence.length === 0 ? '' : `\nEvidence:\n${finding.evidence.join('\n')}`;
@@ -43,12 +63,13 @@ export async function draft(
   router: Router,
   finding: Finding,
   page: string,
+  skills: string[] = [],
 ): Promise<Finding | null> {
   if (finding.fix !== undefined) return finding;
 
   let said: string;
   try {
-    said = unfenced(await ask(router, SYSTEM, askingFor(finding, page)));
+    said = unfenced(await ask(router, systemFor(skills), askingFor(finding, page)));
   } catch (error) {
     if (error instanceof Unanswered) return null;
     throw error;

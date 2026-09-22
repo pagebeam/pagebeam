@@ -61,3 +61,16 @@ test('a key is named, never written down', () => {
     /apiKey/,
   );
 });
+
+test('a project names the instructions it keeps rather than having them guessed at', () => {
+  const c = parseConfig({
+    ...base,
+    model: {
+      baseUrl: 'https://x.test/v1',
+      name: 'm',
+      skills: ['docs/writing-style.md', 'docs/TERMS.md'],
+    },
+  });
+  assert.deepEqual(c.model?.skills, ['docs/writing-style.md', 'docs/TERMS.md']);
+  assert.deepEqual(parseConfig({ ...base, model: { baseUrl: 'https://x.test/v1', name: 'm' } }).model?.skills, []);
+});

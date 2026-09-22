@@ -104,6 +104,11 @@ export const configSchema = z.strictObject({
       // On once a provider is named. Set false to keep the provider configured
       // and stop asking it.
       enrich: z.boolean().default(true),
+      // Files the project already keeps for whoever writes its documentation.
+      // Named rather than guessed at, because what is in them is the project's
+      // business: voice, terminology, structure, or anything else. They are
+      // added to what the model is told and cannot displace how it must answer.
+      skills: z.array(z.string()).default([]),
       timeoutMs: z.number().int().positive().default(60_000),
     })
     .optional(),
