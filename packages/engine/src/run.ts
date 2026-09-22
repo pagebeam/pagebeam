@@ -365,11 +365,34 @@ async function docsAsThen(
 // the page and the evidence already gathered. It is never asked to find
 // anything: the problem was established before it was called, and a draft it
 // returns is marked as its own so nothing applies it unreviewed.
+// Enough of the source for a model to see what a control does, and not so
+// much that the reading costs more than the page is worth.
+const SOURCE_BUDGET = 120_000;
+
+function readingFor(finding: Finding, snapshots: Snapshot[]): { path: string; text: string }[] {
+  const named = finding.evidence.find((e) => e.kind === 'files')?.detail;
+  if (named === undefined) return [];
+  const wanted = new Set(named.split('\n').filter((f) => f !== ''));
+
+  const found: { path: string; text: string }[] = [];
+  let spent = 0;
+  for (const snapshot of snapshots) {
+    if (finding.app !== undefined && snapshot.app !== finding.app) continue;
+    for (const file of snapshot.files) {
+      if (!wanted.has(file.path) || spent + file.text.length > SOURCE_BUDGET) continue;
+      found.push(file);
+      spent += file.text.length;
+    }
+  }
+  return found;
+}
+
 async function mend(
   cwd: string,
   config: PagebeamConfig,
   pages: DocPage[],
   findings: Finding[],
+  snapshots: Snapshot[],
 ): Promise<Finding[]> {
   const settings = config.model;
   if (settings === undefined || !settings.enrich) return findings;
@@ -406,7 +429,10 @@ async function mend(
       // missing. Where one would sit is worked out from the area it covers.
       if (finding.check !== 'undocumented') return finding;
       const target = placeFor(finding, pages);
-      return target === null ? finding : ((await compose(router, finding, target, skills)) ?? finding);
+      if (target === null) return finding;
+      const source = readingFor(finding, snapshots);
+      const withSource: Target = source.length === 0 ? target : { ...target, source };
+      return (await compose(router, finding, withSource, skills)) ?? finding;
     }),
   );
 }
@@ -536,7 +562,7 @@ async function attempt(cwd: string): Promise<RunResult> {
   for (const f of findings) if (!unique.has(f.id)) unique.set(f.id, f);
   const deduped = [...unique.values()];
 
-  const mended = await mend(cwd, config, pass.pages, deduped);
+  const mended = await mend(cwd, config, pass.pages, deduped, pass.evidence?.now ?? []);
 
   const order = { error: 0, warn: 1, info: 2 } as const;
   mended.sort((a, b) => order[a.severity] - order[b.severity] || a.doc.path.localeCompare(b.doc.path));

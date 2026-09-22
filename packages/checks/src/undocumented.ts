@@ -21,6 +21,9 @@ export interface Area {
   where: string;
   controls: string[];
   documented: string[];
+  // Where the controls were found. A name on its own says nothing about what
+  // a control does, so anything meant to describe one needs to read around it.
+  files: string[];
 }
 
 // The directory a file sits in, because that is the nearest thing in a source
@@ -47,13 +50,14 @@ export function areasOf(snapshots: Snapshot[], pages: DocPage[]): Area[] {
       const key = `${snapshot.app}|${areaOf(label.file)}`;
       const area =
         grouped.get(key) ??
-        ({ app: snapshot.app, where: areaOf(label.file), controls: [], documented: [] } as Area);
+        ({ app: snapshot.app, where: areaOf(label.file), controls: [], documented: [], files: [] } as Area);
       const text = normalise(label.text);
       if (!asksAbout(label.text) || area.controls.includes(label.text)) {
         grouped.set(key, area);
         continue;
       }
       area.controls.push(label.text);
+      if (!area.files.includes(label.file)) area.files.push(label.file);
       if (corpus.includes(text)) area.documented.push(label.text);
       grouped.set(key, area);
     }
@@ -111,6 +115,7 @@ export function checkUndocumented(
         // proposing to cover this area needs the whole list or it will cover
         // the first few and leave the rest exactly as undocumented as before.
         { kind: 'undocumented', detail: subject.join('\n') },
+        { kind: 'files', detail: area.files.join('\n') },
       ],
     });
   }

@@ -9,8 +9,9 @@ const WRITING = [
   'You are told about controls a product offers that no page describes, and given an existing page from the same documentation as an example of its format and voice.',
   'Write a page describing those controls.',
   'Match the example page exactly in format: the same file syntax, the same front matter or imports if it has them, the same heading style.',
-  'Describe only what the control names tell you. Where a name does not say what it does, say plainly that it opens or sets that thing, and no more.',
-  'Never invent a behaviour, a setting, a keyboard shortcut, a default, or a consequence. A reader must not be told anything that was not established.',
+  'You are also given the source the controls were found in. Read it to work out what each one does: what it is next to, what it changes, what it is called when it is disabled, what happens after it.',
+  'Where the source does not settle what a control does, say only what its name says, and no more.',
+  'Never invent a behaviour, a setting, a keyboard shortcut, a default, or a consequence that the source does not show. A reader must not be told anything that was not established.',
   'Do not add commentary about what you were asked or what you could not determine.',
   'Reply with the complete page and nothing else. No code fence around it.',
 ].join('\n');
@@ -20,7 +21,8 @@ const EXTENDING = [
   'You are given a page and a list of controls the product offers that no page describes.',
   'Add coverage of those controls to the page, in the place it belongs.',
   'Leave every existing sentence, heading, link and code block exactly as it is. Only add.',
-  'Describe only what the control names tell you. Never invent a behaviour, a setting, a default, or a consequence.',
+  'You are also given the source the controls were found in. Read it to work out what each one does.',
+  'Where the source does not settle what a control does, say only what its name says. Never invent a behaviour, a setting, a default, or a consequence the source does not show.',
   'Do not add commentary about what you changed.',
   'Reply with the complete page and nothing else. No code fence around it.',
 ].join('\n');
@@ -51,6 +53,10 @@ export interface Target {
   // A page from the same documentation, so format and voice are matched
   // rather than guessed at.
   example?: { path: string; text: string } | undefined;
+  // The source the controls were found in. A name alone cannot say what a
+  // control does, and being told to describe one without it produces a page
+  // that repeats the name back.
+  source?: { path: string; text: string }[] | undefined;
 }
 
 // A screen full of controls nobody documented cannot be mended by editing a
@@ -66,12 +72,20 @@ export async function compose(
   // The detail is what a person is shown, and it stops after a few names.
   // The evidence carries all of them.
   const every = finding.evidence.find((e) => e.kind === 'undocumented')?.detail;
+  const reading =
+    target.source === undefined || target.source.length === 0
+      ? ''
+      : `\nSource these controls were found in:\n${target.source
+          .map((f) => `--- ${f.path} ---\n${f.text}`)
+          .join('\n\n')}\n`;
+
   const asked = [
     `Product area: ${finding.doc.path}`,
     every === undefined
       ? `Controls nothing describes: ${finding.detail}`
       : `Controls nothing describes, one per line:\n${every}`,
     '',
+    reading,
     target.existing === undefined
       ? target.example === undefined
         ? ''

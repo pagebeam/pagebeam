@@ -3,7 +3,7 @@ import { parseExpression } from '@babel/parser';
 import type { Label } from '@pagebeam/core';
 import { CannotParse, type Extractor } from './extractor.js';
 
-import { CONTROL, LABEL_ATTRS, usable } from './rules.js';
+import { aboutNothing, announcing, CONTROL, HEADING, LABEL_ATTRS, usable } from './rules.js';
 
 // A label chosen at runtime is still written in the source. Pulling the string
 // literals out of the expression finds every label the element can show.
@@ -52,11 +52,27 @@ function alternativesIn(node: any): string[] {
   return (node.children ?? []).flatMap(alternativesIn);
 }
 
-function walk(node: any, file: string, out: Label[], within: string | null): void {
+// v-else carries no condition of its own. What it is about is whatever the
+// branch beside it was about, which is a sibling, not an ancestor, so it has
+// to be carried along the children rather than down into them.
+function branchOf(node: any): { kind: 'if' | 'else-if' | 'else' | null; about: boolean } {
+  for (const prop of node?.props ?? []) {
+    if (prop.type !== 7) continue;
+    if (prop.name === 'else') return { kind: 'else', about: false };
+    if (prop.name === 'if' || prop.name === 'else-if') {
+      return { kind: prop.name, about: aboutNothing(prop.exp?.content) };
+    }
+  }
+  return { kind: null, about: false };
+}
+
+function walk(node: any, file: string, out: Label[], within: string | null, here = false): void {
   if (node === null || node === undefined) return;
   const tag = typeof node.tag === 'string' ? node.tag.toLowerCase() : null;
 
-  if (tag !== null && CONTROL.has(tag)) {
+  if (announcing(tag)) return;
+
+  if (tag !== null && CONTROL.has(tag) && !(here && HEADING.has(tag))) {
     const text = textOf(node).replace(/\s+/g, ' ').trim();
     if (usable(text)) out.push({ text, kind: tag, file, line: node.loc?.start?.line });
     for (const alternative of alternativesIn(node)) {
@@ -79,7 +95,13 @@ function walk(node: any, file: string, out: Label[], within: string | null): voi
     }
   }
 
-  for (const child of node.children ?? []) walk(child, file, out, within);
+  let beside = false;
+  for (const child of node.children ?? []) {
+    const branch = branchOf(child);
+    if (branch.kind === 'if' || branch.kind === 'else-if') beside = branch.about;
+    else if (branch.kind !== 'else') beside = false;
+    walk(child, file, out, within, here || beside);
+  }
 }
 
 export const vue: Extractor = {

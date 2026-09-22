@@ -1,7 +1,7 @@
 import { parseFragment } from 'parse5';
 import type { Label } from '@pagebeam/core';
 import type { Extractor } from './extractor.js';
-import { CONTROL, LABEL_ATTRS, usable } from './rules.js';
+import { announcing, CONTROL, LABEL_ATTRS, usable } from './rules.js';
 
 const TEMPLATE_FILES =
   /\.(html?|erb|blade\.php|jinja2?|j2|twig|tmpl|gohtml|hbs|handlebars|ejs|liquid|mustache|razor|cshtml|svelte|astro)$/i;
@@ -35,6 +35,8 @@ function textOf(node: any): string {
 
 function walk(node: any, file: string, out: Label[], within: string | null): void {
   const tag = typeof node.nodeName === 'string' ? node.nodeName.toLowerCase() : null;
+
+  if (announcing(tag)) return;
 
   if (tag !== null && CONTROL.has(tag)) {
     const text = textOf(node).replace(/\s+/g, ' ').trim();
