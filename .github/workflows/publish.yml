@@ -43,8 +43,13 @@ jobs:
       - name: Check the tag matches what the packages say
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
+          # Only what is published. The rest are how this repository divides
+          # its work and are built into the command, so their versions say
+          # nothing and holding a release to them stops one for no reason.
           tagged="${GITHUB_REF_NAME#v}"
           for dir in packages/*/; do
+            private=$(node -p "require('./${dir}package.json').private === true")
+            [ "$private" = true ] && continue
             said=$(node -p "require('./${dir}package.json').version")
             name=$(node -p "require('./${dir}package.json').name")
             if [ "$said" != "$tagged" ]; then
@@ -52,7 +57,7 @@ jobs:
               exit 1
             fi
           done
-          echo "every package is $tagged"
+          echo "what is published is $tagged"
 
       # One package. The rest are how this repository is divided and are built
       # into the command, so there is one thing to install, one version to
