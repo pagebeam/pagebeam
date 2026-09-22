@@ -7,8 +7,12 @@
 // package, and what they get is the same code.
 import { build } from 'esbuild';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
-const own = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'));
+// Resolved against this file, so it builds the same wherever it is run from.
+const here = path.dirname(fileURLToPath(import.meta.url));
+const own = JSON.parse(await readFile(path.join(here, 'package.json'), 'utf8'));
 
 // Anything not written here stays a dependency, so a parser is still the
 // parser its authors publish and is still patched by updating it.
@@ -24,8 +28,8 @@ for (const [entry, out] of [
   ['src/index.ts', 'dist/index.js'],
 ]) {
   await build({
-    entryPoints: [entry],
-    outfile: out,
+    entryPoints: [path.join(here, entry)],
+    outfile: path.join(here, out),
     bundle: true,
     platform: 'node',
     format: 'esm',

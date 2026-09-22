@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -90,4 +90,23 @@ test('json output carries the fields a machine needs', async () => {
   for (const key of ['problem', 'degraded', 'comparedWith', 'grade', 'pages', 'findings']) {
     assert.ok(key in parsed, key);
   }
+});
+
+// Asking a question of a pipe is waiting for an answer nobody will give.
+test('with nobody there to answer, it says what it worked out instead of asking', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-init-'));
+  await mkdir(path.join(root, 'docs'), { recursive: true });
+  await writeFile(path.join(root, 'docs/guide.md'), '# Guide\n');
+
+  const { stdout } = await run(process.execPath, [CLI, 'init', '--cwd', root]);
+  assert.match(stdout, /Wrote pagebeam.config.yaml/);
+  assert.match(stdout, /docs: docs/);
+  assert.match((await readFile(path.join(root, 'pagebeam.config.yaml'), 'utf8')), /root: docs/);
+});
+
+test('it will not write over a configuration somebody already has', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-init-'));
+  await writeFile(path.join(root, 'pagebeam.config.yaml'), 'docs:\n  root: mine\n');
+  await assert.rejects(run(process.execPath, [CLI, 'init', '--cwd', root]));
+  assert.match(await readFile(path.join(root, 'pagebeam.config.yaml'), 'utf8'), /root: mine/);
 });

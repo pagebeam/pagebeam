@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present && node packages/cli/build.mjs",
+    "build": "tsc --build && npm run build --workspaces --if-present",
     "test": "tsc --build && tsc -p tsconfig.test.json && node --experimental-strip-types --test packages/*/test/*.test.ts",
     "typecheck": "tsc --build && tsc -p tsconfig.test.json"
   },
@@ -17,5 +17,9 @@
     "@types/node": "^22.10.2",
     "esbuild": "^0.28.2",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "picocolors": "^1.1.1"
   }
 }

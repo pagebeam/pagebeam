@@ -82,12 +82,21 @@ if (args.command === 'help' || args.command === '--help' || args.command === '-h
 // Writing the configuration by looking at the repository, so trying this does
 // not begin with reading about how to describe one.
 if (args.command === 'init') {
-  const found = await discover(args.cwd);
   const at = path.join(args.cwd, 'pagebeam.config.yaml');
   if (await readIfPresent(at) !== null) {
     process.stderr.write('pagebeam.config.yaml is already there. Nothing was written.\n');
     process.exit(2);
   }
+
+  // Asked where somebody is there to answer. A pipe, or a job on a machine, is
+  // told what was worked out instead of being waited on.
+  if (process.stdin.isTTY === true && process.stdout.isTTY === true) {
+    const { askFor } = await import('./ask.js');
+    await writeFile(at, await askFor(args.cwd));
+    process.exit(0);
+  }
+
+  const found = await discover(args.cwd);
   await writeFile(at, configFor(found));
 
   const said = [`Wrote pagebeam.config.yaml`];

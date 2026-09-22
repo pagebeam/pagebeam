@@ -15,10 +15,12 @@ npx pagebeam init
 npx pagebeam check
 ```
 
-`init` looks at what is there and writes `pagebeam.config.yaml`: the directory
-your prose lives in, and any application beside it. It says what it worked out
-and what it could not, so you can correct it before the first run rather than
-after.
+`init` looks at what is there and asks you to confirm it: where your prose
+lives, and which application it describes. Every question arrives with the
+answer it worked out already filled in, so it is usually one keypress.
+
+Run where nobody can answer, in a pipe or a job, and it writes what it worked
+out instead of waiting, saying what it could not establish.
 
 Nothing is written outside that one file, and nothing reaches a remote. `check`
 reads and reports.

@@ -24,7 +24,8 @@
     "@pagebeam/docs": "0.1.0",
     "picomatch": "^4.0.7",
     "yaml": "^2.6.1",
-    "@pagebeam/model": "0.1.0"
+    "@pagebeam/model": "0.1.0",
+    "picocolors": "^1.1.1"
   },
   "description": "Runs the checks and grades what they find",
   "homepage": "https://pagebeam.dev",
