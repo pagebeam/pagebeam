@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { glob } from 'tinyglobby';
 import { isRoute } from '@pagebeam/app';
@@ -53,6 +53,60 @@ function commonRoot(files: string[]): string {
 export interface Found {
   docs: { root: string; pages: number } | null;
   apps: { name: string; path: string; routes: number; parts: number }[];
+}
+
+// Documentation in one repository and the product in another is the case this
+// was built for, and from inside the documentation the product is invisible:
+// it is not under here, it is beside here. Whatever is checked out alongside
+// gets the same reading, one level out and no further.
+// How many neighbours are worth reading before this stops being a quick look.
+// Somebody with a hundred repositories checked out together is not helped by
+// waiting while every one is opened, and a list that long is not a choice.
+const NEIGHBOURS = 40;
+const OFFERED = 8;
+
+async function beside(cwd: string): Promise<Found['apps']> {
+  const above = path.dirname(path.resolve(cwd));
+  if (above === path.resolve(cwd)) return [];
+
+  const entries = await readdir(above, { withFileTypes: true }).catch(() => []);
+  const found: Found['apps'] = [];
+
+  // A directory somebody checked out, rather than whatever else happens to
+  // share a parent. Without this, running somewhere like a temporary
+  // directory or a home directory reads everything in it.
+  const checkedOut = async (at: string): Promise<boolean> =>
+    (await readdir(at).catch(() => [])).some((name) => name === '.git' || name === 'package.json');
+
+  let opened = 0;
+  for (const entry of entries) {
+    if (opened >= NEIGHBOURS) break;
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (path.join(above, entry.name) === path.resolve(cwd)) continue;
+
+    const at = path.join(above, entry.name);
+    if (!(await checkedOut(at))) continue;
+    opened += 1;
+    // Only where routes live, so a directory of anything else is passed over
+    // without reading all of it.
+    const routes = await glob(['{pages,routes,views,app,screens,src}/**/*.{vue,svelte,astro,jsx,tsx}'], {
+      cwd: at,
+      ignore: IGNORE,
+      dot: false,
+    }).catch(() => []);
+
+    const reachable = routes.filter((f) => isRoute(f));
+    if (reachable.length === 0) continue;
+    found.push({
+      name: entry.name,
+      path: path.join('..', entry.name),
+      routes: reachable.length,
+      parts: routes.length,
+    });
+  }
+  // The ones with the most in them, because a list somebody has to read is a
+  // worse answer than a short one they can correct.
+  return found.sort((a, b) => b.routes - a.routes).slice(0, OFFERED);
 }
 
 export async function discover(cwd: string): Promise<Found> {
@@ -115,6 +169,10 @@ export async function discover(cwd: string): Promise<Found> {
       parts: parts.length,
     });
   }
+
+  // Looked for outside only when nothing inside answers, because a repository
+  // holding its own product has already said what it describes.
+  if (apps.length === 0) apps.push(...(await beside(cwd)));
 
   return { docs, apps };
 }

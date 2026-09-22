@@ -68,3 +68,83 @@ test('what it would write says what it could not work out', async () => {
   assert.match(written, /apps: \[\]/);
   assert.match(written, /Without at least one/);
 });
+
+// Documentation in one repository and the product in another is the case this
+// was built for, and from inside the documentation the product is not below,
+// it is beside.
+async function checkout(layout: Record<string, Record<string, string>>): Promise<string> {
+  const above = await mkdtemp(path.join(tmpdir(), 'pagebeam-beside-'));
+  for (const [repo, files] of Object.entries(layout)) {
+    // What makes a directory a checkout rather than a neighbour that happens
+    // to share a parent.
+    await mkdir(path.join(above, repo), { recursive: true });
+    await writeFile(path.join(above, repo, 'package.json'), '{}');
+    for (const [at, text] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(above, repo, at)), { recursive: true });
+      await writeFile(path.join(above, repo, at), text);
+    }
+  }
+  return above;
+}
+
+test('the product checked out beside the documentation is found', async () => {
+  const above = await checkout({
+    docs: { 'content/guide.md': '# Guide' },
+    dashboard: { 'pages/billing.vue': PAGE, 'pages/reports.vue': PAGE },
+  });
+  const found = await discover(path.join(above, 'docs'));
+  assert.equal(found.docs?.root, 'content');
+  assert.equal(found.apps[0]?.path, '../dashboard');
+  assert.equal(found.apps[0]?.name, 'dashboard');
+  assert.equal(found.apps[0]?.routes, 2);
+});
+
+test('a repository holding its own product is not asked about its neighbours', async () => {
+  const above = await checkout({
+    app: { 'docs/guide.md': '# Guide', 'pages/a.vue': PAGE },
+    other: { 'pages/b.vue': PAGE },
+  });
+  const found = await discover(path.join(above, 'app'));
+  assert.deepEqual(found.apps.map((a) => a.path), ['.'], 'it has already said what it describes');
+});
+
+test('a neighbour with no routes is not an application', async () => {
+  const above = await checkout({
+    docs: { 'content/guide.md': '# Guide' },
+    assets: { 'src/logo.svg': '<svg />', 'src/theme.ts': 'export const a = 1' },
+  });
+  const found = await discover(path.join(above, 'docs'));
+  assert.deepEqual(found.apps, []);
+});
+
+test('several neighbours are offered, the one with most routes first', async () => {
+  const above = await checkout({
+    docs: { 'content/guide.md': '# Guide' },
+    small: { 'pages/a.vue': PAGE },
+    big: { 'pages/a.vue': PAGE, 'pages/b.vue': PAGE, 'pages/c.vue': PAGE },
+  });
+  const found = await discover(path.join(above, 'docs'));
+  assert.deepEqual(found.apps.map((a) => a.name), ['big', 'small']);
+});
+
+test('a hundred neighbours is not a list anybody reads', async () => {
+  const many: Record<string, Record<string, string>> = { docs: { 'content/g.md': '# G' } };
+  for (let i = 0; i < 20; i += 1) many[`app${i}`] = { [`pages/a${i}.vue`]: PAGE };
+  const found = await discover(path.join(await checkout(many), 'docs'));
+  assert.ok(found.apps.length <= 8, `offered ${found.apps.length}`);
+});
+
+// Documentation and the product in one repository, in different parts of it.
+test('a monorepo is read from its root', async () => {
+  const root = await repo({
+    'docs/guide.md': '# Guide',
+    'apps/web/pages/index.vue': PAGE,
+    'apps/web/pages/about.vue': PAGE,
+    'apps/admin/pages/home.vue': PAGE,
+    'packages/ui/src/Button.vue': PAGE,
+  });
+  const found = await discover(root);
+  assert.equal(found.docs?.root, 'docs');
+  assert.deepEqual(found.apps.map((a) => a.path), ['apps/web', 'apps/admin']);
+  assert.ok(!found.apps.some((a) => a.path.startsWith('packages/')), 'a library has no screens');
+});
