@@ -12,6 +12,7 @@ import {
   replay,
 } from './branch.js';
 import { bodyFor, titleFor } from './body.js';
+import { subjectFor } from './subject.js';
 import type { Forge, PullRequest } from './forge.js';
 import { planFor, type Action } from './plan.js';
 import { byPagebeam, readTrailers } from './trailers.js';
@@ -24,6 +25,8 @@ export interface WriteRequest {
   // Every application this run examined. A run owns the commits raised for the
   // applications it looked at, whether or not it still has findings for them.
   apps?: string[] | undefined;
+  // The type and scope every commit and the title are written under.
+  commitPrefix?: string | undefined;
   comparedWith: string | null;
   // False when a check was asked for and could not run.
   complete: boolean;
@@ -70,7 +73,7 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
     complete: request.complete,
   });
 
-  const title = titleFor(findings);
+  const title = titleFor(findings, request.commitPrefix);
   const body = bodyFor(findings, plan.state, request.comparedWith);
   const nothing = { action: plan.action, reason: plan.reason, title, body };
   const done = (): typeof nothing => ({ ...nothing, action });
@@ -141,7 +144,8 @@ export async function write(forge: Forge, request: WriteRequest): Promise<Outcom
 
     for (const finding of fixable) {
       await apply(session.dir, finding.fix!.changes);
-      if (await commit(session.dir, finding, finding.title)) written += 1;
+      const subject = subjectFor(finding.title, { prefix: request.commitPrefix });
+      if (await commit(session.dir, finding, subject)) written += 1;
     }
     if (written > 0 || others.length > 0) await push(session.dir, branch, action === 'update');
   } finally {

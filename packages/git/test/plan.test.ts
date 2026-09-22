@@ -121,7 +121,25 @@ test('the body separates what is proven from what wants reading', () => {
   const body = bodyFor([proven, review], stateOf([proven, review]), null);
   assert.match(body, /## Proven/);
   assert.match(body, /## Worth reading/);
-  assert.match(titleFor([proven, review]), /2 findings from links/);
+  assert.match(titleFor([proven, review]), /^docs: correct 2 things the documentation says/);
+});
+
+// The title lands in a repository that usually enforces how one is written,
+// and says what the change is rather than how many of something was counted.
+test('one thing is named outright', () => {
+  const only: Finding = { ...finding('a'), title: '"Add transaction" is now called "Record transaction"' };
+  assert.equal(titleFor([only]), 'docs: "Add transaction" is now called "Record transaction"');
+});
+
+test('several are summarised by what they touch', () => {
+  const ui: Finding = { ...finding('a'), app: 'ui' };
+  const api: Finding = { ...finding('b'), app: 'webservice' };
+  assert.equal(titleFor([ui, api]), 'docs: correct 2 things the documentation says in ui and webservice');
+});
+
+test('a repository with its own convention is obeyed here too', () => {
+  assert.match(titleFor([finding('a')], 'chore(docs)'), /^chore\(docs\): /);
+  assert.ok(!titleFor([finding('a')], '').startsWith(':'));
 });
 
 test('an incomplete scan finding nothing closes nothing', () => {

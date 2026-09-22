@@ -5,3 +5,4 @@ export * from './plan.js';
 export * from './state.js';
 export * from './trailers.js';
 export * from './writer.js';
+export * from './subject.js';

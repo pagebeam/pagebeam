@@ -141,6 +141,7 @@ model:
 propose:
   branch: pagebeam/drift
   base: main
+  commitPrefix: docs        # the type every commit and the title use
 ```
 
 Every setting is checked. One that does not exist is an error, not a shrug.

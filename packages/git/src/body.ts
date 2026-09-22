@@ -1,3 +1,4 @@
+import { subjectFor } from './subject.js';
 import type { Finding } from '@pagebeam/core';
 import { renderState, type State } from './state.js';
 
@@ -41,7 +42,14 @@ export function bodyFor(findings: Finding[], state: State, comparedWith: string 
   return lines.join('\n');
 }
 
-export function titleFor(findings: Finding[]): string {
-  const checks = [...new Set(findings.map((f) => f.check))].sort();
-  return `docs: ${findings.length} finding${findings.length === 1 ? '' : 's'} from ${checks.join(', ')}`;
+// What the change is, rather than how many of them a tool counted. One thing
+// is named outright; several are summarised by what they touch.
+export function titleFor(findings: Finding[], prefix?: string | undefined): string {
+  const first = findings[0];
+  if (first === undefined) return subjectFor('nothing left to correct', { prefix });
+  if (findings.length === 1) return subjectFor(first.title, { prefix });
+
+  const apps = [...new Set(findings.map((f) => f.app).filter((a): a is string => a !== undefined))];
+  const where = apps.length === 0 ? '' : ` in ${apps.sort().join(' and ')}`;
+  return subjectFor(`correct ${findings.length} things the documentation says${where}`, { prefix });
 }

@@ -98,6 +98,11 @@ export const configSchema = z.strictObject({
       base: z.string().default('main'),
       labels: z.array(z.string()).default([]),
       reviewers: z.array(z.string()).default([]),
+      // The type, and any scope, that every commit and the pull request title
+      // are written under. Conventional Commits by default, because a
+      // repository enforcing anything usually enforces that. Empty writes no
+      // prefix at all.
+      commitPrefix: z.string().default('docs'),
       // Left unsaid, a pull request opens as a draft when anything in it was
       // written by a model and as a normal one when everything was worked out
       // from the source. Saying so either way settles it outright.
