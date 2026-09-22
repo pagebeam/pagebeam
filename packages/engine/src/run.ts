@@ -11,7 +11,7 @@ import {
 import { history, snapshot } from '@pagebeam/app';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
-import { configKeys, links, moved, openapi, strings } from '@pagebeam/checks';
+import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
 import { loadConfig, loadIgnores } from './load.js';
 import { reacher } from './reach.js';
 
@@ -237,6 +237,20 @@ async function runMoved(
   return moved.checkMoved(pages, evidence.now, evidence.movement, untouched, evidence.before);
 }
 
+async function runUndocumented(
+  pages: DocPage[],
+  config: PagebeamConfig,
+  evidence: Evidence | null,
+  skipped: string[],
+): Promise<Finding[]> {
+  if (config.checks.undocumented === false) return [];
+  if (evidence === null || evidence.now.every((s) => s.labels.length === 0)) {
+    skipped.push('undocumented: no application has controls that could be read');
+    return [];
+  }
+  return undocumented.checkUndocumented(pages, evidence.now, evidence.before);
+}
+
 async function runOpenapi(
   pages: DocPage[],
   cwd: string,
@@ -303,6 +317,7 @@ async function checkAll(
   if (config.checks.openapi !== false) ran.push('openapi');
   if (config.checks.strings !== false) ran.push('strings');
   if (config.checks.moved !== false) ran.push('moved');
+  if (config.checks.undocumented !== false) ran.push('undocumented');
 
   const findings = (
     await Promise.all([
@@ -311,6 +326,7 @@ async function checkAll(
       runOpenapi(pages, cwd, config, skipped),
       runStrings(pages, config, evidence, skipped),
       runMoved(pages, config, evidence, untouched, skipped),
+      runUndocumented(pages, config, evidence, skipped),
     ])
   ).flat();
 
