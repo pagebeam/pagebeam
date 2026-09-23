@@ -388,7 +388,8 @@ async function docsAsThen(
   const rev = await history.revisionBefore(docsRoot, sinceDays);
   if (rev === null) return null;
 
-  const top = await history.filesAt(docsRoot, rev).catch(() => [] as string[]);
+  // A listing that fails is a broken repository, not missing history.
+  const top = await history.filesAt(docsRoot, rev);
   if (top.length === 0) return null;
 
   const files = top.filter((f) =>

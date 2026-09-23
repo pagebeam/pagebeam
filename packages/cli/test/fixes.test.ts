@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
@@ -334,4 +334,24 @@ test('init writes a config that reads back when a folder name means something in
   }
   const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', root]);
   assert.match(stdout, /pages checked against/);
+});
+
+// Deleting the old root tree leaves the commit findable but its files unlistable.
+test('history that cannot be read makes the run untrusted, not historyless', async () => {
+  const { work } = await repository(
+    {
+      'pagebeam.config.yaml': 'docs:\n  root: docs\nhistory:\n  sinceDays: 3650\n',
+      'docs/guide.md': '# Guide\n\nThe first words.\n',
+    },
+    { 'docs/guide.md': '# Guide\n\nOther words.\n' },
+  );
+  const first = execFileSync('git', ['-C', work, 'rev-list', '--max-parents=0', 'HEAD']).toString().trim();
+  const tree = execFileSync('git', ['-C', work, 'rev-parse', `${first}^{tree}`]).toString().trim();
+  await rm(path.join(work, '.git/objects', tree.slice(0, 2), tree.slice(2)));
+
+  const code = await run(process.execPath, [CLI, 'check', '--cwd', work]).then(
+    () => 0,
+    (error: { code?: number }) => error.code ?? -1,
+  );
+  assert.equal(code, 2);
 });
