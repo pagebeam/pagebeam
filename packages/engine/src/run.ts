@@ -153,6 +153,19 @@ async function runLinks(
   return outcome.findings;
 }
 
+// Broken links in the documentation under `cwd`, by the link check itself,
+// against routes read from the source. For comparing a proposed tree with the
+// one it came from: neither has a build of the proposal, so both are judged
+// the same way.
+export async function brokenLinks(cwd: string, config: PagebeamConfig): Promise<Finding[]> {
+  if (config.checks.links === false) return [];
+  const docsRoot = path.resolve(cwd, config.docs.root);
+  const files = await discover(docsRoot, config.docs.include, config.docs.exclude);
+  const pages = await parseAll(docsRoot, files);
+  const local = { ...config, checks: { ...config.checks, links: { ...config.checks.links, external: false } } };
+  return runLinks(pages, cwd, local, docsRoot, [], true, { now: null, then: null });
+}
+
 export interface Evidence {
   now: Snapshot[];
   before: Snapshot[] | null;
@@ -432,22 +445,40 @@ function readingFor(
 }
 
 // A draft is a claim that the problem is gone. Nothing is proposed on the
-// strength of a claim: the page is read back, and what it was asked to settle
-// has to have stopped being true of it.
+// strength of a claim: the checks run again with the drafted page in place.
+// The finding must be gone, and the page must not bring a finding the
+// documentation did not already have.
+export type Recheck = (pages: DocPage[]) => Promise<Finding[]>;
+
 async function accepted(
   finding: Finding,
   drafted: Finding,
   was: string | null,
   told: string[],
+  context: { pages: DocPage[]; docsRoot: string; recheck: Recheck; baseline: Set<string> },
 ): Promise<Finding> {
-  const contents = drafted.fix?.changes[0]?.contents;
-  if (typeof contents !== 'string') return finding;
+  const change = drafted.fix?.changes[0];
+  const contents = change?.contents;
+  if (change === undefined || typeof contents !== 'string') return finding;
+
+  const refuse = (because: string): Finding => {
+    told.push(`model: the page drafted for ${finding.doc.path} was not proposed: ${because}`);
+    return finding;
+  };
 
   const refused = await settles(drafted, was, contents);
-  if (refused === null) return drafted;
+  if (refused !== null) return refuse(refused.because);
 
-  told.push(`model: the page drafted for ${finding.doc.path} was not proposed: ${refused.because}`);
-  return finding;
+  const [page] = await parseAll(context.docsRoot, [change.path], async () => contents);
+  if (page === undefined) return refuse('the page it wrote could not be read as a page');
+  const candidate = [...context.pages.filter((p) => p.path !== change.path), page];
+  const after = await context.recheck(candidate);
+
+  if (after.some((f) => f.id === finding.id)) return refuse('the checks still find what it was asked to fix');
+  const added = after.find((f) => f.doc.path === change.path && !context.baseline.has(f.id));
+  if (added !== undefined) return refuse(`it adds a new finding: ${added.title}`);
+
+  return drafted;
 }
 
 async function mend(
@@ -457,8 +488,12 @@ async function mend(
   findings: Finding[],
   snapshots: Snapshot[],
   told: string[],
+  docsRoot: string,
+  recheck: Recheck,
+  baseline: Set<string>,
 ): Promise<Finding[]> {
   const settings = config.model;
+  const context = { pages, docsRoot, recheck, baseline };
   if (settings === undefined) return findings;
 
   // A check says whether a model is asked for what it found. Saying nothing
@@ -506,7 +541,7 @@ async function mend(
       const page = sourceOf.get(finding.doc.path);
       if (page !== undefined) {
         const drafted = await draft(router, finding, page, skills);
-        return drafted === null ? finding : await accepted(finding, drafted, page, told);
+        return drafted === null ? finding : await accepted(finding, drafted, page, told, context);
       }
 
       // A screen nobody documented names no page, because the page is what is
@@ -519,7 +554,7 @@ async function mend(
       const written = await compose(router, finding, withSource, skills);
       return written === null
         ? finding
-        : await accepted(finding, written, target.existing ?? null, told);
+        : await accepted(finding, written, target.existing ?? null, told, context);
     }),
   );
 }
@@ -660,7 +695,19 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
   const deduped = [...unique.values()];
 
   const mended = proposing
-    ? await mend(cwd, config, pass.pages, deduped, pass.evidence?.now ?? [], skipped)
+    ? await mend(
+        cwd,
+        config,
+        pass.pages,
+        deduped,
+        pass.evidence?.now ?? [],
+        skipped,
+        docsRoot,
+        async (candidate) =>
+          (await checkAll(candidate, cwd, config, docsRoot, evidence, untouched, false, { now: null, then: null }))
+            .findings,
+        new Set(pass.findings.map((f) => f.id)),
+      )
     : deduped;
 
   const order = { error: 0, warn: 1, info: 2 } as const;

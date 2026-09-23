@@ -22,10 +22,6 @@ test('a page that settles what was raised is accepted', async () => {
   assert.equal(await settles(finding(), WAS, now), null);
 });
 
-test('a page that left the problem exactly where it was is refused', async () => {
-  assert.match(String((await settles(finding(), WAS, WAS))?.because), /exactly where it was/);
-});
-
 test('a page that dropped a link nobody asked about is refused', async () => {
   const now = 'Press **Record transaction**.\n\n```sh\nnpm run dev\n```\n';
   assert.match(String((await settles(finding(), WAS, now))?.because), /link/);

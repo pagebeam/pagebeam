@@ -1,6 +1,6 @@
 import path from 'node:path';
 import process from 'node:process';
-import { loadConfig, type RunResult } from '@pagebeam/engine';
+import { brokenLinks, loadConfig, type RunResult } from '@pagebeam/engine';
 import { discover as discoverPages, parseAll } from '@pagebeam/docs';
 import { github, slugOf, write, type Forge } from '@pagebeam/git';
 
@@ -81,9 +81,12 @@ export async function propose(
     return { said: `${host.missing} is needed to open a pull request.`, code: 2 };
   }
 
-  // What the documentation becomes, read as a whole once every change is in
-  // place. A page that parses on its own can still leave the set of pages
-  // worse than it found it: a link that went somewhere now goes nowhere.
+  // Links broken before anything is proposed. A proposal may leave these as
+  // they were; it may not add one.
+  const brokenBefore = new Set((await brokenLinks(cwd, config)).map((f) => f.id));
+
+  // What the documentation becomes once every change is in place, read by the
+  // same checks as the documentation it came from.
   const asItWouldBe = async (dir: string): Promise<string | null> => {
     const root = path.join(dir, from);
     const files = await discoverPages(root, config.docs.include, config.docs.exclude);
@@ -97,17 +100,11 @@ export async function propose(
       return `${unparsed[0]} could not be read back as a page`;
     }
 
-    // Every address the documentation publishes, and every address it points
-    // at. One that points nowhere is a page made worse than it was.
-    const addresses = new Set(after.map((page) => `/${page.slug ?? page.path.replace(/\.[^.]+$/, '')}`));
-    const was = new Set(result.findings.filter((f) => f.check === 'links').map((f) => f.title.split(' ')[0]));
-    for (const page of after) {
-      for (const link of page.links) {
-        if (!link.href.startsWith('/') || link.href.startsWith('//')) continue;
-        if (addresses.has(link.href) || was.has(link.href)) continue;
-        if (/\.[a-z0-9]{2,5}$/i.test(link.href)) continue;
-        return `${page.path} would point at ${link.href}, which nothing publishes`;
-      }
+    const made = (await brokenLinks(path.join(dir, path.relative(repo, cwd)), config)).find(
+      (f) => !brokenBefore.has(f.id),
+    );
+    if (made !== undefined) {
+      return `${made.doc.path} would link to ${made.title.replace(/ does not resolve$/, '')}, which nothing publishes`;
     }
     return null;
   };
