@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { visibleText } from '@pagebeam/app';
 
 // What a reader is actually served, rather than what happens to be written in
 // a source file. A documentation site may publish its API reference from the
@@ -12,6 +13,7 @@ const PAGES = /\.html?$/i;
 export const PAGE_LIMIT = 4000;
 
 export interface Published {
+  // `METHOD /path` for every operation a reader is shown with its method.
   found: Set<string>;
   complete: boolean;
 }
@@ -24,7 +26,24 @@ function unlessGone<T>(fallback: T): (error: unknown) => T {
   };
 }
 
-export async function publishedPaths(dir: string, wanted: Iterable<string>): Promise<Published> {
+const PATH_CHAR = /[A-Za-z0-9_/{}.:-]/;
+const NEAR = 40;
+
+// An operation is its method and its path together, so both must be shown
+// close to each other. `/users` inside `/users/{id}` is not `/users`.
+function shows(text: string, method: string, at: string): boolean {
+  const verb = new RegExp(`\\b${method}\\b`, 'i');
+  for (let i = text.indexOf(at); i !== -1; i = text.indexOf(at, i + 1)) {
+    if (PATH_CHAR.test(text.charAt(i + at.length))) continue;
+    if (verb.test(text.slice(Math.max(0, i - NEAR), i + at.length + NEAR))) return true;
+  }
+  return false;
+}
+
+export async function publishedPaths(
+  dir: string,
+  wanted: Iterable<{ method: string; path: string }>,
+): Promise<Published> {
   const looking = [...wanted];
   const found = new Set<string>();
   let read = 0;
@@ -46,13 +65,12 @@ export async function publishedPaths(dir: string, wanted: Iterable<string>): Pro
         return;
       }
       read += 1;
-      const text = await readFile(here, 'utf8').catch(unlessGone(null));
-      if (text === null) continue;
-      // A built page escapes what it shows, so the same address is written
-      // several ways. Both the plain form and the escaped one are looked for.
-      const flat = text.replace(/&#x2F;|&#47;/gi, '/').replace(/&amp;/gi, '&');
-      for (const one of looking) {
-        if (!found.has(one) && flat.includes(one)) found.add(one);
+      const html = await readFile(here, 'utf8').catch(unlessGone(null));
+      if (html === null) continue;
+      const text = visibleText(html);
+      for (const op of looking) {
+        const key = `${op.method.toUpperCase()} ${op.path}`;
+        if (!found.has(key) && shows(text, op.method, op.path)) found.add(key);
       }
     }
   };

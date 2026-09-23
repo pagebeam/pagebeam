@@ -315,7 +315,7 @@ async function runOpenapi(
     }
     every.push(...operations);
     if (!counting) continue;
-    const published = built === null ? null : await publishedPaths(built, operations.map((o) => o.path));
+    const published = built === null ? null : await publishedPaths(built, operations);
     if (published !== null && !published.complete) {
       skipped.push(
         `openapi: the built site has more than ${PAGE_LIMIT} pages, so it was not read in full and ${shown} coverage was not counted`,

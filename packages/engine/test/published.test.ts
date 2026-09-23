@@ -14,55 +14,63 @@ async function site(files: Record<string, string>): Promise<string> {
   return root;
 }
 
-// The question is what a reader is served, so nothing here knows or asks what
-// produced the page. A reference written by hand and one generated from the
-// specification are the same answer to a reader and the same answer here.
-test('an operation a page serves is found, whatever wrote the page', async () => {
+const op = (method: string, p: string) => ({ method, path: p });
+
+test('an operation shown with its method is found, whatever wrote the page', async () => {
   const root = await site({
-    'reference/operations/8415e940/index.html': '<h1>Create wallet</h1><code>/api/v1/wallets</code>',
+    'reference/operations/8415e940/index.html': '<h1>Create wallet</h1><span>POST</span> <code>/api/v1/wallets</code>',
   });
-  assert.deepEqual([...(await publishedPaths(root, ['/api/v1/wallets'])).found], ['/api/v1/wallets']);
+  assert.deepEqual([...(await publishedPaths(root, [op('post', '/api/v1/wallets')])).found], ['POST /api/v1/wallets']);
 });
 
-test('an operation nothing serves is not found', async () => {
-  const root = await site({ 'index.html': '<h1>Welcome</h1>' });
-  assert.equal((await publishedPaths(root, ['/api/v1/wallets'])).found.size, 0);
+test('a path shown with one method does not cover another method on it', async () => {
+  const root = await site({ 'users.html': '<p>GET /users lists everyone.</p>' });
+  const { found } = await publishedPaths(root, [op('get', '/users'), op('delete', '/users')]);
+  assert.deepEqual([...found], ['GET /users']);
+});
+
+test('text a reader cannot see does not count', async () => {
+  const root = await site({
+    'a.html':
+      '<script>const spec = {"paths": {"/users": {"get": {}}}}; // GET /users</script>' +
+      '<div hidden>GET /users</div><div aria-hidden="true">GET /users</div>' +
+      '<a href="/users" title="GET /users">Home</a>',
+  });
+  assert.equal((await publishedPaths(root, [op('get', '/users')])).found.size, 0);
+});
+
+test('a longer path does not stand for a shorter one', async () => {
+  const root = await site({ 'a.html': '<p>GET /users/{id}</p>' });
+  assert.equal((await publishedPaths(root, [op('get', '/users')])).found.size, 0);
 });
 
 test('a page that escapes the address it shows still serves it', async () => {
-  const root = await site({ 'a.html': '<code>&#x2F;api&#x2F;v1&#x2F;wallets</code>' });
-  assert.equal((await publishedPaths(root, ['/api/v1/wallets'])).found.size, 1);
+  const root = await site({ 'a.html': '<p>GET <code>&#x2F;api&#x2F;v1&#x2F;wallets</code></p>' });
+  assert.equal((await publishedPaths(root, [op('get', '/api/v1/wallets')])).found.size, 1);
 });
 
 test('pages are found however deep the site nests them', async () => {
-  const root = await site({ 'a/b/c/d/e/index.html': '<p>/api/v1/deep</p>' });
-  assert.equal((await publishedPaths(root, ['/api/v1/deep'])).found.size, 1);
+  const root = await site({ 'a/b/c/d/e/index.html': '<p>GET /api/v1/deep</p>' });
+  assert.equal((await publishedPaths(root, [op('get', '/api/v1/deep')])).found.size, 1);
 });
 
 test('what is not a page is not read', async () => {
-  const root = await site({ 'spec.json': '{"paths":{"/api/v1/wallets":{}}}' });
-  assert.equal((await publishedPaths(root, ['/api/v1/wallets'])).found.size, 0, 'the specification is not the documentation');
-});
-
-test('some served and some not is answered exactly', async () => {
-  const root = await site({ 'a.html': '/api/v1/one', 'b.html': '/api/v1/two' });
-  const { found } = await publishedPaths(root, ['/api/v1/one', '/api/v1/two', '/api/v1/three']);
-  assert.deepEqual([...found].sort(), ['/api/v1/one', '/api/v1/two']);
+  const root = await site({ 'spec.json': '{"paths":{"/api/v1/wallets":{"get":{}}}}' });
+  assert.equal((await publishedPaths(root, [op('get', '/api/v1/wallets')])).found.size, 0);
 });
 
 test('a site larger than the scan reads is reported as incomplete', async () => {
   const files: Record<string, string> = {};
   for (let i = 0; i <= PAGE_LIMIT; i++) files[`p${i}.html`] = '<p>nothing here</p>';
   const root = await site(files);
-  const result = await publishedPaths(root, ['/api/v1/wallets']);
-  assert.equal(result.complete, false);
+  assert.equal((await publishedPaths(root, [op('get', '/api/v1/wallets')])).complete, false);
 });
 
 test('a page that cannot be read is an error, not a page that says nothing', async () => {
-  const root = await site({ 'locked/index.html': '/api/v1/wallets' });
+  const root = await site({ 'locked/index.html': '<p>GET /api/v1/wallets</p>' });
   await chmod(path.join(root, 'locked'), 0o000);
   try {
-    await assert.rejects(publishedPaths(root, ['/api/v1/wallets']), { code: 'EACCES' });
+    await assert.rejects(publishedPaths(root, [op('get', '/api/v1/wallets')]), { code: 'EACCES' });
   } finally {
     await chmod(path.join(root, 'locked'), 0o755);
   }

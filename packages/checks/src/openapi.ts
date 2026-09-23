@@ -4,8 +4,8 @@ import { parse as parseYaml } from 'yaml';
 import { findingId, findingRevision, type Finding } from '@pagebeam/core';
 import type { DocPage } from '@pagebeam/docs';
 
-const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
-const CITATION = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/[A-Za-z0-9/_{}.-]*)/g;
+const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace']);
+const CITATION = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\s+(\/[A-Za-z0-9/_{}.-]*)/g;
 const UNDOCUMENTED_SHOWN = 10;
 
 export interface Operation {
@@ -77,12 +77,10 @@ export async function readSpec(file: string): Promise<SpecResult> {
 export function citations(pages: DocPage[]): { method: string; path: string; page: string; line: number }[] {
   const out: { method: string; path: string; page: string; line: number }[] = [];
   for (const page of pages) {
-    const bodies = [page.prose, ...page.codeBlocks.map((b) => b.value), ...page.codeSpans.map((s) => s.value)];
-    for (const body of bodies) {
-      CITATION.lastIndex = 0;
-      for (const m of body.matchAll(CITATION)) {
-        out.push({ method: m[1] as string, path: m[2] as string, page: page.path, line: 1 });
-      }
+    CITATION.lastIndex = 0;
+    for (const m of page.raw.matchAll(CITATION)) {
+      const line = page.raw.slice(0, m.index).split('\n').length;
+      out.push({ method: m[1] as string, path: m[2] as string, page: page.path, line });
     }
   }
   return out;
@@ -145,15 +143,14 @@ export function checkCoverage(
   ops: Operation[],
   specFile: string,
   app: string,
-  // The operations the built site was found to serve. Null where there is no
-  // build to read, and the source pages are all there is to go on.
+  // `METHOD /path` for each operation the built site shows. Null without a build.
   served: Set<string> | null = null,
 ): Finding[] {
   const documented = new Set(
     citations(pages).map((c) => `${c.method} ${templatise(c.path, ops, c.method)}`),
   );
   const undocumented = ops.filter(
-    (o) => !documented.has(`${o.method} ${o.path}`) && !(served?.has(o.path) ?? false),
+    (o) => !documented.has(`${o.method} ${o.path}`) && !(served?.has(`${o.method} ${o.path}`) ?? false),
   );
   if (undocumented.length === 0) return [];
 
@@ -173,7 +170,7 @@ export function checkCoverage(
       standing: 'review',
       app,
       severity: 'info',
-      confidence: 1,
+      confidence: served === null ? 1 : 0.8,
       doc: { path: specFile },
       title: `${undocumented.length} of ${ops.length} ${app} API operations are not documented with their method`,
       detail:

@@ -3,13 +3,15 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { checkCitations, checkCoverage, readSpec, templatise } from '../src/openapi.ts';
+import { checkCitations, checkCoverage, citations, readSpec, templatise } from '../src/openapi.ts';
 import type { DocPage } from '@pagebeam/docs';
 
 const page = (prose: string): DocPage => ({
-  path: 'a.md', format: 'markdown', raw: '', prose, links: [], codeSpans: [],
+  path: 'a.md', format: 'markdown', raw: prose, prose, links: [], codeSpans: [],
   codeBlocks: [], emphasised: [], directives: [], slug: null,
 });
+
+const citationsOf = (text: string) => citations([page(text)]);
 
 async function spec(name: string, body: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-oa-'));
@@ -87,7 +89,7 @@ test('an endpoint documented with a concrete value is not called absent', () => 
 
 test('an operation the site serves is documented, whatever named it', () => {
   const ops = [{ method: 'GET', path: '/api/v1/wallets' }, { method: 'GET', path: '/api/v1/gone' }];
-  const served = new Set(['/api/v1/wallets']);
+  const served = new Set(['GET /api/v1/wallets']);
   const findings = checkCoverage([], ops as never, 'spec.json', 'api', served);
   assert.equal(findings.length, 1);
   assert.match(findings[0]!.title, /1 of 2/);
@@ -96,7 +98,7 @@ test('an operation the site serves is documented, whatever named it', () => {
 test('with nothing served, the source pages are all there is to go on', () => {
   const ops = [{ method: 'GET', path: '/api/v1/wallets' }];
   assert.equal(checkCoverage([], ops as never, 'spec.json', 'api', null).length, 1);
-  assert.equal(checkCoverage([], ops as never, 'spec.json', 'api', new Set(['/api/v1/wallets'])).length, 0);
+  assert.equal(checkCoverage([], ops as never, 'spec.json', 'api', new Set(['GET /api/v1/wallets'])).length, 0);
 });
 
 // A commit's owner decides whose work a later run may replace. A name that is
@@ -119,4 +121,25 @@ test('an operation absent from all of them together belongs to none of them', ()
   );
   assert.equal(found[0]?.app, undefined, 'no application owns it');
   assert.match(found[0]!.title, /api, admin/, 'and a reader is still told which were checked');
+});
+
+test('a path shown by the site with one method does not cover another', () => {
+  const ops = [{ method: 'GET', path: '/users' }, { method: 'DELETE', path: '/users' }];
+  const findings = checkCoverage([], ops as never, 'spec.json', 'api', new Set(['GET /users']));
+  assert.match(findings[0]!.title, /1 of 2/);
+});
+
+test('TRACE is an operation like any other', async () => {
+  const file = await spec('trace.json', JSON.stringify({ paths: { '/echo': { trace: {} } } }));
+  const { operations } = await readSpec(file);
+  assert.deepEqual(operations.map((o) => `${o.method} ${o.path}`), ['TRACE /echo']);
+});
+
+test('a citation says the line it is on', () => {
+  const findings = checkCitations(
+    citationsOf('# API\n\nSome text.\n\nDELETE /users removes one.\n'),
+    [{ method: 'GET', path: '/users' }],
+    ['api'],
+  );
+  assert.equal(findings[0]!.doc.line, 5);
 });
