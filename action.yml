@@ -1,8 +1,7 @@
-# Every repository is checked out side by side inside the workspace, under its
-# own name: workspace/<product>/ and workspace/<docs>/. That is the layout
-# people have locally, so a config that says `path: ../dashboard` works the
-# same on a laptop and in CI. actions/checkout refuses paths outside the
-# workspace, so nothing may be checked out at `../`.
+# actions/checkout refuses paths outside the workspace, so every repository is
+# checked out inside it at <owner>/<name>. Repositories with the same owner are
+# siblings there, as they usually are on a laptop, so `path: ../dashboard` in a
+# config works in both places.
 name: pagebeam
 description: Check documentation against the product it describes, and propose the corrections.
 
@@ -10,8 +9,7 @@ inputs:
   docs:
     description: >-
       The repository holding the documentation, as owner/name, when it is not
-      this one. It is checked out next to this repository, and pagebeam runs
-      from it, because that is where the config lives.
+      this one. pagebeam runs from it, because that is where the config lives.
     required: false
     default: ''
   docs-ref:
@@ -21,8 +19,7 @@ inputs:
   products:
     description: >-
       Other repositories the documentation describes, as owner/name, one per
-      line. Each is checked out next to this one, for a documentation
-      repository whose config points at products with `../name`.
+      line. For a documentation repository whose config points at its products.
     required: false
     default: ''
   command:
@@ -44,9 +41,7 @@ inputs:
     required: false
     default: ''
   version:
-    description: >-
-      The pagebeam release to run. Defaults to the release this action was
-      pinned to, so a workflow keeps running the same CLI until you change it.
+    description: The pagebeam release to run. Defaults to the release this action is pinned to.
     required: false
     default: ''
   token:
@@ -57,9 +52,7 @@ inputs:
     required: false
     default: ''
   model-key:
-    description: >-
-      The model provider's key, as a secret. It is exported under the name in
-      `model-key-env`, which must match `model.apiKeyEnv` in the config.
+    description: The model provider's key, as a secret. Exported under the name in `model-key-env`.
     required: false
     default: ''
   model-key-env:
@@ -75,19 +68,24 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Work out where each repository goes
+    - name: Check the repository names
       id: where
       shell: bash
       env:
         SELF: ${{ github.repository }}
         DOCS: ${{ inputs.docs }}
+        PRODUCTS: ${{ inputs.products }}
       run: |
         set -euo pipefail
-        echo "self=${SELF#*/}" >> "$GITHUB_OUTPUT"
-        if [ -n "$DOCS" ]; then echo "docs=${DOCS#*/}" >> "$GITHUB_OUTPUT"; fi
+        valid() {
+          [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$ ]] && [[ "${1#*/}" != . && "${1#*/}" != .. ]]
+        }
+        for repo in "$SELF" $DOCS $PRODUCTS; do
+          valid "$repo" || { echo "'$repo' is not a repository name in the form owner/name" >&2; exit 2; }
+        done
+        echo "self=$SELF" >> "$GITHUB_OUTPUT"
 
-    # History is evidence: what a page said before, and which files changed
-    # under it. `strings` and `moved` read each product's own history.
+    # History is evidence: `strings` and `moved` read each repository's own.
     - uses: actions/checkout@v4
       with:
         path: ${{ steps.where.outputs.self }}
@@ -99,7 +97,7 @@ runs:
       with:
         repository: ${{ inputs.docs }}
         ref: ${{ inputs.docs-ref }}
-        path: ${{ steps.where.outputs.docs }}
+        path: ${{ inputs.docs }}
         token: ${{ inputs.token || github.token }}
         fetch-depth: 0
 
@@ -112,14 +110,11 @@ runs:
         SERVER: ${{ github.server_url }}
       run: |
         set -euo pipefail
-        # The token goes in a header for this one command, so it is not saved
-        # in the clone's .git/config.
+        # In a header for this one command, so the token is not saved in .git/config.
         auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
-        while read -r repo; do
-          [ -z "$repo" ] && continue
-          case "$repo" in */*) ;; *) echo "products: '$repo' is not owner/name" >&2; exit 2 ;; esac
-          git -c "http.${SERVER}/.extraheader=${auth}" clone --quiet "${SERVER}/${repo}.git" "$GITHUB_WORKSPACE/${repo#*/}"
-        done <<< "$PRODUCTS"
+        for repo in $PRODUCTS; do
+          git -c "http.${SERVER}/.extraheader=${auth}" clone --quiet "${SERVER}/${repo}.git" "$GITHUB_WORKSPACE/${repo}"
+        done
 
     - uses: actions/setup-node@v4
       with:
@@ -133,7 +128,7 @@ runs:
         PAGEBEAM_COMMAND: ${{ inputs.command }}
         PAGEBEAM_PROFILE: ${{ inputs.profile }}
         PAGEBEAM_PUBLISH: ${{ inputs.publish }}
-        PAGEBEAM_CWD: ${{ inputs.cwd || steps.where.outputs.docs || steps.where.outputs.self }}
+        PAGEBEAM_CWD: ${{ inputs.cwd || inputs.docs || steps.where.outputs.self }}
         PAGEBEAM_VERSION: ${{ inputs.version }}
         MODEL_KEY: ${{ inputs.model-key }}
         MODEL_KEY_ENV: ${{ inputs.model-key-env }}
@@ -168,13 +163,17 @@ runs:
         npx --yes "pagebeam@$version" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
         code=${PIPESTATUS[0]}
 
+        # A line equal to the delimiter would end the output early.
+        delimiter="PAGEBEAM_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        while grep -qxF "$delimiter" "$RUNNER_TEMP/said.txt"; do
+          delimiter="PAGEBEAM_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        done
         {
-          echo "said<<PAGEBEAM"
+          echo "said<<$delimiter"
           cat "$RUNNER_TEMP/said.txt"
-          echo "PAGEBEAM"
+          echo "$delimiter"
         } >> "$GITHUB_OUTPUT"
 
-        # What a reader of the run sees without opening the log.
         {
           echo "## pagebeam"
           echo

@@ -58,12 +58,13 @@ jobs:
           token: ${{ secrets.PAGEBEAM_TOKEN }}
 ```
 
-The action checks out this repository and `your-org/docs` side by side, under
-their own names, with full history. It runs pagebeam from the docs, where the
-config lives. So a config that says `path: ../dashboard` works the same on a
-laptop and in CI. Because of this, the repository is at
-`$GITHUB_WORKSPACE/<name>`, not at the workspace root. A later step in the
-same job that needs it should use that folder.
+The action checks out every repository inside the workspace at
+`<owner>/<name>`, with full history, and runs pagebeam from the docs, where
+the config lives. Repositories with the same owner sit next to each other, so a
+config that says `path: ../dashboard` works the same on a laptop and in CI. For
+a repository with another owner, the path goes through its owner:
+`../../other-org/dashboard`. A later step in the same job finds this
+repository at `$GITHUB_WORKSPACE/<owner>/<name>`, not at the workspace root.
 
 | Input           | Meaning                                                                          | Default                |
 | --------------- | -------------------------------------------------------------------------------- | ---------------------- |
