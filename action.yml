@@ -120,9 +120,12 @@ runs:
       with:
         node-version: '22'
 
+    # Away from the workspace, so a package.json there cannot decide which
+    # pagebeam npx runs. In this repository it resolves to the unbuilt one.
     - name: Run
       id: run
       shell: bash
+      working-directory: ${{ runner.temp }}
       env:
         GITHUB_TOKEN: ${{ inputs.token || github.token }}
         PAGEBEAM_COMMAND: ${{ inputs.command }}
