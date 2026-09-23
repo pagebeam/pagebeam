@@ -9,29 +9,45 @@ import path from 'node:path';
 // Reading the built site answers that for any site, whatever built it. Asking
 // which tool it used would need a list of every tool there has ever been.
 const PAGES = /\.html?$/i;
-const MOST = 4000;
+export const PAGE_LIMIT = 4000;
 
-export async function publishedPaths(
-  dir: string,
-  wanted: Iterable<string>,
-): Promise<Set<string>> {
+export interface Published {
+  found: Set<string>;
+  complete: boolean;
+}
+
+// Only a file that vanished between listing and reading is skipped. Anything
+// else, such as a permission error, would make a page look like it says nothing.
+function unlessGone<T>(fallback: T): (error: unknown) => T {
+  return (error: unknown) => {
+    if ((error as { code?: string }).code === 'ENOENT') return fallback;
+    throw error;
+  };
+}
+
+export async function publishedPaths(dir: string, wanted: Iterable<string>): Promise<Published> {
   const looking = [...wanted];
   const found = new Set<string>();
   let read = 0;
+  let complete = true;
 
   const walk = async (at: string): Promise<void> => {
-    if (read >= MOST || found.size === looking.length) return;
-    const entries = await readdir(at, { withFileTypes: true }).catch(() => []);
+    if (found.size === looking.length) return;
+    const entries = await readdir(at, { withFileTypes: true }).catch(unlessGone([]));
     for (const entry of entries) {
-      if (read >= MOST || found.size === looking.length) return;
+      if (found.size === looking.length) return;
       const here = path.join(at, entry.name);
       if (entry.isDirectory()) {
         await walk(here);
         continue;
       }
       if (!PAGES.test(entry.name)) continue;
+      if (read >= PAGE_LIMIT) {
+        complete = false;
+        return;
+      }
       read += 1;
-      const text = await readFile(here, 'utf8').catch(() => null);
+      const text = await readFile(here, 'utf8').catch(unlessGone(null));
       if (text === null) continue;
       // A built page escapes what it shows, so the same address is written
       // several ways. Both the plain form and the escaped one are looked for.
@@ -43,5 +59,5 @@ export async function publishedPaths(
   };
 
   await walk(dir);
-  return found;
+  return { found, complete };
 }

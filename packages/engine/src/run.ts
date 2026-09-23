@@ -15,7 +15,7 @@ import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
 import { compose, draft, withheld, type Target } from '@pagebeam/model';
 import { loadConfig, loadIgnores, NoConfig } from './load.js';
-import { publishedPaths } from './published.js';
+import { PAGE_LIMIT, publishedPaths } from './published.js';
 import { reacher } from './reach.js';
 import { settles } from './settles.js';
 
@@ -321,9 +321,14 @@ async function runOpenapi(
     }
     every.push(...operations);
     if (!counting) continue;
-    const served =
-      built === null ? null : await publishedPaths(built, operations.map((o) => o.path));
-    findings.push(...openapi.checkCoverage(pages, operations, shown, app.name, served));
+    const published = built === null ? null : await publishedPaths(built, operations.map((o) => o.path));
+    if (published !== null && !published.complete) {
+      skipped.push(
+        `openapi: the built site has more than ${PAGE_LIMIT} pages, so it was not read in full and ${shown} coverage was not counted`,
+      );
+      continue;
+    }
+    findings.push(...openapi.checkCoverage(pages, operations, shown, app.name, published?.found ?? null));
   }
 
   findings.push(...openapi.checkCitations(cited, every, withSpec.map((a) => a.name)));
