@@ -79,6 +79,9 @@ export interface Citation {
   path: string;
   page: string;
   line?: number;
+  // Named in a component's attributes. What the component renders, if
+  // anything, is not known from its source.
+  attribute?: true;
 }
 
 // Only what the parser kept as the page's text, code and stated operations:
@@ -97,7 +100,7 @@ export function citations(pages: DocPage[]): Citation[] {
     else for (const t of page.texts) read(page, t.value, t.line);
     for (const b of page.codeBlocks) read(page, b.value, b.line + 1);
     for (const c of page.codeSpans) read(page, c.value, c.line);
-    for (const o of page.operations ?? []) out.push({ method: o.method, path: o.path, page: page.path, line: o.line });
+    for (const o of page.operations ?? []) out.push({ method: o.method, path: o.path, page: page.path, line: o.line, attribute: true });
   }
   return out;
 }
@@ -162,9 +165,10 @@ export function checkCoverage(
   // `METHOD /path` for each operation the built site shows. Null without a build.
   served: Set<string> | null = null,
 ): Finding[] {
-  const documented = new Set(
-    citations(pages).map((c) => `${c.method} ${templatise(c.path, ops, c.method)}`),
-  );
+  const cited = citations(pages);
+  const keyOf = (c: Citation): string => `${c.method} ${templatise(c.path, ops, c.method)}`;
+  const documented = new Set(cited.filter((c) => c.attribute !== true).map(keyOf));
+  const attributed = new Set(cited.filter((c) => c.attribute === true).map(keyOf));
   const undocumented = ops.filter(
     (o) => !documented.has(`${o.method} ${o.path}`) && !(served?.has(`${o.method} ${o.path}`) ?? false),
   );
@@ -175,6 +179,7 @@ export function checkCoverage(
     .map((p) => `${p.prose}\n${p.codeBlocks.map((b) => b.value).join('\n')}`)
     .join('\n');
   const named = undocumented.filter((o) => corpus.includes(o.path));
+  const onlyAttributed = undocumented.filter((o) => attributed.has(`${o.method} ${o.path}`));
 
   const shown = undocumented.slice(0, UNDOCUMENTED_SHOWN).map((o) => `${o.method} ${o.path}`);
   const more = undocumented.length - shown.length;
@@ -193,6 +198,9 @@ export function checkCoverage(
         (named.length > 0
           ? `${named.length} of them have their path named somewhere in the docs but never with a method, so a reader cannot tell which operations exist.\n`
           : 'None of their paths appear anywhere in the docs.\n') +
+        (onlyAttributed.length > 0
+          ? `${onlyAttributed.length} of them are named only in a component's attributes, which does not show a reader is told. ${served === null ? 'Build the site so pagebeam can read what it renders.' : 'The built site does not show them.'}\n`
+          : '') +
         `Not documented:\n` +
         shown.map((s) => `  ${s}`).join('\n') +
         (more > 0 ? `\n  and ${more} more` : ''),
