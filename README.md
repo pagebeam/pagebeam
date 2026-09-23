@@ -61,7 +61,9 @@ jobs:
 The action checks out this repository and `your-org/docs` side by side, under
 their own names, with full history. It runs pagebeam from the docs, where the
 config lives. So a config that says `path: ../dashboard` works the same on a
-laptop and in CI.
+laptop and in CI. Because of this, the repository is at
+`$GITHUB_WORKSPACE/<name>`, not at the workspace root. A later step in the
+same job that needs it should use that folder.
 
 | Input           | Meaning                                                                          | Default                |
 | --------------- | -------------------------------------------------------------------------------- | ---------------------- |

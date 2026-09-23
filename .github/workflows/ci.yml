@@ -85,10 +85,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The published CLI, because this job tests the action's layout, and a
+      # version bumped here before it is released is not on npm yet.
       - uses: ./
         id: pagebeam
         with:
           docs: pagebeam/docs
+          version: latest
 
       - name: It ran from the documentation and read this repository
         run: |
