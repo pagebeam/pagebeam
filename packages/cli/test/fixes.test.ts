@@ -355,3 +355,26 @@ test('history that cannot be read makes the run untrusted, not historyless', asy
   );
   assert.equal(code, 2);
 });
+
+test('source held back from the model for its size is named in the output', async () => {
+  const llm = await model('# Ledger\n\nPress **Print entries**, **Refresh totals** or **Filter by month**.\n');
+  try {
+    const big = `<!-- ${'x'.repeat(130_000)} -->`;
+    const { work } = await repository(
+      {
+        'docs/intro.md': '# Intro\n\nWelcome to the product and its guides.\n',
+        'app/pages/ledger.vue': '<template><p>Ledger</p></template>\n',
+        'pagebeam.config.yaml': `${CONFIG}model:\n  baseUrl: ${llm.url}\n  name: local\n  sendSource: true\n`,
+      },
+      {
+        'app/pages/ledger.vue':
+          '<template><button>Print entries</button><button>Refresh totals</button>' +
+          `<button>Filter by month</button></template>\n${big}\n`,
+      },
+    );
+    const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', work]);
+    assert.match(stdout, /model: 1 source file\(s\) did not fit and were not sent: .*ledger\.vue/);
+  } finally {
+    await llm.stop();
+  }
+});

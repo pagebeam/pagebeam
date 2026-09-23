@@ -427,11 +427,16 @@ function readingFor(
   const wanted = new Set(named.split('\n').filter((f) => f !== ''));
 
   const found: { path: string; text: string }[] = [];
+  const left: string[] = [];
   let spent = 0;
   for (const snapshot of snapshots) {
     if (finding.app !== undefined && snapshot.app !== finding.app) continue;
     for (const file of snapshot.files) {
-      if (!wanted.has(file.path) || spent + file.text.length > SOURCE_BUDGET) continue;
+      if (!wanted.has(file.path)) continue;
+      if (spent + file.text.length > SOURCE_BUDGET) {
+        left.push(file.path);
+        continue;
+      }
       found.push(file);
       spent += file.text.length;
     }
@@ -444,8 +449,8 @@ function readingFor(
     told.push(`model: sent ${sending.length} source file(s) to ${
       ''}the configured provider: ${sending.map((f) => f.path).join(', ')}`);
   }
-  if (spent >= SOURCE_BUDGET) {
-    told.push('model: the source did not all fit, so some of it was not sent');
+  if (left.length > 0) {
+    told.push(`model: ${left.length} source file(s) did not fit and were not sent: ${left.join(', ')}`);
   }
   return sending;
 }

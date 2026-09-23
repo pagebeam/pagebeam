@@ -143,7 +143,8 @@ if (result.problem !== null && result.configFrom === null) {
 if (args.command === 'fix') {
   try {
     const outcome = await propose(args.cwd, result, args.publish);
-    process.stdout.write(outcome.said + '\n');
+    const notes = result.skipped.filter((note) => note.startsWith('model:'));
+    process.stdout.write([...notes, outcome.said].join('\n') + '\n');
     process.exit(outcome.code);
   } catch (error) {
     process.stderr.write(`${(error as Error).message}\nNothing was proposed.\n`);
