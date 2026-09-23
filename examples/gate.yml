@@ -1,8 +1,7 @@
-# Copy into a product repository to fail a pull request that breaks the
-# documentation.
+# Copy into a product repository to fail a pull request that breaks the docs.
 #
-# Only a finding the source of truth states outright, and only one this change
-# introduced, can fail it. Everything else is reported and passes.
+# Only a proven finding that this change introduced fails it. Everything else
+# is reported and passes.
 name: docs gate
 
 on: [pull_request]

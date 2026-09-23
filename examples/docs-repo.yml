@@ -1,8 +1,8 @@
-# Copy into a documentation repository as .github/workflows/drift.yml
+# Copy into a docs repository as .github/workflows/drift.yml
 #
-# The products are checked out beside it by the configuration's relative
-# paths, so nothing is named here. Nightly, because a documentation repository
-# is not what changes when a product does.
+# The products are checked out next to the docs, under their own names, so a
+# config that says `path: ../dashboard` finds them. Nightly, because the docs
+# are not what changes when a product does.
 name: drift
 
 on:
@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: pagebeam/pagebeam@v1
         with:
+          products: |
+            your-org/dashboard
           command: fix
           publish: 'true'
           token: ${{ secrets.PAGEBEAM_TOKEN }}

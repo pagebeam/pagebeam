@@ -1,8 +1,6 @@
 # Copy into a product repository as .github/workflows/docs-drift.yml
 #
-# It runs when the product changes, which is when documentation starts being
-# wrong. Everything specific to this repository is in the three lines under
-# `with`.
+# It runs when the product changes, which is when the docs start to go wrong.
 name: docs drift
 
 on:

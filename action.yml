@@ -1,7 +1,8 @@
-# Adding this to a repository should be one small file, not thirty lines
-# repeated with variations. What differs between repositories is which
-# documentation to read and whether to propose anything; everything else is
-# the same everywhere and belongs here.
+# Every repository is checked out side by side inside the workspace, under its
+# own name: workspace/<product>/ and workspace/<docs>/. That is the layout
+# people have locally, so a config that says `path: ../dashboard` works the
+# same on a laptop and in CI. actions/checkout refuses paths outside the
+# workspace, so nothing may be checked out at `../`.
 name: pagebeam
 description: Check documentation against the product it describes, and propose the corrections.
 
@@ -9,53 +10,62 @@ inputs:
   docs:
     description: >-
       The repository holding the documentation, as owner/name, when it is not
-      this one. Checked out beside this repository so a relative path in the
-      configuration reaches it.
+      this one. It is checked out next to this repository, and pagebeam runs
+      from it, because that is where the config lives.
     required: false
     default: ''
   docs-ref:
-    description: Which branch of that repository to read. Its default branch when unsaid.
+    description: The branch of that repository to read. Its default branch when empty.
     required: false
     default: ''
-  docs-path:
-    description: Where to check it out, relative to this repository.
+  products:
+    description: >-
+      Other repositories the documentation describes, as owner/name, one per
+      line. Each is checked out next to this one, for a documentation
+      repository whose config points at products with `../name`.
     required: false
-    default: '../docs'
+    default: ''
   command:
     description: check, to report, or fix, to propose.
     required: false
     default: check
   profile:
-    description: observe, enforce, or enforce-all.
+    description: observe, enforce or enforce-all.
     required: false
     default: observe
   publish:
-    description: >-
-      Whether fix opens or updates the pull request. Without it, fix says what
-      it would propose and writes nothing.
+    description: Whether fix opens or updates the pull request. Without it, fix only says what it would propose.
     required: false
     default: 'false'
   cwd:
-    description: Where the configuration is, relative to this repository.
+    description: >-
+      The folder holding the config, relative to the workspace. Defaults to the
+      documentation checkout when `docs` is set, and to this repository otherwise.
     required: false
-    default: '.'
+    default: ''
   version:
-    description: Which release to run. A version, or latest.
+    description: >-
+      The pagebeam release to run. Defaults to the release this action was
+      pinned to, so a workflow keeps running the same CLI until you change it.
     required: false
-    default: latest
+    default: ''
   token:
     description: >-
-      A token that can read the documentation repository and open a pull
-      request there. The job's own token reaches only this repository, so a
-      separate repository needs an installation token or a personal one.
+      A token that can read the other repositories and open a pull request in
+      the documentation repository. Defaults to the job's own token, which only
+      reaches this repository.
     required: false
     default: ''
   model-key:
     description: >-
-      The name of the environment variable holding the provider's key, where
-      the configuration asks for one.
+      The model provider's key, as a secret. It is exported under the name in
+      `model-key-env`, which must match `model.apiKeyEnv` in the config.
     required: false
     default: ''
+  model-key-env:
+    description: The environment variable the config's `model.apiKeyEnv` names.
+    required: false
+    default: OPENAI_API_KEY
 
 outputs:
   said:
@@ -65,11 +75,22 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Work out where each repository goes
+      id: where
+      shell: bash
+      env:
+        SELF: ${{ github.repository }}
+        DOCS: ${{ inputs.docs }}
+      run: |
+        set -euo pipefail
+        echo "self=${SELF#*/}" >> "$GITHUB_OUTPUT"
+        if [ -n "$DOCS" ]; then echo "docs=${DOCS#*/}" >> "$GITHUB_OUTPUT"; fi
+
     # History is evidence: what a page said before, and which files changed
-    # under it. Without it the checks that compare against an earlier revision
-    # have nothing to compare with and say so.
+    # under it. `strings` and `moved` read each product's own history.
     - uses: actions/checkout@v4
       with:
+        path: ${{ steps.where.outputs.self }}
         fetch-depth: 0
 
     - name: Check out the documentation
@@ -78,9 +99,27 @@ runs:
       with:
         repository: ${{ inputs.docs }}
         ref: ${{ inputs.docs-ref }}
-        path: ${{ inputs.docs-path }}
-        token: ${{ inputs.token }}
+        path: ${{ steps.where.outputs.docs }}
+        token: ${{ inputs.token || github.token }}
         fetch-depth: 0
+
+    - name: Check out the products
+      if: inputs.products != ''
+      shell: bash
+      env:
+        PRODUCTS: ${{ inputs.products }}
+        TOKEN: ${{ inputs.token || github.token }}
+        SERVER: ${{ github.server_url }}
+      run: |
+        set -euo pipefail
+        # The token goes in a header for this one command, so it is not saved
+        # in the clone's .git/config.
+        auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+        while read -r repo; do
+          [ -z "$repo" ] && continue
+          case "$repo" in */*) ;; *) echo "products: '$repo' is not owner/name" >&2; exit 2 ;; esac
+          git -c "http.${SERVER}/.extraheader=${auth}" clone --quiet "${SERVER}/${repo}.git" "$GITHUB_WORKSPACE/${repo#*/}"
+        done <<< "$PRODUCTS"
 
     - uses: actions/setup-node@v4
       with:
@@ -90,26 +129,44 @@ runs:
       id: run
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ inputs.token }}
+        GITHUB_TOKEN: ${{ inputs.token || github.token }}
         PAGEBEAM_COMMAND: ${{ inputs.command }}
         PAGEBEAM_PROFILE: ${{ inputs.profile }}
         PAGEBEAM_PUBLISH: ${{ inputs.publish }}
-        PAGEBEAM_CWD: ${{ inputs.cwd }}
+        PAGEBEAM_CWD: ${{ inputs.cwd || steps.where.outputs.docs || steps.where.outputs.self }}
         PAGEBEAM_VERSION: ${{ inputs.version }}
+        MODEL_KEY: ${{ inputs.model-key }}
+        MODEL_KEY_ENV: ${{ inputs.model-key-env }}
       run: |
         set -uo pipefail
 
-        args=("$PAGEBEAM_COMMAND" --cwd "$PAGEBEAM_CWD")
+        version="$PAGEBEAM_VERSION"
+        if [ -z "$version" ]; then
+          version="$(node -p "require('$GITHUB_ACTION_PATH/packages/cli/package.json').version")"
+        fi
+
+        if [ -n "$MODEL_KEY" ]; then
+          if ! [[ "$MODEL_KEY_ENV" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "model-key-env: '$MODEL_KEY_ENV' is not a variable name" >&2
+            exit 2
+          fi
+          export "$MODEL_KEY_ENV=$MODEL_KEY"
+        fi
+
+        case "$PAGEBEAM_CWD" in
+          /*) cwd="$PAGEBEAM_CWD" ;;
+          *) cwd="$GITHUB_WORKSPACE/$PAGEBEAM_CWD" ;;
+        esac
+
+        args=("$PAGEBEAM_COMMAND" --cwd "$cwd")
         if [ "$PAGEBEAM_COMMAND" = check ]; then
           args+=(--profile "$PAGEBEAM_PROFILE")
         elif [ "$PAGEBEAM_PUBLISH" = true ]; then
           args+=(--publish)
         fi
 
-        set +e
-        npx --yes "pagebeam@$PAGEBEAM_VERSION" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
+        npx --yes "pagebeam@$version" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
         code=${PIPESTATUS[0]}
-        set -e
 
         {
           echo "said<<PAGEBEAM"
