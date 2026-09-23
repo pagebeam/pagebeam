@@ -72,9 +72,19 @@ function screensFor(snapshot: Snapshot): (file: string) => string[] {
 // is published at an address the screen shares. Where nothing ties any page
 // to a screen there is nothing to scope by, and everything written is read,
 // which is what happened before and is no worse.
+const HOME = new Set(['index', 'home', 'readme']);
+
 function pagesAbout(address: string, pages: DocPage[]): DocPage[] {
   const tail = address.split('/').filter((s) => s !== '').pop();
-  if (tail === undefined || tail === '') return [];
+  // The home screen has no last segment to match, and nearly every page links
+  // to `/` from its navigation, so it is the page published as the home.
+  if (tail === undefined || tail === '') {
+    return pages.filter((page) => {
+      const slug = page.slug?.replace(/^\/+|\/+$/g, '').toLowerCase();
+      if (slug !== undefined) return slug === '' || HOME.has(slug);
+      return !page.path.includes('/') && HOME.has(page.path.replace(/\.[^.]+$/, '').toLowerCase());
+    });
+  }
 
   return pages.filter((page) => {
     if (page.links.some((link) => link.href === address || link.href.endsWith(address))) return true;

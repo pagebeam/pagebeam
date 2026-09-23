@@ -180,3 +180,21 @@ test('where nothing ties a page to a screen, everything written is read', () => 
     'no evidence to scope by is not a reason to report everything',
   );
 });
+
+test('the home screen is documented by the home page, even when other screens have pages', () => {
+  const snapshot: Snapshot = {
+    app: 'dashboard', rev: null, source: 'parsed', whole: true, covered: true, unparsed: [],
+    labels: [
+      ...['Save Account', 'Delete Account', 'Invite Member'].map((text) => ({ text, kind: 'button', file: 'pages/index.vue' })),
+      ...['Start Your Plan', 'Cancel Plan', 'Change Card'].map((text) => ({ text, kind: 'button', file: 'pages/billing.vue' })),
+    ] as never,
+    envKeys: [],
+    files: [
+      { path: 'pages/index.vue', text: '<template><div /></template>' },
+      { path: 'pages/billing.vue', text: '<template><div /></template>' },
+    ],
+  };
+  const home = about('index.md', '/getting-started', 'Save Account. Delete Account. Invite Member.');
+  const billing = about('billing.md', '/billing', 'Press Start Your Plan, Cancel Plan and Change Card.');
+  assert.deepEqual(checkUndocumented([home, billing], [snapshot], null), []);
+});
