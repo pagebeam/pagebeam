@@ -57,13 +57,21 @@ function resolve(from: string, specifier: string, have: Set<string>): string | n
   return null;
 }
 
-// Each framework decides which files are routes and what their addresses are.
-// Guessing from a directory name made `app/layout.tsx` a route and put
-// `page` into every Next.js address, so each convention gets its own reading.
-interface Route {
-  address: string;
-  // Files that wrap this route: a Next.js layout or template, a SvelteKit layout.
-  wrappers: (have: Set<string>) => string[];
+// Each framework decides which files are routes, what their addresses are and
+// what wraps them. The conventions in use are worked out once per application
+// from its whole file list, so a file never changes classification between
+// one step and the next.
+export interface ScreenRoute {
+  addresses: string[];
+  // Files rendered around this route: layouts, templates, parent routes.
+  wrappers: string[];
+}
+
+export interface RouteModel {
+  routeOf(file: string): ScreenRoute | null;
+  // False where routes come from configuration pagebeam cannot evaluate.
+  complete: boolean;
+  reason?: string;
 }
 
 const NEXT_APP_PAGE = /^(?:(.*)\/)?app\/(?:(.*)\/)?page\.(?:[jt]sx?|mdx)$/;
@@ -72,6 +80,8 @@ const SVELTEKIT_PAGE = /^(?:(.*)\/)?routes\/(?:(.*)\/)?\+page\.svelte$/;
 const REMIX_ROUTE = /^(?:(.*)\/)?app\/routes\/([^/]+?)(?:\/route)?\.[jt]sx?$/;
 const PAGES = /^(?:(.*)\/)?pages\/(.+)\.(?:vue|astro|mdx?|[jt]sx?)$/;
 const FOLDERS = /^(?:(.*)\/)?(?:routes|views|screens)\/(.+)\.(?:vue|svelte|astro|[jt]sx)$/;
+const REMIX_CONFIG = /(^|\/)(remix|vite)\.config\.[cm]?[jt]s$/;
+const CODE = ['tsx', 'jsx', 'ts', 'js'];
 
 // `[id]` is a parameter, `[...slug]` catches the rest, `[[...slug]]` may be
 // empty. A group `(name)` or a slot `@name` is not part of the address.
@@ -84,82 +94,116 @@ function segment(part: string): string | null {
   return part.replace(/\[([^\]]+)\]/g, ':$1');
 }
 
-function addressFrom(parts: string[]): string {
-  const kept = parts.map(segment).filter((p): p is string => p !== null && p !== '');
+function addressFrom(parts: (string | null)[]): string {
+  const kept = parts.filter((p): p is string => p !== null && p !== '');
   return `/${kept.join('/')}`;
+}
+
+function join(...parts: (string | undefined)[]): string {
+  return parts.filter((p) => p !== undefined && p !== '').join('/');
 }
 
 function ancestors(prefix: string, dirs: string[], names: string[], have: Set<string>): string[] {
   const found: string[] = [];
   for (let depth = 0; depth <= dirs.length; depth++) {
-    const at = [prefix, ...dirs.slice(0, depth)].filter((p) => p !== '').join('/');
+    const at = join(prefix, ...dirs.slice(0, depth));
     for (const name of names) {
-      const file = at === '' ? name : `${at}/${name}`;
+      const file = join(at, name);
       if (have.has(file)) found.push(file);
     }
   }
   return found;
 }
 
-const NEXT_WRAPPERS = ['layout', 'template'].flatMap((n) => ['tsx', 'jsx', 'ts', 'js'].map((e) => `${n}.${e}`));
+const NEXT_WRAPPERS = ['layout', 'template'].flatMap((n) => CODE.map((e) => `${n}.${e}`));
 
-// `have` is every file in the application, when known. It tells SvelteKit,
-// where only `+page.svelte` is a route, from Sapper, where any file under
-// `routes/` is one.
-export function routeOf(file: string, have?: Set<string>): Route | null {
-  const nextPage = file.match(NEXT_APP_PAGE);
-  if (nextPage && !file.includes('/routes/')) {
-    const dirs = (nextPage[2] ?? '').split('/').filter((p) => p !== '');
-    if (dirs.some((d) => d.startsWith('_'))) return null;
-    const appDir = [nextPage[1], 'app'].filter((p) => p !== undefined && p !== '').join('/');
-    return { address: addressFrom(dirs), wrappers: (have) => ancestors(appDir, dirs, NEXT_WRAPPERS, have) };
+// Remix flat routes: dots separate segments, `$id` is a parameter, `$` the
+// rest, `_index` the parent's own page, a leading `_` a layout without an
+// address, a trailing `_` a segment that does not nest, `(x)` optional.
+function remixRoute(prefix: string, id: string, have: Set<string>): ScreenRoute {
+  const parts = id.split('.');
+  let addresses: string[][] = [[]];
+  for (const part of parts) {
+    if (part === '_index' || (part.startsWith('_') && part !== '_')) continue;
+    const optional = part.match(/^\((.+)\)$/);
+    const bare = (optional ? optional[1]! : part).replace(/_$/, '');
+    const piece = bare === '$' ? ':*' : bare.startsWith('$') ? `:${bare.slice(1)}` : bare;
+    addresses = optional
+      ? addresses.flatMap((a) => [a, [...a, piece]])
+      : addresses.map((a) => [...a, piece]);
   }
-
-  const svelte = file.match(SVELTEKIT_PAGE);
-  if (svelte) {
-    const dirs = (svelte[2] ?? '').split('/').filter((p) => p !== '');
-    const routesDir = [svelte[1], 'routes'].filter((p) => p !== undefined && p !== '').join('/');
-    return { address: addressFrom(dirs), wrappers: (have) => ancestors(routesDir, dirs, ['+layout.svelte'], have) };
-  }
-
-  const remix = file.match(REMIX_ROUTE);
-  if (remix) {
-    const name = remix[2] ?? '';
-    const parts = name
-      .split('.')
-      .filter((p) => p !== '_index' && !(p.startsWith('_') && p !== '_'))
-      .map((p) => (p === '$' ? ':*' : p.startsWith('$') ? `:${p.slice(1)}` : p.replace(/_$/, '')));
-    return { address: addressFrom(parts), wrappers: () => [] };
-  }
-
-  // Other files in a Next.js app directory, such as layouts, loading states
-  // and colocated components, are not places a reader can go.
-  if (NEXT_APP_FILE.test(file) && !file.includes('/routes/') && !/^(?:.*\/)?app\/(?:pages|views|screens)\//.test(file)) {
-    return null;
-  }
-
-  if (file.endsWith('.svelte') && have !== undefined && [...have].some((f) => f.endsWith('/+page.svelte'))) {
-    return null;
-  }
-
-  const pages = file.match(PAGES) ?? file.match(FOLDERS);
-  if (pages) {
-    const parts = (pages[2] ?? '').split('/');
-    if (parts[0] === 'api' || parts.some((p) => p.startsWith('_') || p.startsWith('+'))) return null;
-    if (parts[parts.length - 1] === 'index') parts.pop();
-    return { address: addressFrom(parts), wrappers: () => [] };
-  }
-  return null;
+  const routesDir = join(prefix, 'app', 'routes');
+  const moduleOf = (name: string): string | undefined =>
+    CODE.flatMap((e) => [`${routesDir}/${name}.${e}`, `${routesDir}/${name}/route.${e}`]).find((f) => have.has(f));
+  const parents = parts
+    .slice(0, -1)
+    .map((_, i) => moduleOf(parts.slice(0, i + 1).join('.')))
+    .filter((f): f is string => f !== undefined);
+  const root = CODE.map((e) => join(prefix, 'app', `root.${e}`)).find((f) => have.has(f));
+  return {
+    addresses: [...new Set(addresses.map((a) => addressFrom(a)))],
+    wrappers: [...(root === undefined ? [] : [root]), ...parents],
+  };
 }
 
-export function isRoute(file: string): boolean {
-  return routeOf(file) !== null;
-}
+export function routeModel(files: Iterable<string | { path: string; text?: string }>): RouteModel {
+  const list = [...files].map((f) => (typeof f === 'string' ? { path: f, text: undefined } : f));
+  const have = new Set(list.map((f) => f.path));
+  const svelteKit = list.some((f) => f.path.endsWith('+page.svelte'));
+  const configured = list.find(
+    (f) => REMIX_CONFIG.test(f.path) && /\broutes\s*[(:]|flatRoutes|defineRoutes/.test(f.text ?? ''),
+  );
 
-// What a reader is shown when they arrive: `pages/dashboard/systems.vue`
-// becomes `/dashboard/systems`, and an index becomes the thing it indexes.
-export function addressOf(file: string): string {
-  return routeOf(file)?.address ?? '/';
+  const classify = (file: string): ScreenRoute | null => {
+    const nextPage = file.match(NEXT_APP_PAGE);
+    if (nextPage && !file.includes('/routes/')) {
+      const dirs = (nextPage[2] ?? '').split('/').filter((p) => p !== '');
+      if (dirs.some((d) => d.startsWith('_'))) return null;
+      const appDir = join(nextPage[1], 'app');
+      return { addresses: [addressFrom(dirs.map(segment))], wrappers: ancestors(appDir, dirs, NEXT_WRAPPERS, have) };
+    }
+
+    const kit = file.match(SVELTEKIT_PAGE);
+    if (kit) {
+      const dirs = (kit[2] ?? '').split('/').filter((p) => p !== '');
+      const routesDir = join(kit[1], 'routes');
+      return { addresses: [addressFrom(dirs.map(segment))], wrappers: ancestors(routesDir, dirs, ['+layout.svelte'], have) };
+    }
+
+    const remix = file.match(REMIX_ROUTE);
+    if (remix) return remixRoute(remix[1] ?? '', remix[2] ?? '', have);
+
+    // Other files in a Next.js app directory, such as layouts, loading states
+    // and colocated components, are not places a reader can go.
+    if (NEXT_APP_FILE.test(file) && !file.includes('/routes/') && !/^(?:.*\/)?app\/(?:pages|views|screens)\//.test(file)) {
+      return null;
+    }
+
+    // In SvelteKit only `+page.svelte` is a route; any other `.svelte` file
+    // under `routes/` is a component. In Sapper every one was a route.
+    if (svelteKit && file.endsWith('.svelte')) return null;
+
+    const pages = file.match(PAGES) ?? file.match(FOLDERS);
+    if (pages) {
+      const parts = (pages[2] ?? '').split('/');
+      if (parts[0] === 'api' || parts.some((p) => p.startsWith('_') || p.startsWith('+'))) return null;
+      if (parts[parts.length - 1] === 'index') parts.pop();
+      return { addresses: [addressFrom(parts.map(segment))], wrappers: [] };
+    }
+    return null;
+  };
+
+  const known = new Map<string, ScreenRoute | null>();
+  return {
+    routeOf(file) {
+      if (!known.has(file)) known.set(file, classify(file));
+      return known.get(file)!;
+    },
+    complete: configured === undefined,
+    ...(configured === undefined
+      ? {}
+      : { reason: `routes are configured in ${configured.path}, which pagebeam does not evaluate` }),
+  };
 }
 
 export interface Screens {
@@ -168,11 +212,14 @@ export interface Screens {
   reaches: Map<string, Set<string>>;
   // Files no route reaches. Nobody meets them, so nothing is owed for them.
   unreached: Set<string>;
+  // Why the routes above may not be all of them, where that is known.
+  incomplete?: string;
 }
 
 export function screensOf(files: { path: string; text: string }[]): Screens {
   const have = new Set(files.map((f) => f.path));
   const text = new Map(files.map((f) => [f.path, f.text]));
+  const model = routeModel(files);
 
   // A component resolved by its name, wherever a framework keeps them. The
   // name is built the way frameworks build it: a component in a directory
@@ -183,7 +230,7 @@ export function screensOf(files: { path: string; text: string }[]): Screens {
     if (name !== '' && !byName.has(name)) byName.set(name, at);
   };
   for (const file of files) {
-    if (!COMPONENT.test(file.path) || isRoute(file.path)) continue;
+    if (!COMPONENT.test(file.path) || model.routeOf(file.path) !== null) continue;
     const parts = withoutExtension(file.path).replace(SIDE, '').split('/');
     const own = parts[parts.length - 1] ?? '';
     remember(own, file.path);
@@ -221,14 +268,14 @@ export function screensOf(files: { path: string; text: string }[]): Screens {
   const reached = new Set<string>();
 
   for (const file of files) {
-    const route = routeOf(file.path, have);
+    const route = model.routeOf(file.path);
     if (route === null) continue;
     const worn = (text.get(file.path) ?? '').match(WEARS)?.[1] ?? 'default';
     const wrapping = layouts.get(worn);
     const seen = new Set<string>([
       file.path,
       ...(wrapping === undefined ? [] : [wrapping]),
-      ...route.wrappers(have),
+      ...route.wrappers,
     ]);
     const queue = [...seen];
     while (queue.length > 0) {
@@ -239,12 +286,15 @@ export function screensOf(files: { path: string; text: string }[]): Screens {
         queue.push(next);
       }
     }
-    reaches.set(route.address, new Set([...(reaches.get(route.address) ?? []), ...seen]));
+    for (const address of route.addresses) {
+      reaches.set(address, new Set([...(reaches.get(address) ?? []), ...seen]));
+    }
     for (const one of seen) reached.add(one);
   }
 
   return {
     reaches,
     unreached: new Set(files.map((f) => f.path).filter((f) => !reached.has(f))),
+    ...(model.reason === undefined ? {} : { incomplete: model.reason }),
   };
 }

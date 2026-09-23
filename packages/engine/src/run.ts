@@ -9,7 +9,7 @@ import {
   type PagebeamConfig,
   type Snapshot,
 } from '@pagebeam/core';
-import { history, snapshot } from '@pagebeam/app';
+import { history, screensOf, snapshot } from '@pagebeam/app';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
@@ -271,6 +271,10 @@ async function runUndocumented(
   if (evidence === null || evidence.now.every((s) => s.labels.length === 0)) {
     skipped.push('undocumented: no application has controls that could be read');
     return [];
+  }
+  for (const snapshot of evidence.now) {
+    const why = screensOf(snapshot.files).incomplete;
+    if (why !== undefined) skipped.push(`undocumented: ${snapshot.app} may have screens it did not find: ${why}`);
   }
   return undocumented.checkUndocumented(pages, evidence.now, evidence.before);
 }

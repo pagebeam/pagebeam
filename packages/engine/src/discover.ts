@@ -2,7 +2,7 @@ import { stringify } from 'yaml';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { glob } from 'tinyglobby';
-import { isRoute } from '@pagebeam/app';
+import { routeModel } from '@pagebeam/app';
 
 // Working out what a repository holds, so somebody can try this without first
 // writing a configuration for a tool they have not seen work.
@@ -96,7 +96,8 @@ async function beside(cwd: string): Promise<Found['apps']> {
       dot: false,
     }).catch(() => []);
 
-    const reachable = routes.filter((f) => isRoute(f));
+    const model = routeModel(routes);
+    const reachable = routes.filter((f) => model.routeOf(f) !== null);
     if (reachable.length === 0) continue;
     found.push({
       name: entry.name,
@@ -139,6 +140,8 @@ export async function discover(cwd: string): Promise<Found> {
 
   // Somewhere with routes is an application: a reader can move around in it.
   // A directory of components with nowhere to go is a library.
+  const model = routeModel(parts);
+  const isRoute = (file: string): boolean => model.routeOf(file) !== null;
   const grouped = new Map<string, { routes: number; parts: number }>();
   for (const file of parts) {
     const at = isRoute(file) ? appRootOf(file) : (path.posix.dirname(file).split('/')[0] ?? '.');
@@ -196,7 +199,8 @@ export function configFor(found: Found): string {
 
 export async function looksLikeAnApp(cwd: string): Promise<boolean> {
   const found = await glob(PARTS, { cwd, ignore: IGNORE, dot: false });
-  return found.some((f) => isRoute(f));
+  const model = routeModel(found);
+  return found.some((f) => model.routeOf(f) !== null);
 }
 
 export async function readIfPresent(file: string): Promise<string | null> {

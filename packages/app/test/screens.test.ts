@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addressOf, isRoute, routeOf, screensOf } from '../dist/screens.js';
+import { routeModel, screensOf } from '../dist/screens.js';
+
+const isRoute = (file: string, all: string[] = [file]): boolean => routeModel(all).routeOf(file) !== null;
+const addressOf = (file: string, all: string[] = [file]): string => routeModel(all).routeOf(file)?.addresses[0] ?? '(none)';
 
 const of = (files: Record<string, string>) =>
   screensOf(Object.entries(files).map(([path, text]) => ({ path, text })));
@@ -115,8 +118,8 @@ test('Next.js Pages Router, SvelteKit and Remix read by their own rules', () => 
   assert.equal(addressOf('src/pages/about.vue'), '/about');
   assert.equal(addressOf('src/routes/(auth)/login/+page.svelte'), '/login');
   assert.ok(!isRoute('src/routes/about/+layout.svelte'));
-  const kit = new Set(['src/routes/about/+page.svelte', 'src/routes/about/Card.svelte']);
-  assert.equal(routeOf('src/routes/about/Card.svelte', kit), null, 'a component beside a SvelteKit page');
+  const kit = ['src/routes/about/+page.svelte', 'src/routes/about/Card.svelte'];
+  assert.ok(!isRoute('src/routes/about/Card.svelte', kit), 'a component beside a SvelteKit page');
   assert.equal(addressOf('app/routes/_index.tsx'), '/');
   assert.equal(addressOf('app/routes/users.$id.tsx'), '/users/:id');
 });
@@ -133,4 +136,39 @@ test('a Next.js page wears every layout above it, and no other', () => {
   assert.ok(reaches.get('/settings')?.has('app/layout.tsx'));
   assert.ok(!reaches.get('/settings')?.has('app/dashboard/layout.tsx'));
   assert.ok(!reaches.has('/layout') && !reaches.has('/dashboard/page'));
+});
+
+test('a SvelteKit component under routes is part of the page that uses it', () => {
+  const { reaches } = screensOf([
+    { path: 'src/routes/+page.svelte', text: '<Card />' },
+    { path: 'src/routes/widgets/Card.svelte', text: '<button>Save Account</button>' },
+  ]);
+  assert.deepEqual([...(reaches.get('/') ?? [])].sort(), ['src/routes/+page.svelte', 'src/routes/widgets/Card.svelte']);
+  assert.ok(!reaches.has('/widgets/Card'));
+});
+
+test('a Remix route is wrapped by the root and every parent route', () => {
+  const { reaches } = screensOf([
+    { path: 'app/root.tsx', text: '<nav>Home</nav>' },
+    { path: 'app/routes/concerts.tsx', text: '<Outlet />' },
+    { path: 'app/routes/concerts.$city.tsx', text: '<p>City</p>' },
+  ]);
+  assert.deepEqual([...(reaches.get('/concerts/:city') ?? [])].sort(), [
+    'app/root.tsx',
+    'app/routes/concerts.$city.tsx',
+    'app/routes/concerts.tsx',
+  ]);
+});
+
+test('a Remix optional segment is reached both with and without it', () => {
+  const route = routeModel(['app/routes/($lang).categories.tsx']).routeOf('app/routes/($lang).categories.tsx');
+  assert.deepEqual(route?.addresses.sort(), ['/:lang/categories', '/categories']);
+});
+
+test('routes configured in code make the route list incomplete, and say so', () => {
+  const { incomplete } = screensOf([
+    { path: 'vite.config.ts', text: 'remix({ routes(defineRoutes) { return defineRoutes(() => {}) } })' },
+    { path: 'app/routes/_index.tsx', text: '<p>Home</p>' },
+  ]);
+  assert.match(incomplete ?? '', /vite\.config\.ts/);
 });
