@@ -153,17 +153,28 @@ async function runLinks(
   return outcome.findings;
 }
 
-// Broken links in the documentation under `cwd`, by the link check itself,
-// against routes read from the source. For comparing a proposed tree with the
-// one it came from: neither has a build of the proposal, so both are judged
-// the same way.
-export async function brokenLinks(cwd: string, config: PagebeamConfig): Promise<Finding[]> {
+// Broken links in the documentation, by the link check itself, against routes
+// read from the source. For comparing a proposed tree with the one it came
+// from: neither has a build of the proposal, so both are judged the same way.
+// `docsRoot` reads the pages from somewhere else, such as a checkout holding
+// the proposal; other paths in the config still resolve against `cwd`.
+export async function brokenLinks(
+  cwd: string,
+  config: PagebeamConfig,
+  docsRoot = path.resolve(cwd, config.docs.root),
+): Promise<Finding[]> {
   if (config.checks.links === false) return [];
-  const docsRoot = path.resolve(cwd, config.docs.root);
   const files = await discover(docsRoot, config.docs.include, config.docs.exclude);
   const pages = await parseAll(docsRoot, files);
-  const local = { ...config, checks: { ...config.checks, links: { ...config.checks.links, external: false } } };
-  return runLinks(pages, cwd, local, docsRoot, [], true, { now: null, then: null });
+  return runLinks(pages, cwd, offline(config), docsRoot, [], true, { now: null, then: null });
+}
+
+// The same config without external link requests. A draft changes one page;
+// asking every external address again for each draft would repeat the same
+// requests and learn nothing new.
+function offline(config: PagebeamConfig): PagebeamConfig {
+  if (config.checks.links === false) return config;
+  return { ...config, checks: { ...config.checks, links: { ...config.checks.links, external: false } } };
 }
 
 export interface Evidence {
@@ -704,7 +715,7 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
         skipped,
         docsRoot,
         async (candidate) =>
-          (await checkAll(candidate, cwd, config, docsRoot, evidence, untouched, false, { now: null, then: null }))
+          (await checkAll(candidate, cwd, offline(config), docsRoot, evidence, untouched, false, { now: null, then: null }))
             .findings,
         new Set(pass.findings.map((f) => f.id)),
       )

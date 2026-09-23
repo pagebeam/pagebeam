@@ -100,9 +100,7 @@ export async function propose(
       return `${unparsed[0]} could not be read back as a page`;
     }
 
-    const made = (await brokenLinks(path.join(dir, path.relative(repo, cwd)), config)).find(
-      (f) => !brokenBefore.has(f.id),
-    );
+    const made = (await brokenLinks(cwd, config, root)).find((f) => !brokenBefore.has(f.id));
     if (made !== undefined) {
       return `${made.doc.path} would link to ${made.title.replace(/ does not resolve$/, '')}, which nothing publishes`;
     }

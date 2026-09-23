@@ -106,6 +106,56 @@ test('valid links with a fragment, a query or an index page do not block a propo
   }
 });
 
+// The README's layout for docs kept apart from the product: the config sits in
+// the product repository and the pull request goes to the docs repository.
+test('a proposal reaches a docs repository kept apart from the product', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-apart-'));
+  const origin = path.join(root, 'docs-origin.git');
+  const docs = path.join(root, 'docs');
+  const product = path.join(root, 'product');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+  for (const dir of [docs, product]) execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+  execFileSync('git', ['-C', docs, 'remote', 'add', 'origin', origin]);
+  const commit = (dir: string, m: string) => {
+    execFileSync('git', ['-C', dir, 'add', '-A']);
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', m]);
+  };
+
+  await mkdir(path.join(docs, 'content'), { recursive: true });
+  await writeFile(path.join(docs, 'content/index.md'), '# Home\n\nRead the [guide](/guide#start).\n');
+  await writeFile(path.join(docs, 'content/guide.md'), '# Guide\n\nOpen **Create a report** to start.\n');
+  commit(docs, 'docs');
+  execFileSync('git', ['-C', docs, 'push', '-q', 'origin', 'main']);
+
+  await mkdir(path.join(product, 'app'), { recursive: true });
+  await writeFile(
+    path.join(product, 'pagebeam.config.yaml'),
+    'docs:\n  root: ../docs/content\nhistory:\n  sinceDays: 3650\n' +
+      'checks:\n  strings:\n    minConfidence: 0.3\n' +
+      "apps:\n  - name: dashboard\n    path: app\n    include: ['**/*.vue']\n" +
+      'propose:\n  repo: ../docs\n',
+  );
+  await writeFile(path.join(product, 'app/ReportForm.vue'), '<template><button>Create a report</button></template>\n');
+  commit(product, 'first');
+  await writeFile(
+    path.join(product, 'app/ReportForm.vue'),
+    '<template><button>Create a report summary</button></template>\n',
+  );
+  commit(product, 'rename');
+
+  const api = await forge();
+  try {
+    const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', product, '--publish'], {
+      env: { ...process.env, GITHUB_REPOSITORY: 'acme/docs', GITHUB_TOKEN: 'x', GITHUB_API_URL: api.url },
+    });
+    assert.match(stdout, /create/);
+    const proposed = execFileSync('git', ['-C', origin, 'show', 'pagebeam/drift:content/guide.md']).toString();
+    assert.match(proposed, /Create a report summary/);
+  } finally {
+    await api.stop();
+  }
+});
+
 // A control removed from the product with nothing to rename it to: only a
 // model can say what the page should say instead.
 const REMOVED = {
