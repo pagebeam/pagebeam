@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import {
   Ignores,
   bestSource,
+  type FileChange,
   type Finding,
   type Grade,
   type PagebeamConfig,
@@ -29,6 +30,10 @@ export interface RunResult {
   findings: Finding[];
   ran: string[];
   skipped: string[];
+  // Every check run again on the pages under another root, such as a checkout
+  // holding a proposal, with the evidence this run gathered. Present only on a
+  // run that got far enough to check anything.
+  recheckAt?: (docsRoot: string) => Promise<Finding[]>;
 }
 
 function rootOf(cwd: string, app: { path?: string | undefined }): string | null {
@@ -151,22 +156,6 @@ async function runLinks(
     );
   }
   return outcome.findings;
-}
-
-// Broken links in the documentation, by the link check itself, against routes
-// read from the source. For comparing a proposed tree with the one it came
-// from: neither has a build of the proposal, so both are judged the same way.
-// `docsRoot` reads the pages from somewhere else, such as a checkout holding
-// the proposal; other paths in the config still resolve against `cwd`.
-export async function brokenLinks(
-  cwd: string,
-  config: PagebeamConfig,
-  docsRoot = path.resolve(cwd, config.docs.root),
-): Promise<Finding[]> {
-  if (config.checks.links === false) return [];
-  const files = await discover(docsRoot, config.docs.include, config.docs.exclude);
-  const pages = await parseAll(docsRoot, files);
-  return runLinks(pages, cwd, offline(config), docsRoot, [], true, { now: null, then: null });
 }
 
 // The same config without external link requests. A draft changes one page;
@@ -545,29 +534,91 @@ async function mend(
     }),
   );
 
-  return Promise.all(
-    findings.map(async (finding) => {
-      if (finding.fix !== undefined || !asking(finding.check)) return finding;
+  // A model rewrites a whole page. Two drafts of one page, each made from the
+  // page as it was, would each undo the other when both are written, and a
+  // draft made without the exact edits already found for that page would undo
+  // those. So drafts for one page are made one after another, each from the
+  // page with every change before it in place, and different pages in
+  // parallel. The page's last change then holds all of them.
+  const current = new Map<string, string>();
+  const baseOf = (at: string): string | undefined => {
+    const now = current.get(at);
+    if (now !== undefined) return now;
+    const raw = sourceOf.get(at);
+    if (raw === undefined) return undefined;
+    const exact = findings.filter((f) => f.fix !== undefined && f.fix.author !== 'model');
+    const text = withChanges(raw, exact.flatMap((f) => f.fix!.changes.filter((c) => c.path === at)));
+    current.set(at, text);
+    return text;
+  };
+  const pagesWith = (at: string, text: string): DocPage[] =>
+    context.pages.map((p) => (p.path === at ? { ...p, raw: text } : p));
 
-      const page = sourceOf.get(finding.doc.path);
-      if (page !== undefined) {
+  const answers = new Map<Finding, Finding>();
+  const queues = new Map<string, (() => Promise<void>)[]>();
+  const queue = (at: string, job: () => Promise<void>) => queues.set(at, [...(queues.get(at) ?? []), job]);
+
+  for (const finding of findings) {
+    if (finding.fix !== undefined || !asking(finding.check)) continue;
+
+    if (sourceOf.has(finding.doc.path)) {
+      const at = finding.doc.path;
+      queue(at, async () => {
+        const page = baseOf(at)!;
         const drafted = await draft(router, finding, page, skills);
-        return drafted === null ? finding : await accepted(finding, drafted, page, told, context);
-      }
+        if (drafted === null) return;
+        const kept = await accepted(finding, drafted, page, told, { ...context, pages: pagesWith(at, page) });
+        if (kept === finding) return;
+        answers.set(finding, kept);
+        const text = kept.fix?.changes[0]?.contents;
+        if (typeof text === 'string') current.set(at, text);
+      });
+      continue;
+    }
 
-      // A screen nobody documented names no page, because the page is what is
-      // missing. Where one would sit is worked out from the area it covers.
-      if (finding.check !== 'undocumented') return finding;
-      const target = placeFor(finding, pages);
-      if (target === null) return finding;
+    // A screen nobody documented names no page, because the page is what is
+    // missing. Where one would sit is worked out from the area it covers.
+    if (finding.check !== 'undocumented') continue;
+    const target = placeFor(finding, pages);
+    if (target === null) continue;
+    queue(target.path, async () => {
+      const existing = current.get(target.path) ?? target.existing ?? null;
       const source = settings.sendSource ? readingFor(finding, snapshots, told) : [];
-      const withSource: Target = source.length === 0 ? target : { ...target, source };
+      const withSource: Target = {
+        ...target,
+        ...(existing === null ? {} : { existing }),
+        ...(source.length === 0 ? {} : { source }),
+      };
       const written = await compose(router, finding, withSource, skills);
-      return written === null
-        ? finding
-        : await accepted(finding, written, target.existing ?? null, told, context);
+      if (written === null) return;
+      const kept = await accepted(finding, written, existing, told, context);
+      if (kept === finding) return;
+      answers.set(finding, kept);
+      const text = kept.fix?.changes[0]?.contents;
+      if (typeof text === 'string') current.set(target.path, text);
+    });
+  }
+
+  await Promise.all(
+    [...queues.values()].map(async (jobs) => {
+      for (const job of jobs) await job();
     }),
   );
+  return findings.map((finding) => answers.get(finding) ?? finding);
+}
+
+// A page's text with exact edits applied: spans from the last backwards, so an
+// edit never moves the one after it, and a whole replacement taken as it is.
+function withChanges(text: string, changes: FileChange[]): string {
+  const whole = changes
+    .map((c) => (c.splice === undefined ? c.contents : undefined))
+    .filter((t): t is string => typeof t === 'string');
+  if (whole.length > 0) return whole[whole.length - 1]!;
+  let out = text;
+  for (const c of [...changes].filter((c) => c.splice !== undefined).sort((a, b) => b.splice!.start - a.splice!.start)) {
+    out = out.slice(0, c.splice!.start) + c.splice!.text + out.slice(c.splice!.end);
+  }
+  return out;
 }
 
 // Where a page covering this area would go, and something to model it on. The
@@ -754,5 +805,13 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
     findings: mended,
     ran: ran.filter((r) => !skippedNames.has(r)),
     skipped,
+    recheckAt: async (root) => {
+      const found = await parseAll(root, await discover(root, config.docs.include, config.docs.exclude));
+      const again = await checkAll(found, cwd, offline(config), root, evidence, untouched, false, {
+        now: null,
+        then: null,
+      });
+      return again.findings.filter((f) => !ignores.silences(f));
+    },
   };
 }

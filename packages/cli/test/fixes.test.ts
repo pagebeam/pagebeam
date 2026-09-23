@@ -236,6 +236,80 @@ test('a draft that keeps a dead external link is not proposed', async () => {
   }
 });
 
+// A model that fixes only the control its request names, on the page it was
+// sent, the way a real one answers one finding at a time.
+async function oneAtATime(): Promise<{ url: string; stop: () => Promise<void> }> {
+  return serve(({ body }) => {
+    const asked = (JSON.parse(body) as { messages: { role: string; content: string }[] }).messages
+      .map((m) => m.content)
+      .join('\n');
+    const name = asked.match(/^Problem: "([^"]+)"/m)?.[1] ?? '';
+    const page = asked.slice(asked.indexOf('\n', asked.indexOf('Page (')) + 1);
+    return { choices: [{ message: { content: page.replace(`**${name}**`, '**Print**') } }] };
+  });
+}
+
+test('two drafts for one page both reach the proposal', async () => {
+  const llm = await oneAtATime();
+  const api = await forge();
+  try {
+    const { work, origin } = await repository(
+      {
+        'docs/ledger.md':
+          '# Ledger\n\nPress **Export ledger** to download every entry as a file.\n\nPress **Archive ledger** to move old entries out of sight.\n',
+        'app/Ledger.vue':
+          '<template><button>Export ledger</button><button>Archive ledger</button><button>Print</button></template>\n',
+        'pagebeam.config.yaml': `${CONFIG}model:\n  baseUrl: ${llm.url}\n  name: local\n`,
+      },
+      { 'app/Ledger.vue': '<template><button>Print</button></template>\n' },
+    );
+    const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', work, '--publish'], {
+      env: { ...process.env, GITHUB_REPOSITORY: 'acme/docs', GITHUB_TOKEN: 'x', GITHUB_API_URL: api.url },
+    });
+    assert.match(stdout, /create/);
+    const proposed = execFileSync('git', ['-C', origin, 'show', 'pagebeam/drift:docs/ledger.md']).toString();
+    assert.doesNotMatch(proposed, /Export ledger/);
+    assert.doesNotMatch(proposed, /Archive ledger/);
+  } finally {
+    await llm.stop();
+    await api.stop();
+  }
+});
+
+// A draft judged on its own page can still harm another: here it drops every
+// mention of controls that just arrived, which files a finding against their
+// screen rather than against this page. Only the finished tree shows that.
+test('a proposal that would leave the docs with a new finding is not published', async () => {
+  const llm = await model(
+    '# Ledger\n\nThe ledger lists every entry you have recorded, newest first, with its date and its amount.\n',
+  );
+  const api = await forge();
+  try {
+    const { work } = await repository(
+      {
+        'docs/ledger.md': '# Ledger\n\nPress **Export ledger** to download every entry as a file.\n',
+        'app/pages/ledger.vue': '<template><button>Export ledger</button></template>\n',
+        'pagebeam.config.yaml': `${CONFIG}model:\n  baseUrl: ${llm.url}\n  name: local\n`,
+      },
+      {
+        'docs/ledger.md':
+          '# Ledger\n\nPress **Export ledger** to download every entry as a file. ' +
+          'Use **Print entries**, **Refresh totals** and **Filter by month** to work with the list.\n',
+        'app/pages/ledger.vue':
+          '<template><button>Print entries</button><button>Refresh totals</button><button>Filter by month</button></template>\n',
+      },
+    );
+    const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', work, '--publish'], {
+      env: { ...process.env, GITHUB_REPOSITORY: 'acme/docs', GITHUB_TOKEN: 'x', GITHUB_API_URL: api.url },
+    });
+    assert.match(stdout, /would gain/);
+    assert.doesNotMatch(stdout, /create/);
+  } finally {
+    await llm.stop();
+    await api.stop();
+  }
+});
+
 test('a draft the checks no longer object to is proposed', async () => {
   const said = await proposing(
     '# Ledger\n\nPress **Print** to get every entry on paper, or save it as a file you can open.\n',

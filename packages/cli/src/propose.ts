@@ -1,6 +1,6 @@
 import path from 'node:path';
 import process from 'node:process';
-import { brokenLinks, loadConfig, type RunResult } from '@pagebeam/engine';
+import { loadConfig, type RunResult } from '@pagebeam/engine';
 import { discover as discoverPages, parseAll } from '@pagebeam/docs';
 import { github, slugOf, write, type Forge } from '@pagebeam/git';
 
@@ -81,28 +81,36 @@ export async function propose(
     return { said: `${host.missing} is needed to open a pull request.`, code: 2 };
   }
 
-  // Links broken before anything is proposed. A proposal may leave these as
-  // they were; it may not add one.
-  const brokenBefore = new Set((await brokenLinks(cwd, config)).map((f) => f.id));
+  // The pull request carries the final tree, so the final tree is what has to
+  // pass: every check, run once with every change in place. What it claims to
+  // fix must be gone, and nothing new may appear. The same checks read the
+  // documentation as it is first, so both sides are judged alike.
+  const recheck = result.recheckAt;
+  if (recheck === undefined) return { said: 'The run did not check anything, so nothing can be proposed.', code: 2 };
+  const before = new Set((await recheck(path.resolve(cwd, config.docs.root))).map((f) => f.id));
 
-  // What the documentation becomes once every change is in place, read by the
-  // same checks as the documentation it came from.
   const asItWouldBe = async (dir: string): Promise<string | null> => {
     const root = path.join(dir, from);
     const files = await discoverPages(root, config.docs.include, config.docs.exclude);
-    const after = await parseAll(root, files);
+    const pages = await parseAll(root, files);
 
     const unparsed = mendable
       .map((f) => f.fix!.changes[0]?.path)
       .filter((at): at is string => at !== undefined)
-      .filter((at) => !after.some((page) => path.join(from, page.path) === at));
+      .filter((at) => !pages.some((page) => path.join(from, page.path) === at));
     if (unparsed.length > 0) {
       return `${unparsed[0]} could not be read back as a page`;
     }
 
-    const made = (await brokenLinks(cwd, config, root)).find((f) => !brokenBefore.has(f.id));
-    if (made !== undefined) {
-      return `${made.doc.path} would link to ${made.title.replace(/ does not resolve$/, '')}, which nothing publishes`;
+    const after = await recheck(root);
+    const ids = new Set(after.map((f) => f.id));
+    const left = mendable.find((f) => ids.has(f.id));
+    if (left !== undefined) {
+      return `${left.doc.path} still has "${left.title}" once every change is in place`;
+    }
+    const added = after.find((f) => !before.has(f.id));
+    if (added !== undefined) {
+      return `${added.doc.path} would gain "${added.title}"`;
     }
     return null;
   };
