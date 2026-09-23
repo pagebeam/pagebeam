@@ -10,6 +10,7 @@ import { parseDirectives } from './directives.js';
 import type {
   DocCodeBlock,
   DocText,
+  DocOperation,
   DocCodeSpan,
   DocEmphasis,
   DocFormat,
@@ -79,7 +80,36 @@ function htmlLinks(raw: string, from = 0): DocLink[] {
   return out;
 }
 
-function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'texts' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
+// The text an HTML block shows a reader: no scripts, styles, comments or tags.
+function htmlText(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(script|style|template|noscript)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x2F;|&#47;/gi, '/')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
+const METHOD_ATTRS = new Set(['method', 'verb']);
+const PATH_ATTRS = new Set(['path', 'endpoint', 'route']);
+
+// An operation a component names in its attributes, and nothing else it says.
+function operationOf(attrs: Map<string, string>, line: number): DocOperation | null {
+  const method = [...METHOD_ATTRS].map((n) => attrs.get(n)).find((v) => v !== undefined);
+  const where = [...PATH_ATTRS].map((n) => attrs.get(n)).find((v) => v !== undefined);
+  if (method === undefined || where === undefined) return null;
+  if (!/^(get|post|put|patch|delete|head|options|trace)$/i.test(method) || !where.startsWith('/')) return null;
+  return { method: method.toUpperCase(), path: where, line };
+}
+
+function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'texts' | 'operations' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
   // Without these an .mdx file parses as Markdown, so its expressions and
   // components are read as prose and its imports become paragraphs.
   const mdx = format === 'mdx';
@@ -96,6 +126,7 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
   const emphasised: DocEmphasis[] = [];
   const prose: string[] = [];
   const texts: DocText[] = [];
+  const operations: DocOperation[] = [];
 
   visit(tree, (node: any) => {
     const start = node.position?.start;
@@ -135,6 +166,14 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
       prose.push(node.value);
       texts.push({ value: node.value, line: node.position?.start?.line ?? 1 });
     } else if (node.type === 'mdxJsxFlowElement' || node.type === 'mdxJsxTextElement') {
+      const named = new Map<string, string>();
+      for (const attribute of node.attributes ?? []) {
+        if (attribute?.type === 'mdxJsxAttribute' && typeof attribute.value === 'string') {
+          named.set(String(attribute.name ?? '').toLowerCase(), attribute.value);
+        }
+      }
+      const operation = operationOf(named, start?.line ?? 1);
+      if (operation !== null) operations.push(operation);
       for (const attribute of node.attributes ?? []) {
         if (attribute?.type !== 'mdxJsxAttribute') continue;
         const name = String(attribute.name ?? '').toLowerCase();
@@ -158,12 +197,17 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
       }
     } else if (node.type === 'html' && typeof node.value === 'string') {
       links.push(...htmlLinks(node.value, node.position?.start?.offset ?? 0));
+      const shown = htmlText(node.value);
+      if (shown !== '') {
+        prose.push(shown);
+        texts.push({ value: shown, line: start?.line ?? 1 });
+      }
     } else if (node.type === 'code' && typeof node.value === 'string') {
       codeBlocks.push({ value: node.value, lang: node.lang ?? null, line: start?.line ?? 1 });
     }
   });
 
-  return { prose: prose.join('\n'), texts, links, codeSpans, codeBlocks, emphasised };
+  return { prose: prose.join('\n'), texts, operations, links, codeSpans, codeBlocks, emphasised };
 }
 
 const SKIP = new Set(['script', 'style']);
@@ -180,7 +224,7 @@ const EMPHASIS_TAGS: Record<string, 'strong' | 'emphasis' | 'code'> = {
 // component and a fenced block are all distinguishable.
 async function parseAstro(
   raw: string,
-): Promise<Pick<DocPage, 'prose' | 'texts' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'>> {
+): Promise<Pick<DocPage, 'prose' | 'texts' | 'operations' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'>> {
   const { parse } = await import('@astrojs/compiler');
   const { ast } = await parse(raw, { position: true });
 
@@ -190,6 +234,7 @@ async function parseAstro(
   const emphasised: DocEmphasis[] = [];
   const prose: string[] = [];
   const texts: DocText[] = [];
+  const operations: DocOperation[] = [];
 
   const textOf = (node: any): string =>
     node?.type === 'text'
@@ -208,6 +253,16 @@ async function parseAstro(
     }
 
     if (node?.type === 'element' || node?.type === 'component') {
+      const named = new Map<string, string>();
+      for (const attribute of node.attributes ?? []) {
+        if (attribute?.kind === 'quoted' && typeof attribute.value === 'string') {
+          named.set(String(attribute.name ?? '').toLowerCase(), attribute.value);
+        }
+      }
+      if (node.type === 'component') {
+        const operation = operationOf(named, line);
+        if (operation !== null) operations.push(operation);
+      }
       for (const attribute of node.attributes ?? []) {
         if (attribute?.kind !== 'quoted' || typeof attribute.value !== 'string') continue;
         const key = String(attribute.name ?? '').toLowerCase();
@@ -257,7 +312,7 @@ async function parseAstro(
     if (child?.type === 'frontmatter') continue;
     walk(child, null);
   }
-  return { prose: prose.join(' '), texts, links, codeSpans, codeBlocks, emphasised };
+  return { prose: prose.join(' '), texts, operations, links, codeSpans, codeBlocks, emphasised };
 }
 
 export type Read = (relative: string) => Promise<string | null>;

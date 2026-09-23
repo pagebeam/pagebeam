@@ -144,3 +144,15 @@ test('frontmatter, comments and imports are not documentation', async () => {
   const found = citations(await parseAll('', ['a.mdx'], async () => text));
   assert.deepEqual(found.map((c) => `${c.method} ${c.path}:${c.line}`), ['GET /users:5']);
 });
+
+test('API operations shown in HTML or stated by a component are citations', async () => {
+  const pages = await parseAll('', ['a.md', 'b.mdx'], async (file) =>
+    file === 'a.md'
+      ? 'Intro\n\n<p>Use <code>GET /users</code> to list users.</p>\n\n<script>run("DELETE /x")</script>\n'
+      : '# Ref\n\n<ApiOperation method="GET" path="/users" />\n\n<Card title="POST /nope" />\n',
+  );
+  assert.deepEqual(
+    citations(pages).map((c) => `${c.page} ${c.method} ${c.path}:${c.line}`),
+    ['a.md GET /users:3', 'b.mdx GET /users:3'],
+  );
+});

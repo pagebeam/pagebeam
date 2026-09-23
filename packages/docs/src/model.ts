@@ -28,6 +28,14 @@ export interface DocText {
   line: number;
 }
 
+// An API operation a component states outright, such as
+// `<ApiOperation method="GET" path="/users" />`.
+export interface DocOperation {
+  method: string;
+  path: string;
+  line: number;
+}
+
 export interface DocCodeBlock {
   value: string;
   lang: string | null;
@@ -47,6 +55,7 @@ export interface DocPage {
   prose: string;
   // The prose again, one entry per text node, with the line each starts on.
   texts?: DocText[];
+  operations?: DocOperation[];
   links: DocLink[];
   codeSpans: DocCodeSpan[];
   codeBlocks: DocCodeBlock[];

@@ -81,8 +81,8 @@ export interface Citation {
   line?: number;
 }
 
-// Only what the parser kept as the page's text and code: not frontmatter,
-// comments or imports, which nobody reading the page sees.
+// Only what the parser kept as the page's text, code and stated operations:
+// not frontmatter, comments or imports, which nobody reading the page sees.
 export function citations(pages: DocPage[]): Citation[] {
   const out: Citation[] = [];
   const read = (page: DocPage, body: string, line: number | undefined): void => {
@@ -97,6 +97,7 @@ export function citations(pages: DocPage[]): Citation[] {
     else for (const t of page.texts) read(page, t.value, t.line);
     for (const b of page.codeBlocks) read(page, b.value, b.line + 1);
     for (const c of page.codeSpans) read(page, c.value, c.line);
+    for (const o of page.operations ?? []) out.push({ method: o.method, path: o.path, page: page.path, line: o.line });
   }
   return out;
 }
