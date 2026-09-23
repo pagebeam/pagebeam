@@ -1,0 +1,129 @@
+# Adding this to a repository should be one small file, not thirty lines
+# repeated with variations. What differs between repositories is which
+# documentation to read and whether to propose anything; everything else is
+# the same everywhere and belongs here.
+name: pagebeam
+description: Check documentation against the product it describes, and propose the corrections.
+
+inputs:
+  docs:
+    description: >-
+      The repository holding the documentation, as owner/name, when it is not
+      this one. Checked out beside this repository so a relative path in the
+      configuration reaches it.
+    required: false
+    default: ''
+  docs-ref:
+    description: Which branch of that repository to read. Its default branch when unsaid.
+    required: false
+    default: ''
+  docs-path:
+    description: Where to check it out, relative to this repository.
+    required: false
+    default: '../docs'
+  command:
+    description: check, to report, or fix, to propose.
+    required: false
+    default: check
+  profile:
+    description: observe, enforce, or enforce-all.
+    required: false
+    default: observe
+  publish:
+    description: >-
+      Whether fix opens or updates the pull request. Without it, fix says what
+      it would propose and writes nothing.
+    required: false
+    default: 'false'
+  cwd:
+    description: Where the configuration is, relative to this repository.
+    required: false
+    default: '.'
+  version:
+    description: Which release to run. A version, or latest.
+    required: false
+    default: latest
+  token:
+    description: >-
+      A token that can read the documentation repository and open a pull
+      request there. The job's own token reaches only this repository, so a
+      separate repository needs an installation token or a personal one.
+    required: false
+    default: ''
+  model-key:
+    description: >-
+      The name of the environment variable holding the provider's key, where
+      the configuration asks for one.
+    required: false
+    default: ''
+
+outputs:
+  said:
+    description: What the run reported.
+    value: ${{ steps.run.outputs.said }}
+
+runs:
+  using: composite
+  steps:
+    # History is evidence: what a page said before, and which files changed
+    # under it. Without it the checks that compare against an earlier revision
+    # have nothing to compare with and say so.
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Check out the documentation
+      if: inputs.docs != ''
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.docs }}
+        ref: ${{ inputs.docs-ref }}
+        path: ${{ inputs.docs-path }}
+        token: ${{ inputs.token }}
+        fetch-depth: 0
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Run
+      id: run
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        PAGEBEAM_COMMAND: ${{ inputs.command }}
+        PAGEBEAM_PROFILE: ${{ inputs.profile }}
+        PAGEBEAM_PUBLISH: ${{ inputs.publish }}
+        PAGEBEAM_CWD: ${{ inputs.cwd }}
+        PAGEBEAM_VERSION: ${{ inputs.version }}
+      run: |
+        set -uo pipefail
+
+        args=("$PAGEBEAM_COMMAND" --cwd "$PAGEBEAM_CWD")
+        if [ "$PAGEBEAM_COMMAND" = check ]; then
+          args+=(--profile "$PAGEBEAM_PROFILE")
+        elif [ "$PAGEBEAM_PUBLISH" = true ]; then
+          args+=(--publish)
+        fi
+
+        set +e
+        npx --yes "pagebeam@$PAGEBEAM_VERSION" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
+        code=${PIPESTATUS[0]}
+        set -e
+
+        {
+          echo "said<<PAGEBEAM"
+          cat "$RUNNER_TEMP/said.txt"
+          echo "PAGEBEAM"
+        } >> "$GITHUB_OUTPUT"
+
+        # What a reader of the run sees without opening the log.
+        {
+          echo "## pagebeam"
+          echo
+          echo '```'
+          cat "$RUNNER_TEMP/said.txt"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        exit "$code"

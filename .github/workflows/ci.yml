@@ -1,0 +1,77 @@
+# Tests ran only when somebody cut a release, so a commit that broke them sat
+# on the branch until the next one.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      # The same reading the release does: what would be published, installed
+      # somewhere with none of this repository on the path.
+      - name: Install what would be published, somewhere else, and use it
+        run: |
+          set -euo pipefail
+          tarball="$(cd packages/cli && npm pack --silent --pack-destination "$RUNNER_TEMP")"
+          mkdir -p "$RUNNER_TEMP/site/docs" "$RUNNER_TEMP/site/app/pages"
+          printf '# Guide\n\nPress **Save changes** to keep it.\n' > "$RUNNER_TEMP/site/docs/guide.md"
+          printf '<template><button>Save changes</button></template>\n' > "$RUNNER_TEMP/site/app/pages/index.vue"
+          mkdir -p "$RUNNER_TEMP/elsewhere" && cd "$RUNNER_TEMP/elsewhere"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --silent "$RUNNER_TEMP/$tarball"
+          pagebeam="$RUNNER_TEMP/elsewhere/node_modules/.bin/pagebeam"
+          "$pagebeam" init --cwd "$RUNNER_TEMP/site" > /dev/null
+          "$pagebeam" check --cwd "$RUNNER_TEMP/site" | tee "$RUNNER_TEMP/said.txt"
+          grep -q "pages checked against" "$RUNNER_TEMP/said.txt"
+
+  # The thing every other repository will use. Somewhere with none of this
+  # repository's files is the only place its assumptions show.
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make a repository that is not this one
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/product/pages" "$RUNNER_TEMP/product/.git"
+          printf '<template><button>Record transaction</button></template>\n' \
+            > "$RUNNER_TEMP/product/pages/ledger.vue"
+          mkdir -p "$RUNNER_TEMP/product/docs"
+          printf '# Ledger\n\nPress **Add transaction** to log a payment.\n' \
+            > "$RUNNER_TEMP/product/docs/ledger.md"
+          cat > "$RUNNER_TEMP/product/pagebeam.config.yaml" <<'YAML'
+          docs:
+            root: docs
+          apps:
+            - name: product
+              path: .
+          YAML
+
+      - uses: ./
+        id: pagebeam
+        continue-on-error: true
+        with:
+          cwd: ${{ runner.temp }}/product
+
+      - name: It ran, said something, and said where it ran
+        run: |
+          set -euo pipefail
+          said=${{ toJSON(steps.pagebeam.outputs.said) }}
+          printf '%s\n' "$said"
+          printf '%s\n' "$said" | grep -q "pages checked against product"

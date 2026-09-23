@@ -1,0 +1,20 @@
+# Copy into a product repository as .github/workflows/docs-drift.yml
+#
+# It runs when the product changes, which is when documentation starts being
+# wrong. Everything specific to this repository is in the three lines under
+# `with`.
+name: docs drift
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pagebeam/pagebeam@v1
+        with:
+          docs: your-org/docs
+          token: ${{ secrets.PAGEBEAM_TOKEN }}

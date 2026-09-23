@@ -1,0 +1,18 @@
+# Copy into a product repository to fail a pull request that breaks the
+# documentation.
+#
+# Only a finding the source of truth states outright, and only one this change
+# introduced, can fail it. Everything else is reported and passes.
+name: docs gate
+
+on: [pull_request]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pagebeam/pagebeam@v1
+        with:
+          docs: your-org/docs
+          profile: enforce
+          token: ${{ secrets.PAGEBEAM_TOKEN }}

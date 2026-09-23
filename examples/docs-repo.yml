@@ -1,0 +1,21 @@
+# Copy into a documentation repository as .github/workflows/drift.yml
+#
+# The products are checked out beside it by the configuration's relative
+# paths, so nothing is named here. Nightly, because a documentation repository
+# is not what changes when a product does.
+name: drift
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pagebeam/pagebeam@v1
+        with:
+          command: fix
+          publish: 'true'
+          token: ${{ secrets.PAGEBEAM_TOKEN }}
