@@ -75,3 +75,14 @@ test('a page that cannot be read is an error, not a page that says nothing', asy
     await chmod(path.join(root, 'locked'), 0o755);
   }
 });
+
+test('a method belongs to the path right after it, and no other', async () => {
+  const root = await site({ 'a.html': '<p>GET /health DELETE /users</p><p>GET /v1/users</p>' });
+  const { found } = await publishedPaths(root, [op('get', '/users'), op('delete', '/users'), op('get', '/health')]);
+  assert.deepEqual([...found].sort(), ['DELETE /users', 'GET /health']);
+});
+
+test('a method and a path in separate cells of a table row are one operation', async () => {
+  const root = await site({ 'a.html': '<table><tr><td>GET</td><td><code>/users</code></td></tr></table>' });
+  assert.equal((await publishedPaths(root, [op('get', '/users')])).found.size, 1);
+});

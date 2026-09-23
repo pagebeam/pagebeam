@@ -26,18 +26,17 @@ function unlessGone<T>(fallback: T): (error: unknown) => T {
   };
 }
 
-const PATH_CHAR = /[A-Za-z0-9_/{}.:-]/;
-const NEAR = 40;
+// An operation is a method followed by a whole path, so `GET /health DELETE
+// /users` shows GET /health and DELETE /users and nothing else, and `/v1/users`
+// is its own path.
+const OPERATION = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\s+(\/[A-Za-z0-9_/{}.:~-]*)/gi;
 
-// An operation is its method and its path together, so both must be shown
-// close to each other. `/users` inside `/users/{id}` is not `/users`.
-function shows(text: string, method: string, at: string): boolean {
-  const verb = new RegExp(`\\b${method}\\b`, 'i');
-  for (let i = text.indexOf(at); i !== -1; i = text.indexOf(at, i + 1)) {
-    if (PATH_CHAR.test(text.charAt(i + at.length))) continue;
-    if (verb.test(text.slice(Math.max(0, i - NEAR), i + at.length + NEAR))) return true;
+function operationsIn(text: string): Set<string> {
+  const shown = new Set<string>();
+  for (const m of text.matchAll(OPERATION)) {
+    shown.add(`${(m[1] as string).toUpperCase()} ${(m[2] as string).replace(/[.:]+$/, '')}`);
   }
-  return false;
+  return shown;
 }
 
 export async function publishedPaths(
@@ -67,10 +66,10 @@ export async function publishedPaths(
       read += 1;
       const html = await readFile(here, 'utf8').catch(unlessGone(null));
       if (html === null) continue;
-      const text = visibleText(html);
+      const shown = operationsIn(visibleText(html));
       for (const op of looking) {
         const key = `${op.method.toUpperCase()} ${op.path}`;
-        if (!found.has(key) && shows(text, op.method, op.path)) found.add(key);
+        if (shown.has(key)) found.add(key);
       }
     }
   };
