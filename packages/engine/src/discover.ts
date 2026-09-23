@@ -178,8 +178,7 @@ export async function discover(cwd: string): Promise<Found> {
   return { docs, apps };
 }
 
-// Names and paths come from the file system, so they go through the YAML
-// writer: a folder called `true`, `null` or `#docs` must stay a string.
+// A folder called `true`, `null` or `#docs` must stay a string in YAML.
 export function configFor(found: Found): string {
   const docs = stringify({ docs: { root: found.docs?.root ?? 'docs' } });
   if (found.apps.length === 0) {

@@ -16,8 +16,7 @@ export interface Published {
   complete: boolean;
 }
 
-// Only a file that vanished between listing and reading is skipped. Anything
-// else, such as a permission error, would make a page look like it says nothing.
+// Only a file that vanished mid-scan is skipped; any other read error is thrown.
 function unlessGone<T>(fallback: T): (error: unknown) => T {
   return (error: unknown) => {
     if ((error as { code?: string }).code === 'ENOENT') return fallback;

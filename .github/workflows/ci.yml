@@ -76,17 +76,12 @@ jobs:
           printf '%s\n' "$said"
           printf '%s\n' "$said" | grep -q "pages checked against product"
 
-  # The layout the action exists for: the product is this repository, the
-  # documentation is another one, and its config reaches the product with a
-  # relative path. pagebeam/docs checks itself against this repository, so
-  # it is a real pair rather than a fixture.
   action-two-repositories:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # The published CLI, because this job tests the action's layout, and a
-      # version bumped here before it is released is not on npm yet.
+      # A version bumped here before release is not on npm yet.
       - uses: ./
         id: pagebeam
         with:

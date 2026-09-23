@@ -81,10 +81,7 @@ export async function propose(
     return { said: `${host.missing} is needed to open a pull request.`, code: 2 };
   }
 
-  // The pull request carries the final tree, so the final tree is what has to
-  // pass: every check, run once with every change in place. What it claims to
-  // fix must be gone, and nothing new may appear. The same checks read the
-  // documentation as it is first, so both sides are judged alike.
+  // Changes can interact, so the pull request's final tree is what is checked.
   const recheck = result.recheckAt;
   if (recheck === undefined) return { said: 'The run did not check anything, so nothing can be proposed.', code: 2 };
   const before = new Set((await recheck(path.resolve(cwd, config.docs.root))).map((f) => f.id));

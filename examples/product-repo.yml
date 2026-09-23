@@ -1,6 +1,4 @@
 # Copy into a product repository as .github/workflows/docs-drift.yml
-#
-# It runs when the product changes, which is when the docs start to go wrong.
 name: docs drift
 
 on:

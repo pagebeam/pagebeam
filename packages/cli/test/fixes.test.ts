@@ -31,7 +31,6 @@ async function serve(
   };
 }
 
-// A forge that accepts one pull request and reports it.
 async function forge(): Promise<{ url: string; stop: () => Promise<void> }> {
   let pr: unknown = null;
   return serve(({ method, url, body }) => {
@@ -45,7 +44,6 @@ async function forge(): Promise<{ url: string; stop: () => Promise<void> }> {
   });
 }
 
-// A model that answers every request with the same page.
 async function model(page: string): Promise<{ url: string; stop: () => Promise<void> }> {
   return serve(() => ({ choices: [{ message: { content: page } }] }));
 }
@@ -106,8 +104,6 @@ test('valid links with a fragment, a query or an index page do not block a propo
   }
 });
 
-// The README's layout for docs kept apart from the product: the config sits in
-// the product repository and the pull request goes to the docs repository.
 test('a proposal reaches a docs repository kept apart from the product', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-apart-'));
   const origin = path.join(root, 'docs-origin.git');
@@ -156,8 +152,6 @@ test('a proposal reaches a docs repository kept apart from the product', async (
   }
 });
 
-// A control removed from the product with nothing to rename it to: only a
-// model can say what the page should say instead.
 const REMOVED = {
   files: {
     'docs/guide.md': '# Ledger\n\nPress **Export ledger** to download every entry as a file you can open.\n',
@@ -183,8 +177,6 @@ async function proposing(page: string): Promise<string> {
   }
 }
 
-// A setting the product no longer declares. The old check trusted any draft
-// for this kind of finding; the checks now run again on what the model wrote.
 test('a draft that keeps an undeclared setting is not proposed', async () => {
   const page = 'Set the retry limit before you start.\n\n```env\nRETRY_LIMIT=5\n```\n';
   const llm = await model('Set how many times a delivery is retried before you start.\n\n```env\nRETRY_LIMIT=5\n```\n');
@@ -206,7 +198,6 @@ test('a draft that keeps an undeclared setting is not proposed', async () => {
 });
 
 test('a draft that keeps a dead external link is not proposed', async () => {
-  // Every request to the fake site answers 404.
   const dead = createServer((_, res) => {
     res.writeHead(404);
     res.end();
@@ -236,8 +227,6 @@ test('a draft that keeps a dead external link is not proposed', async () => {
   }
 });
 
-// A model that fixes only the control its request names, on the page it was
-// sent, the way a real one answers one finding at a time.
 async function oneAtATime(): Promise<{ url: string; stop: () => Promise<void> }> {
   return serve(({ body }) => {
     const asked = (JSON.parse(body) as { messages: { role: string; content: string }[] }).messages
@@ -276,9 +265,6 @@ test('two drafts for one page both reach the proposal', async () => {
   }
 });
 
-// A draft judged on its own page can still harm another: here it drops every
-// mention of controls that just arrived, which files a finding against their
-// screen rather than against this page. Only the finished tree shows that.
 test('a proposal that would leave the docs with a new finding is not published', async () => {
   const llm = await model(
     '# Ledger\n\nThe ledger lists every entry you have recorded, newest first, with its date and its amount.\n',

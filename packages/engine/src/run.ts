@@ -30,9 +30,6 @@ export interface RunResult {
   findings: Finding[];
   ran: string[];
   skipped: string[];
-  // Every check run again on the pages under another root, such as a checkout
-  // holding a proposal, with the evidence this run gathered. Present only on a
-  // run that got far enough to check anything.
   recheckAt?: (docsRoot: string) => Promise<Finding[]>;
 }
 
@@ -158,9 +155,6 @@ async function runLinks(
   return outcome.findings;
 }
 
-// The same config without external link requests. A draft changes one page;
-// asking every external address again for each draft would repeat the same
-// requests and learn nothing new.
 function offline(config: PagebeamConfig): PagebeamConfig {
   if (config.checks.links === false) return config;
   return { ...config, checks: { ...config.checks, links: { ...config.checks.links, external: false } } };
@@ -455,10 +449,6 @@ function readingFor(
   return sending;
 }
 
-// A draft is a claim that the problem is gone. Nothing is proposed on the
-// strength of a claim: the checks run again with the drafted page in place.
-// The finding must be gone, and the page must not bring a finding the
-// documentation did not already have.
 export type Recheck = (pages: DocPage[]) => Promise<Finding[]>;
 
 async function accepted(
@@ -545,12 +535,8 @@ async function mend(
     }),
   );
 
-  // A model rewrites a whole page. Two drafts of one page, each made from the
-  // page as it was, would each undo the other when both are written, and a
-  // draft made without the exact edits already found for that page would undo
-  // those. So drafts for one page are made one after another, each from the
-  // page with every change before it in place, and different pages in
-  // parallel. The page's last change then holds all of them.
+  // A draft replaces the whole page, so drafts for one page run in order, each
+  // from the page with every earlier change in it, or they undo each other.
   const current = new Map<string, string>();
   const baseOf = (at: string): string | undefined => {
     const now = current.get(at);
@@ -618,8 +604,7 @@ async function mend(
   return findings.map((finding) => answers.get(finding) ?? finding);
 }
 
-// A page's text with exact edits applied: spans from the last backwards, so an
-// edit never moves the one after it, and a whole replacement taken as it is.
+// Spans from the last backwards, so an edit never moves the one after it.
 function withChanges(text: string, changes: FileChange[]): string {
   const whole = changes
     .map((c) => (c.splice === undefined ? c.contents : undefined))

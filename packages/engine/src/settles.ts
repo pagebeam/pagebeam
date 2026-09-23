@@ -1,9 +1,6 @@
 import { parseAll, type DocPage } from '@pagebeam/docs';
 import type { Finding } from '@pagebeam/core';
 
-// What no check looks at in a page a model wrote: it still reads as a page,
-// and it kept the links and code nobody asked it to remove. Whether the
-// finding itself is gone is for the checks to say.
 export interface Refused {
   because: string;
 }
@@ -13,8 +10,6 @@ async function parsed(path: string, text: string): Promise<DocPage | null> {
   return pages[0] ?? null;
 }
 
-// The one link a draft may drop without being asked: the broken one the
-// finding is about.
 function mayDrop(finding: Finding): string | null {
   if (finding.check !== 'links') return null;
   return finding.title.match(/^(\S+) does not resolve$/)?.[1] ?? null;
@@ -26,8 +21,7 @@ export async function settles(finding: Finding, was: string | null, now: string)
   const after = await parsed(path, now);
   if (after === null) return { because: 'the page it wrote could not be read as a page' };
 
-  // Said here as well as by the checks, because the checks do not ask
-  // external addresses again for a draft.
+  // The recheck does not request external links, so a dead one is caught here.
   const dropped = mayDrop(finding);
   if (dropped !== null && after.links.some((l) => l.href === dropped)) {
     return { because: `it kept the broken link ${dropped}` };
