@@ -444,3 +444,85 @@ test('routes configured outside the source include still make the screens incomp
   const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', work]);
   assert.match(stdout, /web may have screens it did not find: routes are configured in vite\.config\.ts/);
 });
+
+const BUTTONS = '<button>Publish Site</button><button>Archive Site</button><button>Rename Site</button>';
+const NEXT_APP = "apps:\n  - name: web\n    path: web\n";
+
+// The product arrives in the second commit, so its controls are new.
+async function checked(product: Record<string, string>, args: string[] = []): Promise<string> {
+  const docs = { 'docs/guide.md': '# Guide\n\nHow the product works, in short.\n' };
+  const config = Object.fromEntries(Object.entries(product).filter(([at]) => at === 'pagebeam.config.yaml'));
+  const { work } = await repository({ ...docs, ...config }, product);
+  const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', work, ...args]).catch(
+    (error: { stdout: string }) => error,
+  );
+  return stdout;
+}
+
+test('a Next.js page written in .js is found and its controls are read', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-next-js-'));
+  await mkdir(path.join(root, 'docs'), { recursive: true });
+  await writeFile(path.join(root, 'docs/guide.md'), '# Guide\n\nHow the product works, in short.\n');
+  await mkdir(path.join(root, 'web/pages'), { recursive: true });
+  await writeFile(path.join(root, 'web/package.json'), '{"dependencies":{"next":"15.0.0"}}\n');
+  await writeFile(path.join(root, 'web/pages/sites.js'), `export default function Sites() { return <>${BUTTONS}</>; }\n`);
+
+  await run(process.execPath, [CLI, 'init', '--cwd', root]);
+  const config = parse(await readFile(path.join(root, 'pagebeam.config.yaml'), 'utf8')) as { apps: { path: string }[] };
+  assert.deepEqual(config.apps.map((a) => a.path), ['web']);
+
+  const stdout = await checked({
+    'pagebeam.config.yaml': `docs:\n  root: docs\n${NEXT_APP}`,
+    'web/package.json': '{"dependencies":{"next":"15.0.0"}}\n',
+    'web/pages/sites.js': `export default function Sites() { return <>${BUTTONS}</>; }\n`,
+  });
+  assert.match(stdout, /Publish Site/);
+});
+
+test('pages in an extension the Next.js config adds are read, and a page no parser reads is named', async () => {
+  const stdout = await checked({
+    'pagebeam.config.yaml': `docs:\n  root: docs\n${NEXT_APP}`,
+    'web/next.config.mjs': "export default { pageExtensions: ['mdx', 'tsx'] }\n",
+    'web/app/page.mdx': '# Home\n\n<button>Publish Site</button>\n',
+    'web/app/sites/page.tsx': `export default function Sites() { return <>${BUTTONS}</>; }\n`,
+  });
+  assert.match(stdout, /web has files whose controls could not be read: app\/page\.mdx/);
+});
+
+test('a basePath in a comment does not move every address', async () => {
+  const stdout = await checked({
+    'pagebeam.config.yaml': `docs:\n  root: docs\n${NEXT_APP}`,
+    'web/next.config.mjs': "// basePath: '/retired'\nexport default {}\n",
+    'web/pages/sites.tsx': `export default function Sites() { return <>${BUTTONS}</>; }\n`,
+  }, ['--json']);
+  assert.match(stdout, /\/sites/);
+  assert.doesNotMatch(stdout, /\/retired/);
+});
+
+const SPEC = JSON.stringify({
+  openapi: '3.0.0',
+  info: { title: 't', version: '1' },
+  paths: { '/private': { get: { responses: {} } }, '/public': { get: { responses: {} } } },
+});
+const COUNTED =
+  'docs:\n  root: docs\nchecks:\n  openapi:\n    coverage: always\n' +
+  'apps:\n  - name: api\n    path: api\n    openapi:\n      spec: api/openapi.json\n';
+
+test('an operation inside hidden HTML is not documented', async () => {
+  const stdout = await checked({
+    'pagebeam.config.yaml': COUNTED,
+    'api/openapi.json': SPEC,
+    'docs/api.md': '# API\n\nGET /public lists everything.\n\n<div hidden>GET /private</div>\n\n<div aria-hidden="true">GET /private</div>\n',
+  });
+  assert.match(stdout, /1 of 2 api API operations are not documented/);
+});
+
+test('an operation only a component attribute names is not counted as documented', async () => {
+  const stdout = await checked({
+    'pagebeam.config.yaml': COUNTED,
+    'api/openapi.json': SPEC,
+    'docs/api.mdx': '# API\n\nGET /public lists everything.\n\n<Example method="GET" path="/private" />\n',
+  });
+  assert.match(stdout, /1 of 2 api API operations are not documented/);
+  assert.match(stdout, /named only in a component's attributes/);
+});

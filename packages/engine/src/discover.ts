@@ -2,7 +2,7 @@ import { stringify } from 'yaml';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { glob } from 'tinyglobby';
-import { ROUTE_CONFIG, routeModel, type ConfigFile } from '@pagebeam/app';
+import { ROUTE_CONFIG, routeFilePatterns, routeModel, type ConfigFile } from '@pagebeam/app';
 
 // Working out what a repository holds, so somebody can try this without first
 // writing a configuration for a tool they have not seen work.
@@ -35,7 +35,7 @@ const ROUTE_DIR = /(^|\/)(pages|routes|views|app|screens)\//;
 // Framework configuration anywhere below `root`, with its contents, because
 // it decides which files are routes.
 async function routeConfigs(root: string): Promise<ConfigFile[]> {
-  const found = await glob(['**/*.config.*'], { cwd: root, ignore: IGNORE, dot: false });
+  const found = await glob(['**/*.config.*', '**/package.json'], { cwd: root, ignore: IGNORE, dot: false });
   const configs: ConfigFile[] = [];
   for (const file of found.filter((f) => ROUTE_CONFIG.test(f))) {
     const text = await readFile(path.join(root, file), 'utf8').catch((error: { code?: string }) => {
@@ -105,13 +105,14 @@ async function beside(cwd: string): Promise<Found['apps']> {
     opened += 1;
     // Only where routes live, so a directory of anything else is passed over
     // without reading all of it.
-    const routes = await glob(['{pages,routes,views,app,screens,src}/**/*.{vue,svelte,astro,jsx,tsx,js,ts}'], {
+    const configs = await routeConfigs(at);
+    const routes = await glob(['{pages,routes,views,app,screens,src}/**/*.{vue,svelte,astro,jsx,tsx,js,ts}', ...routeFilePatterns(configs)], {
       cwd: at,
       ignore: IGNORE,
       dot: false,
     }).catch(() => []);
 
-    const model = routeModel(routes, await routeConfigs(at));
+    const model = routeModel(routes, configs);
     const reachable = routes.filter((f) => model.routeOf(f) !== null);
     if (reachable.length === 0) continue;
     found.push({
@@ -128,7 +129,8 @@ async function beside(cwd: string): Promise<Found['apps']> {
 
 export async function discover(cwd: string): Promise<Found> {
   const prose = await glob(PROSE, { cwd, ignore: IGNORE, dot: false });
-  const parts = await glob(PARTS, { cwd, ignore: IGNORE, dot: false });
+  const configs = await routeConfigs(cwd);
+  const parts = await glob([PARTS, ...routeFilePatterns(configs)], { cwd, ignore: IGNORE, dot: false });
 
   // Where the prose actually lives, rather than wherever the deepest stray
   // file happens to be.
@@ -155,7 +157,7 @@ export async function discover(cwd: string): Promise<Found> {
 
   // Somewhere with routes is an application: a reader can move around in it.
   // A directory of components with nowhere to go is a library.
-  const model = routeModel(parts, await routeConfigs(cwd));
+  const model = routeModel(parts, configs);
   const isRoute = (file: string): boolean => model.routeOf(file) !== null;
   const grouped = new Map<string, { routes: number; parts: number }>();
   for (const file of parts) {
@@ -213,8 +215,9 @@ export function configFor(found: Found): string {
 }
 
 export async function looksLikeAnApp(cwd: string): Promise<boolean> {
-  const found = await glob(PARTS, { cwd, ignore: IGNORE, dot: false });
-  const model = routeModel(found, await routeConfigs(cwd));
+  const configs = await routeConfigs(cwd);
+  const found = await glob([PARTS, ...routeFilePatterns(configs)], { cwd, ignore: IGNORE, dot: false });
+  const model = routeModel(found, configs);
   return found.some((f) => model.routeOf(f) !== null);
 }
 

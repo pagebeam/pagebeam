@@ -203,3 +203,21 @@ test('a Next.js setting computed at runtime makes the route model incomplete', (
   assert.equal(model.complete, false);
   assert.match(model.reason ?? '', /basePath in next\.config\.js/);
 });
+
+test('Next.js settings are read from the exported object, through a variable and a wrapper', () => {
+  const at = (text: string) => routeModel(['pages/a.tsx'], [{ path: 'next.config.ts', text }]);
+  const wrapped = at("const config = { basePath: '/docs' } satisfies NextConfig;\nexport default withMDX(config);");
+  assert.deepEqual(wrapped.routeOf('pages/a.tsx')?.addresses, ['/docs/a']);
+  const unused = at("const example = { basePath: '/old' };\nexport default {};");
+  assert.equal(unused.complete, false);
+  const built = at('export default (phase) => ({ reactStrictMode: true });');
+  assert.deepEqual(built.routeOf('pages/a.tsx')?.addresses, ['/a']);
+  assert.equal(built.complete, true);
+});
+
+test('a dependency on next makes plain .js and .ts files in pages routes', () => {
+  const manifest = { path: 'package.json', text: '{"devDependencies":{"next":"15.0.0"}}' };
+  assert.equal(routeModel(['pages/a.ts']).routeOf('pages/a.ts'), null);
+  assert.deepEqual(routeModel(['pages/a.ts'], [manifest]).routeOf('pages/a.ts')?.addresses, ['/a']);
+  assert.equal(routeModel(['pages/api/a.js'], [manifest]).routeOf('pages/api/a.js'), null);
+});

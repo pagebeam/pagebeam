@@ -11,7 +11,7 @@ import { render, unavailable, type Auth, type Route } from './render.js';
 import { html } from './html.js';
 import { jsx } from './jsx.js';
 import { vue } from './vue.js';
-import { ROUTE_CONFIG } from './screens.js';
+import { ROUTE_CONFIG, routeFilePatterns, routeModel } from './screens.js';
 
 const ENV_ASSIGNMENT = /(?:^|\s)(?:-e\s+|--env\s+|export\s+|ENV\s+)?([A-Z][A-Z0-9_]{2,})\s*=/gm;
 
@@ -61,16 +61,9 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
   const extractors = request.extractors ?? defaultExtractors();
   const rev = request.rev;
 
-  const files =
-    rev === undefined
-      ? await glob(request.include, { cwd: request.root, ignore: request.exclude })
-      : (await filesAt(request.root, rev)).filter((f) =>
-          matches(f, request.include, request.exclude),
-        );
-
   const atRoot =
     rev === undefined
-      ? await glob(['*.config.*'], { cwd: request.root })
+      ? await glob(['*.config.*', 'package.json'], { cwd: request.root })
       : (await filesAt(request.root, rev)).filter((f) => !f.includes('/'));
   const routeConfig: { path: string; text: string }[] = [];
   for (const file of atRoot.filter((f) => ROUTE_CONFIG.test(f))) {
@@ -78,6 +71,13 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
       rev === undefined ? await readOrThrow(path.join(request.root, file)) : await readAt(request.root, rev, file);
     if (text !== null) routeConfig.push({ path: file, text });
   }
+
+  const include = [...request.include, ...routeFilePatterns(routeConfig)];
+  const files =
+    rev === undefined
+      ? await glob(include, { cwd: request.root, ignore: request.exclude })
+      : (await filesAt(request.root, rev)).filter((f) => matches(f, include, request.exclude));
+  const routes = routeModel(files, routeConfig);
 
   const labels: Label[] = [];
   const files_: { path: string; text: string }[] = [];
@@ -94,6 +94,9 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     files_.push({ path: file, text: source });
     const extractor = extractors.for(file);
     if (extractor === null) continue;
+    if (extractor.source === 'raw' && routes.routeOf(file) !== null) {
+      unparsed.push({ file, reason: `no parser here reads ${path.extname(file) || file} files, so the controls on this page are unknown` });
+    }
     sources.push(extractor.source);
     try {
       labels.push(...extractor.extract(source, file));

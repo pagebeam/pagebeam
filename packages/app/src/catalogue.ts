@@ -5,7 +5,7 @@ import { usable } from './rules.js';
 
 // A plain module, not a component. Components are read as markup by the
 // parsers above this one.
-const FILES = /\.(ts|js|mts|cts|mjs|cjs)$/i;
+const FILES = /\.(ts|mts|cts)$/i;
 const DECLARATIONS = /\.d\.(ts|mts|cts)$/i;
 
 // What a control is called when it is written down as data rather than markup.
@@ -22,7 +22,7 @@ function keyOf(node: any): string | null {
   return null;
 }
 
-function walk(node: any, file: string, out: Label[]): void {
+export function catalogueLabels(node: any, file: string, out: Label[]): void {
   if (node === null || typeof node !== 'object') return;
 
   if (node.type === 'ObjectProperty' && !node.computed) {
@@ -39,8 +39,8 @@ function walk(node: any, file: string, out: Label[]): void {
   }
 
   for (const child of Object.values(node)) {
-    if (Array.isArray(child)) child.forEach((c) => walk(c, file, out));
-    else walk(child, file, out);
+    if (Array.isArray(child)) child.forEach((c) => catalogueLabels(c, file, out));
+    else catalogueLabels(child, file, out);
   }
 }
 
@@ -60,7 +60,7 @@ export const catalogue: Extractor = {
       throw new CannotParse(file, (error as Error).message.split('\n')[0] ?? 'unparseable');
     }
     const out: Label[] = [];
-    walk(tree.program, file, out);
+    catalogueLabels(tree.program, file, out);
     return out;
   },
 };

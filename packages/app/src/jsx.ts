@@ -1,11 +1,14 @@
 import { parse } from '@babel/parser';
 import type { Label } from '@pagebeam/core';
+import { catalogueLabels } from './catalogue.js';
 import { CannotParse, type Extractor } from './extractor.js';
 import { announcing, CONTROL, HEADING, LABEL_ATTRS, otherwise, shows, usable, type Shows } from './rules.js';
 
-// Only where components actually live. An ordinary .ts file yields nothing
-// and parsing it under JSX rules invites failures that mean nothing.
-const FILES = /\.(jsx|tsx)$/i;
+// Only where components can live. An ordinary .ts file yields nothing and
+// parsing it under JSX rules invites failures that mean nothing, but a .js
+// file may be a component, as Next.js pages often are, or a module of data.
+const FILES = /\.(jsx|tsx|js|mjs|cjs)$/i;
+const PLAIN_JS = /\.[mc]?js$/i;
 
 function nameOf(node: any): string | null {
   const name = node?.openingElement?.name;
@@ -142,6 +145,7 @@ export const jsx: Extractor = {
     }
     const out: Label[] = [];
     walk(tree.program, file, out, source);
+    if (PLAIN_JS.test(file)) catalogueLabels(tree.program, file, out);
     return out;
   },
 };

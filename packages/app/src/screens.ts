@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { parse } from '@babel/parser';
 
 // A screen is somewhere a reader can go, which is a route. A directory is not
 // a screen: grouping by one invents "components" and "utils" as places nobody
@@ -87,7 +88,8 @@ export interface ConfigFile {
 // Framework configuration that decides routes. Read from the application's
 // root whatever its source include says, because it is route metadata, not
 // source.
-export const ROUTE_CONFIG = /(^|\/)(next|vite|remix|svelte|nuxt|react-router)\.config\.[cm]?[jt]s$/;
+export const ROUTE_CONFIG = /(^|\/)((next|vite|remix|svelte|nuxt|react-router)\.config\.[cm]?[jt]s|package\.json)$/;
+const NEXT_CONFIG = /(^|\/)next\.config\./;
 
 const SVELTEKIT_PAGE = /^(?:(.*)\/)?routes\/(?:(.*)\/)?\+page\.svelte$/;
 const REMIX_ROUTE = /^(?:(.*)\/)?app\/routes\/([^/]+?)(?:\/route)?\.[jt]sx?$/;
@@ -205,22 +207,119 @@ interface NextSettings {
   unread: string | null;
 }
 
-// Only values written out literally are read. A setting computed at runtime
-// could be anything, so it makes the model incomplete instead of guessed.
+function declaresNext(config: ConfigFile): boolean {
+  if (!/(^|\/)package\.json$/.test(config.path)) return false;
+  try {
+    const manifest = JSON.parse(config.text) as Record<string, Record<string, string> | undefined>;
+    return ['dependencies', 'devDependencies', 'peerDependencies'].some((k) => manifest[k]?.next !== undefined);
+  } catch {
+    return false;
+  }
+}
+
+function unwrapped(node: any): any {
+  while (node && ['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'ParenthesizedExpression'].includes(node.type)) {
+    node = node.expression;
+  }
+  return node;
+}
+
+// The object the module exports, followed through a variable and through
+// wrappers such as `withMDX(config)`. Null when it is built by code.
+function exportedObject(program: any): any {
+  const declared = new Map<string, any>();
+  let exported: any = null;
+  for (const statement of program.body) {
+    if (statement.type === 'VariableDeclaration') {
+      for (const d of statement.declarations) if (d.id?.type === 'Identifier') declared.set(d.id.name, d.init);
+    } else if (statement.type === 'ExportDefaultDeclaration') {
+      exported = statement.declaration;
+    } else if (
+      statement.type === 'ExpressionStatement' &&
+      statement.expression.type === 'AssignmentExpression' &&
+      statement.expression.left.type === 'MemberExpression' &&
+      statement.expression.left.object?.name === 'module' &&
+      statement.expression.left.property?.name === 'exports'
+    ) {
+      exported = statement.expression.right;
+    }
+  }
+  const seen = new Set<string>();
+  let node = unwrapped(exported);
+  while (node) {
+    if (node.type === 'ObjectExpression') return node;
+    if (node.type === 'Identifier' && !seen.has(node.name)) {
+      seen.add(node.name);
+      node = unwrapped(declared.get(node.name));
+    } else if (node.type === 'CallExpression' && node.arguments.length > 0) {
+      node = unwrapped(node.arguments[0]);
+    } else {
+      return null;
+    }
+  }
+  return null;
+}
+
+function mentions(node: any, name: string): boolean {
+  if (node === null || typeof node !== 'object') return false;
+  if (Array.isArray(node)) return node.some((n) => mentions(n, name));
+  if ((node.type === 'Identifier' && node.name === name) || (node.type === 'StringLiteral' && node.value === name)) return true;
+  return Object.entries(node).some(([k, v]) => k !== 'loc' && mentions(v, name));
+}
+
+function keyOf(property: any): string | null {
+  if (property.type !== 'ObjectProperty' || property.computed) return null;
+  if (property.key.type === 'Identifier') return property.key.name;
+  if (property.key.type === 'StringLiteral') return property.key.value;
+  return null;
+}
+
+// Only values written out literally in the exported object are read. A
+// setting computed at runtime could be anything, so it makes the model
+// incomplete instead of guessed.
 function nextSettings(config: ConfigFile | undefined): NextSettings {
   const settings: NextSettings = { extensions: NEXT_DEFAULT_EXTENSIONS, basePath: '', unread: null };
   if (config === undefined) return settings;
-  const extensions = config.text.match(/pageExtensions\s*:\s*\[([^\]]*)\]/);
-  if (extensions) {
-    const listed = [...extensions[1]!.matchAll(/['"]([\w.]+)['"]/g)].map((m) => m[1]!);
-    if (listed.length > 0) settings.extensions = listed;
-  } else if (/pageExtensions/.test(config.text)) {
-    settings.unread = `pageExtensions in ${config.path} is not a literal list`;
+  let program: any;
+  try {
+    program = parse(config.text, { sourceType: 'unambiguous', plugins: ['typescript'] }).program;
+  } catch {
+    settings.unread = `${config.path} could not be parsed`;
+    return settings;
   }
-  const base = config.text.match(/basePath\s*:\s*['"`]([^'"`$]*)['"`]/);
-  if (base) settings.basePath = base[1]!.replace(/\/+$/, '');
-  else if (/basePath/.test(config.text)) settings.unread = `basePath in ${config.path} is not a literal string`;
+  const object = exportedObject(program);
+  const property = (name: string): any =>
+    object?.properties.find((p: any) => keyOf(p) === name)?.value;
+  const unread: string[] = [];
+
+  const extensions = unwrapped(property('pageExtensions'));
+  if (extensions?.type === 'ArrayExpression' && extensions.elements.every((e: any) => e?.type === 'StringLiteral')) {
+    const listed = extensions.elements.map((e: any) => String(e.value).replace(/^\./, ''));
+    if (listed.length > 0) settings.extensions = listed;
+  } else if (extensions !== undefined || mentions(program, 'pageExtensions')) {
+    unread.push(`pageExtensions in ${config.path} is not a literal list`);
+  }
+
+  const base = unwrapped(property('basePath'));
+  if (base?.type === 'StringLiteral') settings.basePath = String(base.value).replace(/\/+$/, '');
+  else if (base?.type === 'TemplateLiteral' && base.expressions.length === 0) {
+    settings.basePath = String(base.quasis[0].value.cooked).replace(/\/+$/, '');
+  } else if (base !== undefined || mentions(program, 'basePath')) {
+    unread.push(`basePath in ${config.path} is not a literal string`);
+  }
+
+  if (unread.length > 0) settings.unread = unread.join('; ');
   return settings;
+}
+
+// Next.js route files in the extensions an application configures, so they
+// are read even where the source include leaves those extensions out.
+export function routeFilePatterns(configs: ConfigFile[]): string[] {
+  const nextConfig = configs.find((c) => NEXT_CONFIG.test(c.path));
+  if (nextConfig === undefined && !configs.some(declaresNext)) return [];
+  const ext = nextSettings(nextConfig).extensions;
+  const any = ext.length === 1 ? ext[0]! : `{${ext.join(',')}}`;
+  return [`**/app/**/{page,layout,template}.${any}`, `**/pages/**/*.${any}`];
 }
 
 export function routeModel(
@@ -233,16 +332,18 @@ export function routeModel(
     ...configs,
     ...list.filter((f): f is ConfigFile => ROUTE_CONFIG.test(f.path) && typeof f.text === 'string'),
   ];
-  const nextConfig = allConfigs.find((c) => /(^|\/)next\.config\./.test(c.path));
+  const nextConfig = allConfigs.find((c) => NEXT_CONFIG.test(c.path));
+  const nextManifest = allConfigs.find(declaresNext);
   const next = nextSettings(nextConfig);
   const ext = next.extensions.map((e) => e.replace(/[.]/g, '\\.')).join('|');
   const nextAppPage = new RegExp(`^(?:(.*)\\/)?app\\/(?:(.*)\\/)?page\\.(?:${ext})$`);
   const nextPagesFile = new RegExp(`^(?:(.*)\\/)?pages\\/(.+)\\.(?:${ext})$`);
   // Next.js needs no config file, so JSX in `pages/` is read by its rules
-  // anyway. Plain `.ts`/`.js` there is an endpoint unless this is Next.js.
+  // anyway. Plain `.ts`/`.js` there is an endpoint unless this is Next.js,
+  // which a config file, a dependency on `next` or an App Router page shows.
   const reactPagesFile = /^(?:(.*)\/)?pages\/(.+)\.(?:[jt]sx)$/;
   const svelteKit = list.some((f) => f.path.endsWith('+page.svelte'));
-  const isNext = nextConfig !== undefined || list.some((f) => nextAppPage.test(f.path) && !f.path.includes('/routes/'));
+  const isNext = nextConfig !== undefined || nextManifest !== undefined || list.some((f) => nextAppPage.test(f.path) && !f.path.includes('/routes/'));
   const remixConfigured = allConfigs.find(
     (c) => /(^|\/)(remix|vite|react-router)\.config\./.test(c.path) && /\broutes\s*[(:]|flatRoutes|defineRoutes/.test(c.text),
   );
@@ -310,7 +411,7 @@ export function routeModel(
       return known.get(file)!;
     },
     frameworks,
-    read: allConfigs.map((c) => c.path),
+    read: allConfigs.filter((c) => !c.path.endsWith('package.json') || c === nextManifest).map((c) => c.path),
     complete: reasons.length === 0,
     ...(reasons.length === 0 ? {} : { reason: reasons.join('; ') }),
   };

@@ -268,6 +268,13 @@ async function runUndocumented(
   skipped: string[],
 ): Promise<Finding[]> {
   if (config.checks.undocumented === false) return [];
+  for (const snapshot of evidence?.now ?? []) {
+    const unread = snapshot.unparsed[0];
+    if (unread !== undefined) {
+      const more = snapshot.unparsed.length > 1 ? ` and ${snapshot.unparsed.length - 1} more` : '';
+      skipped.push(`undocumented: ${snapshot.app} has files whose controls could not be read: ${unread.file} (${unread.reason})${more}`);
+    }
+  }
   if (evidence === null || evidence.now.every((s) => s.labels.length === 0)) {
     skipped.push('undocumented: no application has controls that could be read');
     return [];
