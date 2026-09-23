@@ -104,6 +104,9 @@ export interface Snapshot {
   labels: Label[];
   envKeys: string[];
   files: { path: string; text: string }[];
+  // Framework configuration at the application's root, read whatever the
+  // include says, because it decides which files are routes.
+  routeConfig?: { path: string; text: string }[];
 }
 
 export interface AppEvidence {

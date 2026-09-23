@@ -11,6 +11,7 @@ import { render, unavailable, type Auth, type Route } from './render.js';
 import { html } from './html.js';
 import { jsx } from './jsx.js';
 import { vue } from './vue.js';
+import { ROUTE_CONFIG } from './screens.js';
 
 const ENV_ASSIGNMENT = /(?:^|\s)(?:-e\s+|--env\s+|export\s+|ENV\s+)?([A-Z][A-Z0-9_]{2,})\s*=/gm;
 
@@ -66,6 +67,17 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
       : (await filesAt(request.root, rev)).filter((f) =>
           matches(f, request.include, request.exclude),
         );
+
+  const atRoot =
+    rev === undefined
+      ? await glob(['*.config.*'], { cwd: request.root })
+      : (await filesAt(request.root, rev)).filter((f) => !f.includes('/'));
+  const routeConfig: { path: string; text: string }[] = [];
+  for (const file of atRoot.filter((f) => ROUTE_CONFIG.test(f))) {
+    const text =
+      rev === undefined ? await readOrThrow(path.join(request.root, file)) : await readAt(request.root, rev, file);
+    if (text !== null) routeConfig.push({ path: file, text });
+  }
 
   const labels: Label[] = [];
   const files_: { path: string; text: string }[] = [];
@@ -152,5 +164,6 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     labels,
     envKeys: [...envKeys],
     files: files_,
+    routeConfig,
   };
 }

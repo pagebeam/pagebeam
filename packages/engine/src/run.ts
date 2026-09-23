@@ -273,7 +273,7 @@ async function runUndocumented(
     return [];
   }
   for (const snapshot of evidence.now) {
-    const why = screensOf(snapshot.files).incomplete;
+    const why = screensOf(snapshot.files, snapshot.routeConfig ?? []).incomplete;
     if (why !== undefined) skipped.push(`undocumented: ${snapshot.app} may have screens it did not find: ${why}`);
   }
   return undocumented.checkUndocumented(pages, evidence.now, evidence.before);

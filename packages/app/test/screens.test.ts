@@ -105,7 +105,7 @@ test('Next.js App Router: only page files are routes, at the address Next.js ser
   assert.equal(addressOf('src/app/settings/page.ts'), '/settings');
   assert.equal(addressOf('app/blog/[slug]/page.js'), '/blog/:slug');
   assert.equal(addressOf('app/docs/[...slug]/page.tsx'), '/docs/:slug*');
-  assert.equal(addressOf('app/shop/[[...slug]]/page.tsx'), '/shop/:slug*?');
+  assert.deepEqual(routeModel(['app/shop/[[...slug]]/page.tsx']).routeOf('app/shop/[[...slug]]/page.tsx')?.addresses, ['/shop', '/shop/:slug*']);
   for (const file of ['app/layout.tsx', 'app/dashboard/loading.tsx', 'app/dashboard/Chart.tsx', 'app/_lib/page.tsx']) {
     assert.ok(!isRoute(file), file);
   }
@@ -171,4 +171,35 @@ test('routes configured in code make the route list incomplete, and say so', () 
     { path: 'app/routes/_index.tsx', text: '<p>Home</p>' },
   ]);
   assert.match(incomplete ?? '', /vite\.config\.ts/);
+});
+
+test('each framework reads its own optional and matched segments', () => {
+  const at = (file: string) => routeModel([file]).routeOf(file)?.addresses;
+  assert.deepEqual(at('src/routes/[[lang]]/+page.svelte'), ['/', '/:lang']);
+  assert.deepEqual(at('src/routes/[id=integer]/+page.svelte'), ['/:id']);
+  assert.deepEqual(at('pages/blog/[[slug]].vue'), ['/blog', '/blog/:slug']);
+});
+
+test('a Next.js intercepting route is at the address it intercepts', () => {
+  const at = (file: string) => routeModel([file]).routeOf(file)?.addresses;
+  assert.deepEqual(at('app/@modal/(.)photo/page.tsx'), ['/photo']);
+  assert.deepEqual(at('app/feed/(..)photo/page.tsx'), ['/photo']);
+  assert.deepEqual(at('app/a/b/(..)(..)c/page.tsx'), ['/c']);
+  assert.deepEqual(at('app/a/(...)x/page.tsx'), ['/x']);
+});
+
+test('Next.js page extensions and base path come from its config', () => {
+  const model = routeModel(['app/dashboard/page.mdx', 'app/dashboard/page.tsx'], [
+    { path: 'next.config.mjs', text: "export default { pageExtensions: ['mdx'], basePath: '/docs' }" },
+  ]);
+  assert.deepEqual(model.routeOf('app/dashboard/page.mdx')?.addresses, ['/docs/dashboard']);
+  assert.equal(model.routeOf('app/dashboard/page.tsx'), null);
+  assert.equal(model.complete, true);
+  assert.deepEqual(model.read, ['next.config.mjs']);
+});
+
+test('a Next.js setting computed at runtime makes the route model incomplete', () => {
+  const model = routeModel(['app/page.tsx'], [{ path: 'next.config.js', text: 'module.exports = { basePath: process.env.BASE }' }]);
+  assert.equal(model.complete, false);
+  assert.match(model.reason ?? '', /basePath in next\.config\.js/);
 });

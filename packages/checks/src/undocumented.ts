@@ -54,7 +54,7 @@ function whereverItSits(file: string): string {
 // nothing written about it. One that no route reaches is on no screen, and
 // nothing is owed for something nobody can arrive at.
 function screensFor(snapshot: Snapshot): (file: string) => string[] {
-  const { reaches, unreached } = screensOf(snapshot.files);
+  const { reaches, unreached } = screensOf(snapshot.files, snapshot.routeConfig ?? []);
   if (reaches.size === 0) return (file) => [whereverItSits(file)];
 
   const on = new Map<string, string[]>();

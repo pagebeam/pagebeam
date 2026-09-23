@@ -58,9 +58,10 @@ function resolve(from: string, specifier: string, have: Set<string>): string | n
 }
 
 // Each framework decides which files are routes, what their addresses are and
-// what wraps them. The conventions in use are worked out once per application
-// from its whole file list, so a file never changes classification between
-// one step and the next.
+// what wraps them, with its own rules for a path segment. The conventions in
+// use are worked out once per application from its file list and its
+// framework configuration, so a file never changes classification between one
+// step and the next.
 export interface ScreenRoute {
   addresses: string[];
   // Files rendered around this route: layouts, templates, parent routes.
@@ -69,38 +70,42 @@ export interface ScreenRoute {
 
 export interface RouteModel {
   routeOf(file: string): ScreenRoute | null;
-  // False where routes come from configuration pagebeam cannot evaluate.
+  // The adapters that produced a route, such as `next-app` or `sveltekit`.
+  frameworks: Set<string>;
+  // Framework configuration read to build this model.
+  read: string[];
+  // False where routes depend on configuration pagebeam cannot evaluate.
   complete: boolean;
   reason?: string;
 }
 
-const NEXT_APP_PAGE = /^(?:(.*)\/)?app\/(?:(.*)\/)?page\.(?:[jt]sx?|mdx)$/;
-const NEXT_APP_FILE = /^(?:.*\/)?app\//;
+export interface ConfigFile {
+  path: string;
+  text: string;
+}
+
+// Framework configuration that decides routes. Read from the application's
+// root whatever its source include says, because it is route metadata, not
+// source.
+export const ROUTE_CONFIG = /(^|\/)(next|vite|remix|svelte|nuxt|react-router)\.config\.[cm]?[jt]s$/;
+
 const SVELTEKIT_PAGE = /^(?:(.*)\/)?routes\/(?:(.*)\/)?\+page\.svelte$/;
 const REMIX_ROUTE = /^(?:(.*)\/)?app\/routes\/([^/]+?)(?:\/route)?\.[jt]sx?$/;
-const PAGES = /^(?:(.*)\/)?pages\/(.+)\.(?:vue|astro|mdx?|[jt]sx?)$/;
+const NUXT_PAGES = /^(?:(.*)\/)?pages\/(.+)\.(?:vue|astro|mdx?)$/;
 const FOLDERS = /^(?:(.*)\/)?(?:routes|views|screens)\/(.+)\.(?:vue|svelte|astro|[jt]sx)$/;
-const REMIX_CONFIG = /(^|\/)(remix|vite)\.config\.[cm]?[jt]s$/;
 const CODE = ['tsx', 'jsx', 'ts', 'js'];
-
-// `[id]` is a parameter, `[...slug]` catches the rest, `[[...slug]]` may be
-// empty. A group `(name)` or a slot `@name` is not part of the address.
-function segment(part: string): string | null {
-  if (/^\(.*\)$/.test(part) || part.startsWith('@')) return null;
-  const optional = part.match(/^\[\[\.\.\.([^\]]+)\]\]$/);
-  if (optional) return `:${optional[1]}*?`;
-  const rest = part.match(/^\[\.\.\.([^\]]+)\]$/);
-  if (rest) return `:${rest[1]}*`;
-  return part.replace(/\[([^\]]+)\]/g, ':$1');
-}
-
-function addressFrom(parts: (string | null)[]): string {
-  const kept = parts.filter((p): p is string => p !== null && p !== '');
-  return `/${kept.join('/')}`;
-}
+const NEXT_DEFAULT_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js'];
 
 function join(...parts: (string | undefined)[]): string {
   return parts.filter((p) => p !== undefined && p !== '').join('/');
+}
+
+// Each segment gives the forms it can take in an address: one, or two where
+// it is optional. The addresses are every combination.
+function addressesFrom(segments: string[][], prefix = ''): string[] {
+  let paths: string[][] = [[]];
+  for (const forms of segments) paths = paths.flatMap((p) => forms.map((f) => (f === '' ? p : [...p, f])));
+  return [...new Set(paths.map((p) => `${prefix}/${p.join('/')}`.replace(/\/+$/, '') || '/'))];
 }
 
 function ancestors(prefix: string, dirs: string[], names: string[], have: Set<string>): string[] {
@@ -115,22 +120,73 @@ function ancestors(prefix: string, dirs: string[], names: string[], have: Set<st
   return found;
 }
 
-const NEXT_WRAPPERS = ['layout', 'template'].flatMap((n) => CODE.map((e) => `${n}.${e}`));
+// Next.js: `(group)` and `@slot` are not in the address; `(.)x`, `(..)x`,
+// `(..)(..)x` and `(...)x` intercept a route at the same level, one or two
+// levels up, or from the root, counted in route segments, not folders.
+function nextSegments(dirs: string[]): string[][] {
+  const out: string[][] = [];
+  for (const dir of dirs) {
+    const intercept = dir.match(/^((?:\(\.\.\))+|\(\.\)|\(\.\.\.\))(.+)$/);
+    let name = dir;
+    if (intercept) {
+      const marker = intercept[1]!;
+      if (marker === '(...)') out.length = 0;
+      else if (marker !== '(.)') out.splice(out.length - marker.length / 4, marker.length / 4);
+      name = intercept[2]!;
+    }
+    if (/^\(.*\)$/.test(name) || name.startsWith('@')) continue;
+    const optionalRest = name.match(/^\[\[\.\.\.([^\]]+)\]\]$/);
+    if (optionalRest) out.push(['', `:${optionalRest[1]}*`]);
+    else if (/^\[\.\.\.([^\]]+)\]$/.test(name)) out.push([`:${name.slice(4, -1)}*`]);
+    else out.push([name.replace(/\[([^\]]+)\]/g, ':$1')]);
+  }
+  return out;
+}
+
+// SvelteKit: `(group)` is not in the address, `[[x]]` is optional, `[x=matcher]`
+// is the parameter `x`, `[...rest]` catches the rest.
+function svelteSegments(dirs: string[]): string[][] {
+  const out: string[][] = [];
+  for (const dir of dirs) {
+    if (/^\(.*\)$/.test(dir)) continue;
+    const optional = dir.match(/^\[\[([^\]=]+)(?:=[^\]]+)?\]\]$/);
+    if (optional) {
+      out.push(['', `:${optional[1]}`]);
+      continue;
+    }
+    const rest = dir.match(/^\[\.\.\.([^\]=]+)(?:=[^\]]+)?\]$/);
+    if (rest) {
+      out.push([`:${rest[1]}*`]);
+      continue;
+    }
+    out.push([dir.replace(/\[([^\]=]+)(?:=[^\]]+)?\]/g, ':$1')]);
+  }
+  return out;
+}
+
+// Nuxt and Astro: `[x]` is a parameter, `[[x]]` optional, `[...x]` the rest.
+function pageSegments(parts: string[]): string[][] {
+  return parts.map((part) => {
+    const optional = part.match(/^\[\[([^\]]+)\]\]$/);
+    if (optional) return ['', `:${optional[1]}`];
+    const rest = part.match(/^\[\.\.\.([^\]]+)\]$/);
+    if (rest) return [`:${rest[1]}*`];
+    return [part.replace(/\[([^\]]+)\]/g, ':$1')];
+  });
+}
 
 // Remix flat routes: dots separate segments, `$id` is a parameter, `$` the
 // rest, `_index` the parent's own page, a leading `_` a layout without an
 // address, a trailing `_` a segment that does not nest, `(x)` optional.
 function remixRoute(prefix: string, id: string, have: Set<string>): ScreenRoute {
   const parts = id.split('.');
-  let addresses: string[][] = [[]];
+  const segments: string[][] = [];
   for (const part of parts) {
     if (part === '_index' || (part.startsWith('_') && part !== '_')) continue;
     const optional = part.match(/^\((.+)\)$/);
     const bare = (optional ? optional[1]! : part).replace(/_$/, '');
     const piece = bare === '$' ? ':*' : bare.startsWith('$') ? `:${bare.slice(1)}` : bare;
-    addresses = optional
-      ? addresses.flatMap((a) => [a, [...a, piece]])
-      : addresses.map((a) => [...a, piece]);
+    segments.push(optional ? ['', piece] : [piece]);
   }
   const routesDir = join(prefix, 'app', 'routes');
   const moduleOf = (name: string): string | undefined =>
@@ -140,42 +196,86 @@ function remixRoute(prefix: string, id: string, have: Set<string>): ScreenRoute 
     .map((_, i) => moduleOf(parts.slice(0, i + 1).join('.')))
     .filter((f): f is string => f !== undefined);
   const root = CODE.map((e) => join(prefix, 'app', `root.${e}`)).find((f) => have.has(f));
-  return {
-    addresses: [...new Set(addresses.map((a) => addressFrom(a)))],
-    wrappers: [...(root === undefined ? [] : [root]), ...parents],
-  };
+  return { addresses: addressesFrom(segments), wrappers: [...(root === undefined ? [] : [root]), ...parents] };
 }
 
-export function routeModel(files: Iterable<string | { path: string; text?: string }>): RouteModel {
+interface NextSettings {
+  extensions: string[];
+  basePath: string;
+  unread: string | null;
+}
+
+// Only values written out literally are read. A setting computed at runtime
+// could be anything, so it makes the model incomplete instead of guessed.
+function nextSettings(config: ConfigFile | undefined): NextSettings {
+  const settings: NextSettings = { extensions: NEXT_DEFAULT_EXTENSIONS, basePath: '', unread: null };
+  if (config === undefined) return settings;
+  const extensions = config.text.match(/pageExtensions\s*:\s*\[([^\]]*)\]/);
+  if (extensions) {
+    const listed = [...extensions[1]!.matchAll(/['"]([\w.]+)['"]/g)].map((m) => m[1]!);
+    if (listed.length > 0) settings.extensions = listed;
+  } else if (/pageExtensions/.test(config.text)) {
+    settings.unread = `pageExtensions in ${config.path} is not a literal list`;
+  }
+  const base = config.text.match(/basePath\s*:\s*['"`]([^'"`$]*)['"`]/);
+  if (base) settings.basePath = base[1]!.replace(/\/+$/, '');
+  else if (/basePath/.test(config.text)) settings.unread = `basePath in ${config.path} is not a literal string`;
+  return settings;
+}
+
+export function routeModel(
+  files: Iterable<string | { path: string; text?: string }>,
+  configs: ConfigFile[] = [],
+): RouteModel {
   const list = [...files].map((f) => (typeof f === 'string' ? { path: f, text: undefined } : f));
   const have = new Set(list.map((f) => f.path));
+  const allConfigs = [
+    ...configs,
+    ...list.filter((f): f is ConfigFile => ROUTE_CONFIG.test(f.path) && typeof f.text === 'string'),
+  ];
+  const nextConfig = allConfigs.find((c) => /(^|\/)next\.config\./.test(c.path));
+  const next = nextSettings(nextConfig);
+  const ext = next.extensions.map((e) => e.replace(/[.]/g, '\\.')).join('|');
+  const nextAppPage = new RegExp(`^(?:(.*)\\/)?app\\/(?:(.*)\\/)?page\\.(?:${ext})$`);
+  const nextPagesFile = new RegExp(`^(?:(.*)\\/)?pages\\/(.+)\\.(?:${ext})$`);
+  // Next.js needs no config file, so JSX in `pages/` is read by its rules
+  // anyway. Plain `.ts`/`.js` there is an endpoint unless this is Next.js.
+  const reactPagesFile = /^(?:(.*)\/)?pages\/(.+)\.(?:[jt]sx)$/;
   const svelteKit = list.some((f) => f.path.endsWith('+page.svelte'));
-  const configured = list.find(
-    (f) => REMIX_CONFIG.test(f.path) && /\broutes\s*[(:]|flatRoutes|defineRoutes/.test(f.text ?? ''),
+  const isNext = nextConfig !== undefined || list.some((f) => nextAppPage.test(f.path) && !f.path.includes('/routes/'));
+  const remixConfigured = allConfigs.find(
+    (c) => /(^|\/)(remix|vite|react-router)\.config\./.test(c.path) && /\broutes\s*[(:]|flatRoutes|defineRoutes/.test(c.text),
   );
+  const frameworks = new Set<string>();
 
   const classify = (file: string): ScreenRoute | null => {
-    const nextPage = file.match(NEXT_APP_PAGE);
-    if (nextPage && !file.includes('/routes/')) {
-      const dirs = (nextPage[2] ?? '').split('/').filter((p) => p !== '');
+    const appPage = file.match(nextAppPage);
+    if (appPage && !file.includes('/routes/')) {
+      const dirs = (appPage[2] ?? '').split('/').filter((p) => p !== '');
       if (dirs.some((d) => d.startsWith('_'))) return null;
-      const appDir = join(nextPage[1], 'app');
-      return { addresses: [addressFrom(dirs.map(segment))], wrappers: ancestors(appDir, dirs, NEXT_WRAPPERS, have) };
+      frameworks.add('next-app');
+      const appDir = join(appPage[1], 'app');
+      const wrapperNames = ['layout', 'template'].flatMap((n) => next.extensions.map((e) => `${n}.${e}`));
+      return { addresses: addressesFrom(nextSegments(dirs), next.basePath), wrappers: ancestors(appDir, dirs, wrapperNames, have) };
     }
 
     const kit = file.match(SVELTEKIT_PAGE);
     if (kit) {
+      frameworks.add('sveltekit');
       const dirs = (kit[2] ?? '').split('/').filter((p) => p !== '');
       const routesDir = join(kit[1], 'routes');
-      return { addresses: [addressFrom(dirs.map(segment))], wrappers: ancestors(routesDir, dirs, ['+layout.svelte'], have) };
+      return { addresses: addressesFrom(svelteSegments(dirs)), wrappers: ancestors(routesDir, dirs, ['+layout.svelte'], have) };
     }
 
     const remix = file.match(REMIX_ROUTE);
-    if (remix) return remixRoute(remix[1] ?? '', remix[2] ?? '', have);
+    if (remix) {
+      frameworks.add('remix');
+      return remixRoute(remix[1] ?? '', remix[2] ?? '', have);
+    }
 
     // Other files in a Next.js app directory, such as layouts, loading states
     // and colocated components, are not places a reader can go.
-    if (NEXT_APP_FILE.test(file) && !file.includes('/routes/') && !/^(?:.*\/)?app\/(?:pages|views|screens)\//.test(file)) {
+    if (/^(?:.*\/)?app\//.test(file) && !file.includes('/routes/') && !/^(?:.*\/)?app\/(?:pages|views|screens)\//.test(file)) {
       return null;
     }
 
@@ -183,26 +283,36 @@ export function routeModel(files: Iterable<string | { path: string; text?: strin
     // under `routes/` is a component. In Sapper every one was a route.
     if (svelteKit && file.endsWith('.svelte')) return null;
 
-    const pages = file.match(PAGES) ?? file.match(FOLDERS);
-    if (pages) {
-      const parts = (pages[2] ?? '').split('/');
-      if (parts[0] === 'api' || parts.some((p) => p.startsWith('_') || p.startsWith('+'))) return null;
-      if (parts[parts.length - 1] === 'index') parts.pop();
-      return { addresses: [addressFrom(parts.map(segment))], wrappers: [] };
+    const pagesFile = isNext ? file.match(nextPagesFile) : file.match(reactPagesFile);
+    const nuxt = pagesFile === null ? file.match(NUXT_PAGES) : null;
+    const folder = pagesFile === null && nuxt === null ? file.match(FOLDERS) : null;
+    const found = pagesFile ?? nuxt ?? folder;
+    if (found === null) return null;
+    const parts = (found[2] ?? '').split('/');
+    if (parts[0] === 'api' || parts.some((p) => p.startsWith('_') || p.startsWith('+'))) return null;
+    if (parts[parts.length - 1] === 'index') parts.pop();
+    if (pagesFile !== null) {
+      frameworks.add('next-pages');
+      return { addresses: addressesFrom(nextSegments(parts), next.basePath), wrappers: [] };
     }
-    return null;
+    frameworks.add(nuxt !== null ? 'pages' : 'folders');
+    return { addresses: addressesFrom(pageSegments(parts)), wrappers: [] };
   };
 
+  const reasons = [
+    ...(remixConfigured === undefined ? [] : [`routes are configured in ${remixConfigured.path}, which pagebeam does not evaluate`]),
+    ...(next.unread === null ? [] : [next.unread]),
+  ];
   const known = new Map<string, ScreenRoute | null>();
   return {
     routeOf(file) {
       if (!known.has(file)) known.set(file, classify(file));
       return known.get(file)!;
     },
-    complete: configured === undefined,
-    ...(configured === undefined
-      ? {}
-      : { reason: `routes are configured in ${configured.path}, which pagebeam does not evaluate` }),
+    frameworks,
+    read: allConfigs.map((c) => c.path),
+    complete: reasons.length === 0,
+    ...(reasons.length === 0 ? {} : { reason: reasons.join('; ') }),
   };
 }
 
@@ -216,10 +326,10 @@ export interface Screens {
   incomplete?: string;
 }
 
-export function screensOf(files: { path: string; text: string }[]): Screens {
+export function screensOf(files: { path: string; text: string }[], configs: ConfigFile[] = []): Screens {
   const have = new Set(files.map((f) => f.path));
   const text = new Map(files.map((f) => [f.path, f.text]));
-  const model = routeModel(files);
+  const model = routeModel(files, configs);
 
   // A component resolved by its name, wherever a framework keeps them. The
   // name is built the way frameworks build it: a component in a directory

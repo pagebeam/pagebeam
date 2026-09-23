@@ -429,3 +429,18 @@ test('source held back from the model for its size is named in the output', asyn
     await llm.stop();
   }
 });
+
+test('routes configured outside the source include still make the screens incomplete', async () => {
+  const { work } = await repository(
+    {
+      'pagebeam.config.yaml':
+        "docs:\n  root: docs\napps:\n  - name: web\n    path: app\n    include: ['src/**/*']\n",
+      'docs/guide.md': '# Guide\n\nPress **Save** to keep it.\n',
+      'app/vite.config.ts': 'export default { plugins: [remix({ routes(defineRoutes) { return defineRoutes(() => {}) } })] }\n',
+      'app/src/app/routes/_index.tsx': 'export default () => <button>Save</button>;\n',
+    },
+    { 'docs/guide.md': '# Guide\n\nPress **Save** to keep your work.\n' },
+  );
+  const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', work]);
+  assert.match(stdout, /web may have screens it did not find: routes are configured in vite\.config\.ts/);
+});

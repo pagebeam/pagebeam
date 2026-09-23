@@ -2,7 +2,7 @@ import { stringify } from 'yaml';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { glob } from 'tinyglobby';
-import { routeModel } from '@pagebeam/app';
+import { ROUTE_CONFIG, routeModel, type ConfigFile } from '@pagebeam/app';
 
 // Working out what a repository holds, so somebody can try this without first
 // writing a configuration for a tool they have not seen work.
@@ -31,6 +31,21 @@ const CALLED_DOCS = /^(docs?|documentation|content|guide|guides|handbook|manual|
 // Where routes live. What comes before it is the application they belong to:
 // the components and the helpers sit beside that directory, not inside it.
 const ROUTE_DIR = /(^|\/)(pages|routes|views|app|screens)\//;
+
+// Framework configuration anywhere below `root`, with its contents, because
+// it decides which files are routes.
+async function routeConfigs(root: string): Promise<ConfigFile[]> {
+  const found = await glob(['**/*.config.*'], { cwd: root, ignore: IGNORE, dot: false });
+  const configs: ConfigFile[] = [];
+  for (const file of found.filter((f) => ROUTE_CONFIG.test(f))) {
+    const text = await readFile(path.join(root, file), 'utf8').catch((error: { code?: string }) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (text !== null) configs.push({ path: file, text });
+  }
+  return configs;
+}
 
 function appRootOf(routeFile: string): string {
   const at = routeFile.search(ROUTE_DIR);
@@ -96,7 +111,7 @@ async function beside(cwd: string): Promise<Found['apps']> {
       dot: false,
     }).catch(() => []);
 
-    const model = routeModel(routes);
+    const model = routeModel(routes, await routeConfigs(at));
     const reachable = routes.filter((f) => model.routeOf(f) !== null);
     if (reachable.length === 0) continue;
     found.push({
@@ -140,7 +155,7 @@ export async function discover(cwd: string): Promise<Found> {
 
   // Somewhere with routes is an application: a reader can move around in it.
   // A directory of components with nowhere to go is a library.
-  const model = routeModel(parts);
+  const model = routeModel(parts, await routeConfigs(cwd));
   const isRoute = (file: string): boolean => model.routeOf(file) !== null;
   const grouped = new Map<string, { routes: number; parts: number }>();
   for (const file of parts) {
@@ -199,7 +214,7 @@ export function configFor(found: Found): string {
 
 export async function looksLikeAnApp(cwd: string): Promise<boolean> {
   const found = await glob(PARTS, { cwd, ignore: IGNORE, dot: false });
-  const model = routeModel(found);
+  const model = routeModel(found, await routeConfigs(cwd));
   return found.some((f) => model.routeOf(f) !== null);
 }
 
