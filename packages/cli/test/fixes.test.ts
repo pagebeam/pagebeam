@@ -543,3 +543,17 @@ test('init gives each Next.js application in a repository its own config', async
   const config = parse(await readFile(path.join(root, 'pagebeam.config.yaml'), 'utf8')) as { apps: { path: string }[] };
   assert.deepEqual(config.apps.map((a) => a.path).sort(), ['apps/blog', 'apps/shop']);
 });
+
+test('an operation only a component attribute names is not reported missing from the specification', async () => {
+  const cited = {
+    'pagebeam.config.yaml': COUNTED,
+    'api/openapi.json': SPEC,
+    'docs/api.mdx': '# API\n\n<Example method="POST" path="/fake" />\n',
+  };
+  const unbuilt = await checked(cited);
+  assert.doesNotMatch(unbuilt, /POST \/fake is documented but not in/);
+  assert.match(unbuilt, /1 operation\(s\) named only in component attributes were not checked/);
+
+  const built = await checked({ ...cited, 'dist/api/index.html': '<p>POST /fake creates one.</p>' });
+  assert.match(built, /POST \/fake is documented but not in/);
+});

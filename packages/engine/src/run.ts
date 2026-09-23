@@ -340,7 +340,21 @@ async function runOpenapi(
     findings.push(...openapi.checkCoverage(pages, operations, shown, app.name, published?.found ?? null));
   }
 
-  findings.push(...openapi.checkCitations(cited, every, withSpec.map((a) => a.name)));
+  // What a component renders is not known from its attributes, so an
+  // operation named only there is held against the specification once the
+  // built site shows it to a reader.
+  const attributed = cited.filter((c) => c.attribute === true);
+  const shownOnSite =
+    built === null || attributed.length === 0
+      ? new Set<string>()
+      : (await publishedPaths(built, attributed)).found;
+  const held = cited.filter((c) => c.attribute !== true || shownOnSite.has(`${c.method.toUpperCase()} ${c.path}`));
+  if (held.length < cited.length) {
+    skipped.push(
+      `openapi: ${cited.length - held.length} operation(s) named only in component attributes were not checked against the specification, because the built site ${built === null ? 'was not found' : 'does not show them'}`,
+    );
+  }
+  findings.push(...openapi.checkCitations(held, every, withSpec.map((a) => a.name)));
   return findings;
 }
 
