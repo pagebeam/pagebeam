@@ -225,8 +225,9 @@ function unwrapped(node: any): any {
 }
 
 // The object the module exports, followed through a variable and through
-// wrappers such as `withMDX(config)`. Null when it is built by code.
-function exportedObject(program: any): any {
+// wrappers such as `withMDX(config)`. `object` is null when it is built by
+// code, and `exported` false when the module exports nothing.
+function exportedObject(program: any): { exported: boolean; object: any } {
   const declared = new Map<string, any>();
   let exported: any = null;
   for (const statement of program.body) {
@@ -244,20 +245,21 @@ function exportedObject(program: any): any {
       exported = statement.expression.right;
     }
   }
+  if (exported === null) return { exported: false, object: null };
   const seen = new Set<string>();
   let node = unwrapped(exported);
   while (node) {
-    if (node.type === 'ObjectExpression') return node;
+    if (node.type === 'ObjectExpression') return { exported: true, object: node };
     if (node.type === 'Identifier' && !seen.has(node.name)) {
       seen.add(node.name);
       node = unwrapped(declared.get(node.name));
     } else if (node.type === 'CallExpression' && node.arguments.length > 0) {
       node = unwrapped(node.arguments[0]);
     } else {
-      return null;
+      return { exported: true, object: null };
     }
   }
-  return null;
+  return { exported: true, object: null };
 }
 
 function mentions(node: any, name: string): boolean {
@@ -287,7 +289,12 @@ function nextSettings(config: ConfigFile | undefined): NextSettings {
     settings.unread = `${config.path} could not be parsed`;
     return settings;
   }
-  const object = exportedObject(program);
+  const { exported, object } = exportedObject(program);
+  if (exported && object === null) {
+    settings.unread = `${config.path} builds its settings in code, which pagebeam does not run`;
+    return settings;
+  }
+  const spreads = object?.properties.some((p: any) => p.type === 'SpreadElement') ?? false;
   const property = (name: string): any =>
     object?.properties.find((p: any) => keyOf(p) === name)?.value;
   const unread: string[] = [];
@@ -296,7 +303,7 @@ function nextSettings(config: ConfigFile | undefined): NextSettings {
   if (extensions?.type === 'ArrayExpression' && extensions.elements.every((e: any) => e?.type === 'StringLiteral')) {
     const listed = extensions.elements.map((e: any) => String(e.value).replace(/^\./, ''));
     if (listed.length > 0) settings.extensions = listed;
-  } else if (extensions !== undefined || mentions(program, 'pageExtensions')) {
+  } else if (extensions !== undefined || spreads || mentions(program, 'pageExtensions')) {
     unread.push(`pageExtensions in ${config.path} is not a literal list`);
   }
 
@@ -304,7 +311,7 @@ function nextSettings(config: ConfigFile | undefined): NextSettings {
   if (base?.type === 'StringLiteral') settings.basePath = String(base.value).replace(/\/+$/, '');
   else if (base?.type === 'TemplateLiteral' && base.expressions.length === 0) {
     settings.basePath = String(base.quasis[0].value.cooked).replace(/\/+$/, '');
-  } else if (base !== undefined || mentions(program, 'basePath')) {
+  } else if (base !== undefined || spreads || mentions(program, 'basePath')) {
     unread.push(`basePath in ${config.path} is not a literal string`);
   }
 
@@ -312,14 +319,26 @@ function nextSettings(config: ConfigFile | undefined): NextSettings {
   return settings;
 }
 
-// Next.js route files in the extensions an application configures, so they
+function dirOf(file: string): string {
+  const dir = path.posix.dirname(file);
+  return dir === '.' ? '' : dir;
+}
+
+function within(dir: string, file: string): boolean {
+  return dir === '' || file.startsWith(`${dir}/`);
+}
+
+// Next.js route files in the extensions each application configures, so they
 // are read even where the source include leaves those extensions out.
 export function routeFilePatterns(configs: ConfigFile[]): string[] {
-  const nextConfig = configs.find((c) => NEXT_CONFIG.test(c.path));
-  if (nextConfig === undefined && !configs.some(declaresNext)) return [];
-  const ext = nextSettings(nextConfig).extensions;
-  const any = ext.length === 1 ? ext[0]! : `{${ext.join(',')}}`;
-  return [`**/app/**/{page,layout,template}.${any}`, `**/pages/**/*.${any}`];
+  const roots = new Map<string, string[]>();
+  for (const c of configs.filter(declaresNext)) roots.set(dirOf(c.path), NEXT_DEFAULT_EXTENSIONS);
+  for (const c of configs.filter((c) => NEXT_CONFIG.test(c.path))) roots.set(dirOf(c.path), nextSettings(c).extensions);
+  return [...roots].flatMap(([dir, ext]) => {
+    const any = ext.length === 1 ? ext[0]! : `{${ext.join(',')}}`;
+    const under = dir === '' ? '' : `${dir}/`;
+    return [`${under}**/app/**/{page,layout,template}.${any}`, `${under}**/pages/**/*.${any}`];
+  });
 }
 
 export function routeModel(
@@ -332,25 +351,51 @@ export function routeModel(
     ...configs,
     ...list.filter((f): f is ConfigFile => ROUTE_CONFIG.test(f.path) && typeof f.text === 'string'),
   ];
-  const nextConfig = allConfigs.find((c) => NEXT_CONFIG.test(c.path));
-  const nextManifest = allConfigs.find(declaresNext);
-  const next = nextSettings(nextConfig);
-  const ext = next.extensions.map((e) => e.replace(/[.]/g, '\\.')).join('|');
-  const nextAppPage = new RegExp(`^(?:(.*)\\/)?app\\/(?:(.*)\\/)?page\\.(?:${ext})$`);
-  const nextPagesFile = new RegExp(`^(?:(.*)\\/)?pages\\/(.+)\\.(?:${ext})$`);
+  // In a repository of several applications each has its own Next.js
+  // config, and a file follows the nearest one above it.
+  const nextConfigs = allConfigs
+    .filter((c) => NEXT_CONFIG.test(c.path))
+    .sort((a, b) => dirOf(b.path).length - dirOf(a.path).length);
+  const nextManifests = allConfigs.filter(declaresNext);
+  const settingsOf = new Map(nextConfigs.map((c) => [c.path, nextSettings(c)]));
+  const DEFAULTS = nextSettings(undefined);
   // Next.js needs no config file, so JSX in `pages/` is read by its rules
   // anyway. Plain `.ts`/`.js` there is an endpoint unless this is Next.js,
   // which a config file, a dependency on `next` or an App Router page shows.
   const reactPagesFile = /^(?:(.*)\/)?pages\/(.+)\.(?:[jt]sx)$/;
+  const matchers = new Map<string, { appPage: RegExp; pagesFile: RegExp; anyAppPage: boolean }>();
+  const matcherFor = (extensions: string[]) => {
+    const key = extensions.join('|');
+    let found = matchers.get(key);
+    if (found === undefined) {
+      const ext = extensions.map((e) => e.replace(/[.]/g, '\\.')).join('|');
+      const appPage = new RegExp(`^(?:(.*)\\/)?app\\/(?:(.*)\\/)?page\\.(?:${ext})$`);
+      found = {
+        appPage,
+        pagesFile: new RegExp(`^(?:(.*)\\/)?pages\\/(.+)\\.(?:${ext})$`),
+        anyAppPage: list.some((f) => appPage.test(f.path) && !f.path.includes('/routes/')),
+      };
+      matchers.set(key, found);
+    }
+    return found;
+  };
+  const nextFor = (file: string) => {
+    const config = nextConfigs.find((c) => within(dirOf(c.path), file));
+    const settings = config === undefined ? DEFAULTS : settingsOf.get(config.path)!;
+    const match = matcherFor(settings.extensions);
+    const declared = config !== undefined || nextManifests.some((m) => within(dirOf(m.path), file));
+    return { settings, ...match, isNext: declared || match.anyAppPage };
+  };
   const svelteKit = list.some((f) => f.path.endsWith('+page.svelte'));
-  const isNext = nextConfig !== undefined || nextManifest !== undefined || list.some((f) => nextAppPage.test(f.path) && !f.path.includes('/routes/'));
   const remixConfigured = allConfigs.find(
     (c) => /(^|\/)(remix|vite|react-router)\.config\./.test(c.path) && /\broutes\s*[(:]|flatRoutes|defineRoutes/.test(c.text),
   );
   const frameworks = new Set<string>();
 
   const classify = (file: string): ScreenRoute | null => {
-    const appPage = file.match(nextAppPage);
+    const nextHere = nextFor(file);
+    const next = nextHere.settings;
+    const appPage = file.match(nextHere.appPage);
     if (appPage && !file.includes('/routes/')) {
       const dirs = (appPage[2] ?? '').split('/').filter((p) => p !== '');
       if (dirs.some((d) => d.startsWith('_'))) return null;
@@ -384,7 +429,7 @@ export function routeModel(
     // under `routes/` is a component. In Sapper every one was a route.
     if (svelteKit && file.endsWith('.svelte')) return null;
 
-    const pagesFile = isNext ? file.match(nextPagesFile) : file.match(reactPagesFile);
+    const pagesFile = nextHere.isNext ? file.match(nextHere.pagesFile) : file.match(reactPagesFile);
     const nuxt = pagesFile === null ? file.match(NUXT_PAGES) : null;
     const folder = pagesFile === null && nuxt === null ? file.match(FOLDERS) : null;
     const found = pagesFile ?? nuxt ?? folder;
@@ -402,7 +447,7 @@ export function routeModel(
 
   const reasons = [
     ...(remixConfigured === undefined ? [] : [`routes are configured in ${remixConfigured.path}, which pagebeam does not evaluate`]),
-    ...(next.unread === null ? [] : [next.unread]),
+    ...[...settingsOf.values()].flatMap((n) => (n.unread === null ? [] : [n.unread])),
   ];
   const known = new Map<string, ScreenRoute | null>();
   return {
@@ -411,7 +456,7 @@ export function routeModel(
       return known.get(file)!;
     },
     frameworks,
-    read: allConfigs.filter((c) => !c.path.endsWith('package.json') || c === nextManifest).map((c) => c.path),
+    read: allConfigs.filter((c) => !c.path.endsWith('package.json') || nextManifests.includes(c)).map((c) => c.path),
     complete: reasons.length === 0,
     ...(reasons.length === 0 ? {} : { reason: reasons.join('; ') }),
   };

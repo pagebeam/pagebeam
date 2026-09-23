@@ -526,3 +526,20 @@ test('an operation only a component attribute names is not counted as documented
   assert.match(stdout, /1 of 2 api API operations are not documented/);
   assert.match(stdout, /named only in a component's attributes/);
 });
+
+test('init gives each Next.js application in a repository its own config', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-monorepo-'));
+  const put = async (at: string, text: string) => {
+    await mkdir(path.dirname(path.join(root, at)), { recursive: true });
+    await writeFile(path.join(root, at), text);
+  };
+  await put('docs/guide.md', '# Guide\n\nHow the product works, in short.\n');
+  await put('apps/blog/next.config.mjs', "export default { pageExtensions: ['mdx'] }\n");
+  await put('apps/blog/app/page.mdx', '# Blog\n');
+  await put('apps/shop/package.json', '{"dependencies":{"next":"15.0.0"}}\n');
+  await put('apps/shop/pages/cart.js', `export default function Cart() { return <>${BUTTONS}</>; }\n`);
+
+  await run(process.execPath, [CLI, 'init', '--cwd', root]);
+  const config = parse(await readFile(path.join(root, 'pagebeam.config.yaml'), 'utf8')) as { apps: { path: string }[] };
+  assert.deepEqual(config.apps.map((a) => a.path).sort(), ['apps/blog', 'apps/shop']);
+});

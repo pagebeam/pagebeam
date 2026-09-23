@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { routeModel, screensOf } from '../dist/screens.js';
+import { routeFilePatterns, routeModel, screensOf } from '../dist/screens.js';
 
 const isRoute = (file: string, all: string[] = [file]): boolean => routeModel(all).routeOf(file) !== null;
 const addressOf = (file: string, all: string[] = [file]): string => routeModel(all).routeOf(file)?.addresses[0] ?? '(none)';
@@ -210,9 +210,35 @@ test('Next.js settings are read from the exported object, through a variable and
   assert.deepEqual(wrapped.routeOf('pages/a.tsx')?.addresses, ['/docs/a']);
   const unused = at("const example = { basePath: '/old' };\nexport default {};");
   assert.equal(unused.complete, false);
-  const built = at('export default (phase) => ({ reactStrictMode: true });');
-  assert.deepEqual(built.routeOf('pages/a.tsx')?.addresses, ['/a']);
-  assert.equal(built.complete, true);
+});
+
+test('a Next.js config built by code, or spreading another object, is not assumed to hold the defaults', () => {
+  const at = (text: string) => routeModel(['pages/a.tsx'], [{ path: 'next.config.mjs', text }]);
+  for (const text of [
+    'export default makeConfig();',
+    'export default (phase) => ({ reactStrictMode: true });',
+    "import shared from './shared.mjs';\nexport default { ...shared, reactStrictMode: true };",
+  ]) {
+    const model = at(text);
+    assert.equal(model.complete, false, text);
+  }
+  assert.equal(at('export default { reactStrictMode: true };').complete, true);
+});
+
+test('each application in a repository follows its own Next.js config', () => {
+  const configs = [
+    { path: 'apps/web/next.config.mjs', text: "export default { pageExtensions: ['mdx'], basePath: '/web' }" },
+    { path: 'apps/shop/package.json', text: '{"dependencies":{"next":"15.0.0"}}' },
+  ];
+  const model = routeModel(['apps/web/app/page.mdx', 'apps/shop/pages/cart.js'], configs);
+  assert.deepEqual(model.routeOf('apps/web/app/page.mdx')?.addresses, ['/web']);
+  assert.deepEqual(model.routeOf('apps/shop/pages/cart.js')?.addresses, ['/cart']);
+  assert.deepEqual(routeFilePatterns(configs).sort(), [
+    'apps/shop/**/app/**/{page,layout,template}.{tsx,ts,jsx,js}',
+    'apps/shop/**/pages/**/*.{tsx,ts,jsx,js}',
+    'apps/web/**/app/**/{page,layout,template}.mdx',
+    'apps/web/**/pages/**/*.mdx',
+  ]);
 });
 
 test('a dependency on next makes plain .js and .ts files in pages routes', () => {
