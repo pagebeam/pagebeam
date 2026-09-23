@@ -1,3 +1,4 @@
+import { stringify } from 'yaml';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { glob } from 'tinyglobby';
@@ -177,23 +178,21 @@ export async function discover(cwd: string): Promise<Found> {
   return { docs, apps };
 }
 
+// Names and paths come from the file system, so they go through the YAML
+// writer: a folder called `true`, `null` or `#docs` must stay a string.
 export function configFor(found: Found): string {
-  const lines: string[] = [];
-  lines.push('docs:');
-  lines.push(`  root: ${found.docs?.root ?? 'docs'}`);
-  lines.push('');
+  const docs = stringify({ docs: { root: found.docs?.root ?? 'docs' } });
   if (found.apps.length === 0) {
-    lines.push('# Every application this documentation describes. Without at least one,');
-    lines.push('# only the documentation can be checked against itself.');
-    lines.push('apps: []');
-  } else {
-    lines.push('apps:');
-    for (const app of found.apps) {
-      lines.push(`  - name: ${app.name}`);
-      lines.push(`    path: ${app.path}`);
-    }
+    return [
+      docs,
+      '# Every application this documentation describes. Without at least one,',
+      '# only the documentation can be checked against itself.',
+      'apps: []',
+      '',
+    ].join('\n');
   }
-  return `${lines.join('\n')}\n`;
+  const apps = stringify({ apps: found.apps.map((app) => ({ name: app.name, path: app.path })) });
+  return `${docs}\n${apps}`;
 }
 
 export async function looksLikeAnApp(cwd: string): Promise<boolean> {
