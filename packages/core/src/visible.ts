@@ -11,11 +11,11 @@ type Node = {
 const UNSEEN = new Set(['script', 'style', 'template', 'noscript', 'svg', 'head']);
 const BLOCK = new Set(['p', 'div', 'li', 'tr', 'td', 'th', 'pre', 'section', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br']);
 
-function hidden(node: Node): boolean {
-  for (const { name, value } of node.attrs ?? []) {
+export function hiddenBy(attrs: Iterable<{ name: string; value: string | null }>): boolean {
+  for (const { name, value } of attrs) {
     if (name === 'hidden') return true;
     if (name === 'aria-hidden' && value === 'true') return true;
-    if (name === 'style' && /display\s*:\s*none|visibility\s*:\s*hidden/i.test(value)) return true;
+    if (name === 'style' && value !== null && /display\s*:\s*none|visibility\s*:\s*hidden/i.test(value)) return true;
   }
   return false;
 }
@@ -29,7 +29,7 @@ export function visibleText(html: string): string {
       out.push(node.value ?? '');
       return;
     }
-    if (UNSEEN.has(node.nodeName) || hidden(node)) return;
+    if (UNSEEN.has(node.nodeName) || hiddenBy(node.attrs ?? [])) return;
     for (const child of node.childNodes ?? []) walk(child);
     if (BLOCK.has(node.nodeName)) out.push('\n');
   };

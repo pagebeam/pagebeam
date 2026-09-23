@@ -8,4 +8,3 @@ export * from './raw.js';
 export * as history from './git.js';
 export * from './catalogue.js';
 export * from './screens.js';
-export * from './visible.js';

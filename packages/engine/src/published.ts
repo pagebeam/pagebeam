@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { visibleText } from '@pagebeam/app';
+import { visibleText } from '@pagebeam/core';
 
 // What a reader is actually served, rather than what happens to be written in
 // a source file. A documentation site may publish its API reference from the

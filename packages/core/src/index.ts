@@ -3,3 +3,4 @@ export * from './config.js';
 export * from './identity.js';
 export * from './ignore.js';
 export * from './evidence.js';
+export * from './visible.js';

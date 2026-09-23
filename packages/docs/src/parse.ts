@@ -5,7 +5,8 @@ import { frontmatterFromMarkdown } from 'mdast-util-frontmatter';
 import { frontmatter } from 'micromark-extension-frontmatter';
 import { mdxjs } from 'micromark-extension-mdxjs';
 import { mdxFromMarkdown } from 'mdast-util-mdx';
-import { visit } from 'unist-util-visit';
+import { SKIP as PASS_OVER, visit } from 'unist-util-visit';
+import { hiddenBy, visibleText } from '@pagebeam/core';
 import { parseDirectives } from './directives.js';
 import type {
   DocCodeBlock,
@@ -80,21 +81,8 @@ function htmlLinks(raw: string, from = 0): DocLink[] {
   return out;
 }
 
-// The text an HTML block shows a reader: no scripts, styles, comments or tags.
 function htmlText(html: string): string {
-  return html
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<(script|style|template|noscript)\b[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&#x2F;|&#47;/gi, '/')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/[ \t]+/g, ' ')
-    .trim();
+  return visibleText(html).replace(/\s+/g, ' ').trim();
 }
 
 const METHOD_ATTRS = new Set(['method', 'verb']);
@@ -107,6 +95,16 @@ function operationOf(attrs: Map<string, string>, line: number): DocOperation | n
   if (method === undefined || where === undefined) return null;
   if (!/^(get|post|put|patch|delete|head|options|trace)$/i.test(method) || !where.startsWith('/')) return null;
   return { method: method.toUpperCase(), path: where, line };
+}
+
+// `hidden` with no value, and `aria-hidden={true}` written as an expression.
+function jsxAttributes(attributes: any[] | undefined): { name: string; value: string | null }[] {
+  return (attributes ?? [])
+    .filter((a) => a?.type === 'mdxJsxAttribute')
+    .map((a) => ({
+      name: String(a.name ?? '').toLowerCase(),
+      value: typeof a.value === 'string' ? a.value : typeof a.value?.value === 'string' ? a.value.value : null,
+    }));
 }
 
 function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'texts' | 'operations' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
@@ -166,6 +164,7 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
       prose.push(node.value);
       texts.push({ value: node.value, line: node.position?.start?.line ?? 1 });
     } else if (node.type === 'mdxJsxFlowElement' || node.type === 'mdxJsxTextElement') {
+      if (hiddenBy(jsxAttributes(node.attributes))) return PASS_OVER;
       const named = new Map<string, string>();
       for (const attribute of node.attributes ?? []) {
         if (attribute?.type === 'mdxJsxAttribute' && typeof attribute.value === 'string') {
@@ -253,6 +252,11 @@ async function parseAstro(
     }
 
     if (node?.type === 'element' || node?.type === 'component') {
+      const attrs = (node.attributes ?? []).map((a: any) => ({
+        name: String(a?.name ?? '').toLowerCase(),
+        value: a?.kind === 'empty' ? null : String(a?.value ?? ''),
+      }));
+      if (hiddenBy(attrs)) return;
       const named = new Map<string, string>();
       for (const attribute of node.attributes ?? []) {
         if (attribute?.kind === 'quoted' && typeof attribute.value === 'string') {

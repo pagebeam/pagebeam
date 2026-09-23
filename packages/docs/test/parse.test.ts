@@ -97,3 +97,14 @@ test('script and style contents are not prose', async () => {
   assert.ok(!parsed!.prose.includes('secret'));
   assert.match(parsed!.prose, /Visible/);
 });
+
+test('text inside a hidden element is not text the page shows', async () => {
+  const md = await page('a.md', '# A\n\n<div hidden>GET /private</div>\n\n<p style="display: none">DELETE /admin</p>\n');
+  assert.doesNotMatch(md!.prose, /private|admin/);
+  const mdx = await page('b.mdx', '# B\n\n<div aria-hidden="true">GET /private</div>\n\n<Endpoint hidden method="GET" path="/admin" />\n');
+  assert.doesNotMatch(mdx!.prose, /private/);
+  assert.deepEqual(mdx!.operations, []);
+  const astro = await page('c.astro', '<div hidden><p>GET /private</p></div><p>GET /public</p>');
+  assert.doesNotMatch(astro!.prose, /private/);
+  assert.match(astro!.prose, /public/);
+});
