@@ -26,13 +26,19 @@ export async function settles(finding: Finding, was: string | null, now: string)
   const after = await parsed(path, now);
   if (after === null) return { because: 'the page it wrote could not be read as a page' };
 
+  // Said here as well as by the checks, because the checks do not ask
+  // external addresses again for a draft.
+  const dropped = mayDrop(finding);
+  if (dropped !== null && after.links.some((l) => l.href === dropped)) {
+    return { because: `it kept the broken link ${dropped}` };
+  }
+
   if (was === null) return null;
   const before = await parsed(path, was);
   if (before === null) return null;
 
   const missing = (of: string[], have: string[]): string[] => of.filter((one) => !have.includes(one));
 
-  const dropped = mayDrop(finding);
   const lostLinks = missing(
     before.links.map((l) => l.href),
     after.links.map((l) => l.href),

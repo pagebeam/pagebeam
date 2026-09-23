@@ -205,6 +205,37 @@ test('a draft that keeps an undeclared setting is not proposed', async () => {
   }
 });
 
+test('a draft that keeps a dead external link is not proposed', async () => {
+  // Every request to the fake site answers 404.
+  const dead = createServer((_, res) => {
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((resolve) => dead.listen(0, '127.0.0.1', resolve));
+  const a = dead.address();
+  const url = `http://127.0.0.1:${typeof a === 'object' && a !== null ? a.port : 0}/gone`;
+  const llm = await model(`# Links\n\nThe full reference is [on the old site](${url}), which covers every option in detail.\n`);
+  try {
+    const { work } = await repository(
+      {
+        'docs/links.md': `# Links\n\nSee [the reference](${url}) for every option.\n`,
+        'app/Home.vue': '<template><p>Home</p></template>\n',
+        'pagebeam.config.yaml':
+          `${CONFIG}model:\n  baseUrl: ${llm.url}\n  name: local\n`.replace(
+            'checks:\n',
+            'checks:\n  links:\n    external: true\n',
+          ),
+      },
+      { 'app/Home.vue': '<template><p>Welcome</p></template>\n' },
+    );
+    const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', work]);
+    assert.match(stdout, /^1 finding\(s\), 0 with a change to propose\./m);
+  } finally {
+    await llm.stop();
+    await new Promise<void>((resolve) => dead.close(() => resolve()));
+  }
+});
+
 test('a draft the checks no longer object to is proposed', async () => {
   const said = await proposing(
     '# Ledger\n\nPress **Print** to get every entry on paper, or save it as a file you can open.\n',
