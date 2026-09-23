@@ -1,12 +1,9 @@
 import { parseAll, type DocPage } from '@pagebeam/docs';
 import type { Finding } from '@pagebeam/core';
 
-// A page a model wrote is a claim that the problem is gone. Whether it is gone
-// is decided by running the checks again on the page (see `accepted` in
-// run.ts), so every check judges its own findings by its own rules.
-//
-// What is left here is what no check looks at: the page still reads as a page,
-// and it kept the links and code nobody asked it to remove.
+// What no check looks at in a page a model wrote: it still reads as a page,
+// and it kept the links and code nobody asked it to remove. Whether the
+// finding itself is gone is for the checks to say.
 export interface Refused {
   because: string;
 }
