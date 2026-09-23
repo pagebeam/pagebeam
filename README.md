@@ -2,31 +2,31 @@
 
 Docs that keep up with your product.
 
-pagebeam checks every page against the application it describes, tells you how
-sure it is, and opens the pull request that fixes what it can. Open source, in
-the repo you already have.
+pagebeam checks each page of your docs against the product it describes. It
+says how sure it is, and opens a pull request with the fixes it can make. It
+is open source and runs in the repository you already have.
+
+Full documentation: https://docs.pagebeam.dev
 
 ## Try it
 
-Two commands, in the repository holding your documentation:
+Run two commands in the repository that holds your docs:
 
 ```
 npx pagebeam init
 npx pagebeam check
 ```
 
-`init` looks at what is there and asks you to confirm it: where your prose
-lives, and which application it describes. Every question arrives with the
-answer it worked out already filled in, so it is usually one keypress.
+`init` looks at the repository and asks you to confirm what it found: where
+your pages are, and which application they describe. Each question comes with
+its answer filled in, so most take one keypress. When nobody can answer, in a
+pipe or a CI job, it writes what it found and says what it could not work out.
 
-Run where nobody can answer, in a pipe or a job, and it writes what it worked
-out instead of waiting, saying what it could not establish.
+`init` writes one file. `check` only reads and reports. Nothing is sent
+anywhere.
 
-Nothing is written outside that one file, and nothing reaches a remote. `check`
-reads and reports.
-
-If your product lives in a different repository from its documentation, check
-out both and point at them:
+If your product lives in another repository, check out both side by side and
+point the config at the other one:
 
 ```yaml
 docs:
@@ -38,9 +38,8 @@ apps:
 
 ## In CI
 
-One file per repository. Everything that differs is the three lines under
-`with`; the checkout of both sides with their history, the command and the
-summary are the same everywhere and live in the action.
+Add one workflow to the product repository. It runs when the product changes,
+which is when the docs start to go wrong.
 
 ```yaml
 name: docs drift
@@ -59,75 +58,88 @@ jobs:
           token: ${{ secrets.PAGEBEAM_TOKEN }}
 ```
 
-Put that in the product repository rather than the documentation one: it
-should run when the product changes, which is when documentation starts being
-wrong.
+The action checks out this repository and `your-org/docs` side by side, under
+their own names, with full history. It runs pagebeam from the docs, where the
+config lives. So a config that says `path: ../dashboard` works the same on a
+laptop and in CI.
 
-`profile: enforce` fails a pull request on a finding the source of truth states
-outright that this change introduced. `command: fix` with `publish: 'true'`
-opens the pull request instead of reporting. Worked files for all three are in
-`examples/`.
+| Input           | Meaning                                                                          | Default                |
+| --------------- | -------------------------------------------------------------------------------- | ---------------------- |
+| `docs`          | The docs repository, as owner/name, when it is not this one                      | this repository        |
+| `products`      | Other product repositories to check out, one owner/name per line                 | none                   |
+| `command`       | `check` to report, `fix` to propose                                              | `check`                |
+| `profile`       | `observe`, `enforce` or `enforce-all`                                            | `observe`              |
+| `publish`       | With `fix`, open or update the pull request                                      | `false`                |
+| `token`         | Reads the other repositories and opens the pull request                          | the job's own token    |
+| `model-key`     | Your model provider's key, as a secret                                           | none                   |
+| `model-key-env` | The variable your config's `model.apiKeyEnv` names                               | `OPENAI_API_KEY`       |
+| `version`       | The pagebeam release to run                                                      | the release you pinned |
 
-The token reaches the documentation repository, which the job's own token does
-not. A GitHub App installation token is the narrower choice.
+The job's own token only reaches this repository. To read another repository
+or open a pull request in it, pass a token that can: a GitHub App installation
+token is the narrowest. To publish in this repository, give the job
+`contents: write` and `pull-requests: write`.
+
+`examples/` has workflows for a product repository, a docs repository and a
+pull request gate.
 
 ## Checks
 
-| Check | Finds | Default |
-| --- | --- | --- |
-| `links` | A page pointing at a route or a file that is not there | on |
-| `configKeys` | A setting the documentation describes that no example config declares | on |
-| `openapi` | An endpoint documented that the specification lacks, and operations nothing documents | on |
-| `strings` | A control named in the documentation that the application no longer has | off |
-| `moved` | Code changing under a page that did not change with it | off |
-| `undocumented` | A screen of controls the documentation never mentions | on |
+| Check          | Finds                                                                          | Default |
+| -------------- | ------------------------------------------------------------------------------ | ------- |
+| `links`        | A link to a route or file that does not exist                                  | on      |
+| `configKeys`   | A setting the docs describe that no example config declares                    | on      |
+| `openapi`      | An endpoint the docs describe that the spec lacks, and endpoints no page describes | on  |
+| `strings`      | A control the docs name that the application no longer has                     | off     |
+| `moved`        | Code that changed under a page that did not change with it                     | off     |
+| `undocumented` | A screen of controls the docs never mention                                    | on      |
 
-`strings` and `moved` are off until asked for, and compare against an earlier
-revision. `undocumented` reads the application rather than its history, and is
-always `review`, so it reports without ever failing a build.
+`strings` and `moved` compare today's code with an earlier revision, and stay
+off until you turn them on. `undocumented` reads the application, not its
+history. Its findings are always `review`, so it never fails a build.
 
 ## Standing
 
-A finding says what its evidence can carry.
+A finding claims only what its evidence supports.
 
-**proven**: the source of truth says so. A built site has no such route. A
-control was in the application at a known revision and is not now.
+**proven**: the source of truth says so. The built site has no such route. A
+control was in the application at a known revision and is gone now.
 
-**review**: worth a person's time, and not proof. Absence from what could be
-read is not absence from the product. A label may be assembled at runtime, or
-live in an application no parser covers.
+**review**: worth a look, but not proof. pagebeam could not find it, which
+does not mean the product lacks it. A label may be built at runtime, or live
+in code no parser reads.
 
 Only `proven` findings can fail a build, and only under an enforcing profile.
 
 ## Usage
 
 ```
-pagebeam init                      write a config by looking at the repository
-pagebeam check                     report everything, block nothing
-pagebeam check --profile enforce   fail on proven findings this change introduced
-pagebeam fix                       say what it would propose
-pagebeam fix --publish             open or update the pull request
+pagebeam init                          write a config by looking at the repository
+pagebeam check                         report everything, block nothing
+pagebeam check --profile enforce       block on proven findings this change introduced
+pagebeam check --profile enforce-all   block on every proven finding
+pagebeam fix                           say what it would propose
+pagebeam fix --publish                 open or update the pull request
 ```
 
-Exit `0` nothing blocks, `1` a proven finding blocks, `2` the answer cannot be
-trusted: nothing was read, or a check that was asked for could not run.
+Exit `0`: nothing blocks. `1`: a proven finding blocks. `2`: the answer cannot
+be trusted, because nothing was read or a requested check could not run.
 
 ## Proposals
 
-A check can prove a page is wrong without being able to say what it should say
-instead. Name a provider and each of those findings is put to it once, with the
-page and the evidence already gathered.
+A check can prove a page is wrong without knowing what the page should say.
+If you name a model provider, pagebeam asks it once about each of those
+findings, with the page and the evidence it already has.
 
-Any endpoint answering the OpenAI chat completions shape works: a provider's
-own address, a gateway in front of several, or a router on this machine.
-pagebeam ships no provider code and never sees a key, only the name of the
-variable holding one. Use `headers` where a provider wants more than a bearer
-token, and `enrich: false` to keep the provider configured and stop asking it.
+Any endpoint that speaks the OpenAI chat completions API works: a provider, a
+gateway in front of several, or a router on your machine. pagebeam ships no
+provider code. It never sees your key, only the name of the variable that
+holds it. Use `headers` if a provider needs more than a bearer token. Set
+`enrich: false` to keep the provider in the config but stop asking it.
 
-Point `skills` at whatever the project already keeps for the people who write
-its documentation. pagebeam does not read them or decide what counts: they are
-given to the model as they are, after the rules about how it must answer and
-what it may not invent, which they cannot displace.
+If your project keeps writing guides for its docs, list them under `skills`.
+pagebeam passes them to the model as they are, after its own rules on how to
+answer and what not to invent. They cannot override those rules.
 
 ```yaml
 model:
@@ -136,39 +148,37 @@ model:
     - docs/TERMS.md
 ```
 
-A file named here that cannot be read stops the run. Anyone who can commit to
-the repository can change what these say, which is the same trust you already
-place in what CI runs.
+If a listed file cannot be read, the run stops.
 
-### What leaves this machine
+### What leaves your machine
 
-By default: the documentation page, the finding, and the evidence for it.
+By default: the docs page, the finding and its evidence.
 
-Describing a control needs more than its name, so `sendSource: true` also
-sends the source the controls were found in. That is the product itself
-rather than its documentation, so it is off until you say otherwise. Every
-file sent is named in the run's output, and one that looks like it holds a
-credential is held back and reported rather than sent.
+With `sendSource: true`, pagebeam also sends the source files a control was
+found in. That is your product's code, so it is off unless you turn it on. The
+output names every file sent. A file that looks like it holds a credential is
+held back and reported instead.
 
 ```yaml
 model:
-  sendSource: false   # the default
+  sendSource: false # the default
 ```
 
 ### What is refused
 
-A draft that comes back unchanged, or shorter than half the page it was given,
-is refused rather than proposed. A provider that cannot answer leaves the
-finding exactly as it was.
+Every draft is checked again before it is proposed. The checks run on the
+page the model wrote. If they still find what it was asked to fix, or find
+something new on that page, the draft is refused. A draft that comes back
+unchanged, shorter than half the page, or missing links and code the page
+had, is refused too.
 
-Every draft is marked as written by a model. A pull request containing one
-opens as a draft, because a change worked out from the source says exactly
-what it replaces and expects to find, while a drafted page is a suggestion
-about prose nobody has read yet. Set `propose.draft` to decide it yourself.
+Every draft is marked as written by a model. A pull request that contains one
+opens as a draft. Set `propose.draft` to decide this yourself.
 
 ## Configuration
 
-`pagebeam.config.yaml` beside the documentation.
+`pagebeam.config.yaml` sits next to your docs. Paths are relative to the
+folder you run pagebeam in.
 
 ```yaml
 docs:
@@ -180,11 +190,13 @@ docs:
 history:
   sinceDays: 30                 # how far back to compare
 
-apps:                           # every application the documentation describes
+apps:                           # every application the docs describe
   - name: dashboard
     path: ../dashboard
     include: ['**/*.{vue,ts,tsx,js}']
     envFiles: ['.env.example']
+    openapi:
+      spec: ../dashboard/openapi.yaml
     url: http://localhost:3000  # optional: open it and read what it shows
     routes: ['/', '/settings']
     auth:
@@ -206,34 +218,18 @@ propose:
   commitPrefix: docs        # the type every commit and the title use
 ```
 
-Every setting is checked. One that does not exist is an error, not a shrug.
+pagebeam checks every setting. A setting it does not know is an error.
 
 ## Coverage
 
-Reading files sees every control an application declares. Opening a running
-application sees what a user sees, including labels assembled at runtime and
-resolved from a catalogue, and only on the pages it is told to open.
+Reading files shows every control the application declares. Opening a running
+copy shows what a user sees, including labels built at runtime, but only on
+the pages you tell it to open.
 
-Neither alone is enough, so it does both where it can, and a finding says which
-it rested on. Rendering can prove a control exists; it can never prove one is
-gone, because a page nobody opened shows nothing.
+pagebeam does both where it can, and each finding says which one it used. A
+running copy can prove a control exists. It cannot prove one is gone, because
+a page nobody opened shows nothing.
 
-Parsers: Vue, React, Svelte, Astro, HTML and server-side templates, each
-through that framework's own compiler. Anything else is searched as text and
-says so.
-
-## Releasing
-
-Published from GitHub Actions without a token. npm is told to trust
-`.github/workflows/publish.yml` in this repository, and checks the identity
-GitHub issues for the run, so there is no long-lived credential to leak or
-rotate. Each package carries provenance saying which commit and which workflow
-built it.
-
-While the version is still moving, run the workflow by hand from the Actions
-tab. A version carrying a hyphen is published under `next` rather than
-`latest`, so nothing unfinished becomes what an install gives people, and a
-version already on the registry is left alone.
-
-A tag is for a release. The workflow refuses to publish if any package
-disagrees with the tag it was asked to release.
+pagebeam reads Vue, React, Svelte, Astro, HTML and server templates with each
+framework's own compiler. It searches anything else as plain text, and the
+finding says so.
