@@ -36,6 +36,41 @@ apps:
     path: .
 ```
 
+## In CI
+
+One file per repository. Everything that differs is the three lines under
+`with`; the checkout of both sides with their history, the command and the
+summary are the same everywhere and live in the action.
+
+```yaml
+name: docs drift
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pagebeam/pagebeam@v1
+        with:
+          docs: your-org/docs
+          token: ${{ secrets.PAGEBEAM_TOKEN }}
+```
+
+Put that in the product repository rather than the documentation one: it
+should run when the product changes, which is when documentation starts being
+wrong.
+
+`profile: enforce` fails a pull request on a finding the source of truth states
+outright that this change introduced. `command: fix` with `publish: 'true'`
+opens the pull request instead of reporting. Worked files for all three are in
+`examples/`.
+
+The token reaches the documentation repository, which the job's own token does
+not. A GitHub App installation token is the narrower choice.
+
 ## Checks
 
 | Check | Finds | Default |
