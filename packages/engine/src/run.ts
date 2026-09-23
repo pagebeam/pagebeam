@@ -126,6 +126,21 @@ export interface RouteModels {
   then: 'build' | 'content' | null;
 }
 
+// One reacher per run, shared by the rechecks of a proposal: an address is
+// asked once, and only a link a proposal adds costs a new request.
+const reachers = new WeakMap<PagebeamConfig, (href: string) => Promise<links.Verdict>>();
+function reacherFor(
+  config: PagebeamConfig,
+  options: { timeoutMs: number; concurrency: number; allowlist: string[] },
+): (href: string) => Promise<links.Verdict> {
+  let reach = reachers.get(config);
+  if (reach === undefined) {
+    reach = reacher({ timeoutMs: options.timeoutMs, concurrency: options.concurrency, allowlist: options.allowlist });
+    reachers.set(config, reach);
+  }
+  return reach;
+}
+
 async function runLinks(
   pages: DocPage[],
   cwd: string,
@@ -139,13 +154,7 @@ async function runLinks(
   const options = config.checks.links;
   const set = await routeSet(pages, cwd, config, docsRoot, earlier);
   models[earlier ? 'then' : 'now'] = set.source;
-  if (options.external && !earlier) {
-    set.reach = reacher({
-      timeoutMs: options.timeoutMs,
-      concurrency: options.concurrency,
-      allowlist: options.allowlist,
-    });
-  }
+  if (options.external && !earlier) set.reach = reacherFor(config, options);
   const outcome = await links.checkLinks(pages, set, { external: options.external });
   if (outcome.external.unknown > 0) {
     skipped.push(
@@ -153,11 +162,6 @@ async function runLinks(
     );
   }
   return outcome.findings;
-}
-
-function offline(config: PagebeamConfig): PagebeamConfig {
-  if (config.checks.links === false) return config;
-  return { ...config, checks: { ...config.checks, links: { ...config.checks.links, external: false } } };
 }
 
 export interface Evidence {
@@ -772,7 +776,7 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
         skipped,
         docsRoot,
         async (candidate) =>
-          (await checkAll(candidate, cwd, offline(config), docsRoot, evidence, untouched, false, { now: null, then: null }))
+          (await checkAll(candidate, cwd, config, docsRoot, evidence, untouched, false, { now: null, then: null }))
             .findings,
         new Set(pass.findings.map((f) => f.id)),
       )
@@ -813,7 +817,7 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
     skipped,
     recheckAt: async (root) => {
       const found = await parseAll(root, await discover(root, config.docs.include, config.docs.exclude));
-      const again = await checkAll(found, cwd, offline(config), root, evidence, untouched, false, {
+      const again = await checkAll(found, cwd, config, root, evidence, untouched, false, {
         now: null,
         then: null,
       });

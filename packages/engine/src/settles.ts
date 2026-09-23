@@ -21,7 +21,7 @@ export async function settles(finding: Finding, was: string | null, now: string)
   const after = await parsed(path, now);
   if (after === null) return { because: 'the page it wrote could not be read as a page' };
 
-  // The recheck does not request external links, so a dead one is caught here.
+  // A kept broken link needs no check to see it, whether it is external or not.
   const dropped = mayDrop(finding);
   if (dropped !== null && after.links.some((l) => l.href === dropped)) {
     return { because: `it kept the broken link ${dropped}` };

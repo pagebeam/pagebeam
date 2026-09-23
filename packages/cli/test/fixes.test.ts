@@ -198,7 +198,9 @@ test('a draft that keeps an undeclared setting is not proposed', async () => {
 });
 
 test('a draft that keeps a dead external link is not proposed', async () => {
+  let asked = 0;
   const dead = createServer((_, res) => {
+    asked += 1;
     res.writeHead(404);
     res.end();
   });
@@ -221,6 +223,7 @@ test('a draft that keeps a dead external link is not proposed', async () => {
     );
     const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', work]);
     assert.match(stdout, /^1 finding\(s\), 0 with a change to propose\./m);
+    assert.equal(asked, 1, 'the recheck reuses what the first pass learned');
   } finally {
     await llm.stop();
     await new Promise<void>((resolve) => dead.close(() => resolve()));
@@ -322,6 +325,39 @@ test('a proposal that would leave the docs with a new finding is not published',
   } finally {
     await llm.stop();
     await api.stop();
+  }
+});
+
+test('a draft that adds a dead external link is not proposed', async () => {
+  let asked = 0;
+  const dead = createServer((_, res) => {
+    asked += 1;
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((resolve) => dead.listen(0, '127.0.0.1', resolve));
+  const a = dead.address();
+  const url = `http://127.0.0.1:${typeof a === 'object' && a !== null ? a.port : 0}/new`;
+  const llm = await model(
+    `# Ledger\n\nPress **Print** to get every entry on paper. The [full guide](${url}) covers every option.\n`,
+  );
+  try {
+    const { work } = await repository(
+      {
+        ...REMOVED.files,
+        'pagebeam.config.yaml': `${CONFIG}model:\n  baseUrl: ${llm.url}\n  name: local\n`.replace(
+          'checks:\n',
+          'checks:\n  links:\n    external: true\n',
+        ),
+      },
+      REMOVED.changed,
+    );
+    const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', work]);
+    assert.match(stdout, /0 with a change to propose/);
+    assert.ok(asked > 0, 'the new address was checked');
+  } finally {
+    await llm.stop();
+    await new Promise<void>((resolve) => dead.close(() => resolve()));
   }
 });
 
