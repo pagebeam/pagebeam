@@ -42,13 +42,43 @@ jobs:
       # without this step ships a command whose first line asks for a package
       # nobody installs.
       - run: npm run build
-      - name: Check the command stands on its own
+
+      # Publishing cannot be taken back: a version number is spent the moment
+      # it is used, whether or not what went out can run. So the last thing
+      # before it is the only check that answers the question actually being
+      # asked, which is not "do the tests pass" but "does what I am about to
+      # send somebody work when they install it".
+      #
+      # 0.1.1 passed every test and could not start. It shipped the compiler's
+      # output rather than the bundle, and nothing looked at what was in the
+      # box.
+      - name: Install what would be published, somewhere else, and use it
         run: |
-          if grep -q "@pagebeam/" packages/cli/dist/main.js; then
-            echo "packages/cli/dist/main.js still reaches for a package it does not ship with"
-            exit 1
-          fi
-          echo "the command carries what it needs"
+          set -euo pipefail
+          tarball="$(cd packages/cli && npm pack --silent --pack-destination "$RUNNER_TEMP")"
+
+          # A documentation site and the product it describes, so the command
+          # is asked to do its job rather than only to start.
+          mkdir -p "$RUNNER_TEMP/site/docs" "$RUNNER_TEMP/site/app/pages"
+          printf '# Guide\n\nPress **Save changes** to keep it.\n' > "$RUNNER_TEMP/site/docs/guide.md"
+          printf '<template><button>Save changes</button></template>\n' > "$RUNNER_TEMP/site/app/pages/index.vue"
+
+          mkdir -p "$RUNNER_TEMP/elsewhere"
+          cd "$RUNNER_TEMP/elsewhere"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --silent "$RUNNER_TEMP/$tarball"
+
+          # Nothing of this repository is on the path here, so anything the
+          # bundle failed to carry is missing rather than quietly resolved.
+          pagebeam="$RUNNER_TEMP/elsewhere/node_modules/.bin/pagebeam"
+          "$pagebeam" --help > /dev/null
+          "$pagebeam" init --cwd "$RUNNER_TEMP/site" > /dev/null
+          test -f "$RUNNER_TEMP/site/pagebeam.config.yaml"
+          "$pagebeam" check --cwd "$RUNNER_TEMP/site" > "$RUNNER_TEMP/said.txt"
+
+          grep -q "pages checked against" "$RUNNER_TEMP/said.txt"
+          echo "what would be published installs elsewhere and runs:"
+          sed 's/^/  /' "$RUNNER_TEMP/said.txt"
 
       # A tag says which version is being released, so one that disagrees with
       # the packages would publish something nobody asked for. Started by hand
