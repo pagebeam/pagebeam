@@ -23,6 +23,11 @@ export interface DocEmphasis {
   at?: [number, number];
 }
 
+export interface DocText {
+  value: string;
+  line: number;
+}
+
 export interface DocCodeBlock {
   value: string;
   lang: string | null;
@@ -40,6 +45,8 @@ export interface DocPage {
   format: DocFormat;
   raw: string;
   prose: string;
+  // The prose again, one entry per text node, with the line each starts on.
+  texts?: DocText[];
   links: DocLink[];
   codeSpans: DocCodeSpan[];
   codeBlocks: DocCodeBlock[];

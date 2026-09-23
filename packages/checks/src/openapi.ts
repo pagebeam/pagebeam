@@ -74,14 +74,29 @@ export async function readSpec(file: string): Promise<SpecResult> {
   return { operations, unresolved };
 }
 
-export function citations(pages: DocPage[]): { method: string; path: string; page: string; line: number }[] {
-  const out: { method: string; path: string; page: string; line: number }[] = [];
-  for (const page of pages) {
+export interface Citation {
+  method: string;
+  path: string;
+  page: string;
+  line?: number;
+}
+
+// Only what the parser kept as the page's text and code: not frontmatter,
+// comments or imports, which nobody reading the page sees.
+export function citations(pages: DocPage[]): Citation[] {
+  const out: Citation[] = [];
+  const read = (page: DocPage, body: string, line: number | undefined): void => {
     CITATION.lastIndex = 0;
-    for (const m of page.raw.matchAll(CITATION)) {
-      const line = page.raw.slice(0, m.index).split('\n').length;
-      out.push({ method: m[1] as string, path: m[2] as string, page: page.path, line });
+    for (const m of body.matchAll(CITATION)) {
+      const at = line === undefined ? undefined : line + body.slice(0, m.index).split('\n').length - 1;
+      out.push({ method: m[1] as string, path: m[2] as string, page: page.path, ...(at === undefined ? {} : { line: at }) });
     }
+  };
+  for (const page of pages) {
+    if (page.texts === undefined) read(page, page.prose, undefined);
+    else for (const t of page.texts) read(page, t.value, t.line);
+    for (const b of page.codeBlocks) read(page, b.value, b.line + 1);
+    for (const c of page.codeSpans) read(page, c.value, c.line);
   }
   return out;
 }
@@ -114,10 +129,10 @@ export function checkCitations(
       ...owner,
       severity: 'error',
       confidence: 0.95,
-      doc: { path: c.page, line: c.line },
+      doc: { path: c.page, ...(c.line === undefined ? {} : { line: c.line }) },
       title: `${key} is documented but not in the ${app} specification`,
       detail: `This page describes ${key}. The ${app} specification has no such operation.`,
-      evidence: [{ kind: 'cited-in', detail: `${c.page}:${c.line}` }],
+      evidence: [{ kind: 'cited-in', detail: c.line === undefined ? c.page : `${c.page}:${c.line}` }],
     });
   }
   return findings;

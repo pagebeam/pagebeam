@@ -4,14 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { checkCitations, checkCoverage, citations, readSpec, templatise } from '../src/openapi.ts';
-import type { DocPage } from '@pagebeam/docs';
+import { parseAll, type DocPage } from '@pagebeam/docs';
 
 const page = (prose: string): DocPage => ({
   path: 'a.md', format: 'markdown', raw: prose, prose, links: [], codeSpans: [],
   codeBlocks: [], emphasised: [], directives: [], slug: null,
 });
-
-const citationsOf = (text: string) => citations([page(text)]);
 
 async function spec(name: string, body: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-oa-'));
@@ -135,11 +133,14 @@ test('TRACE is an operation like any other', async () => {
   assert.deepEqual(operations.map((o) => `${o.method} ${o.path}`), ['TRACE /echo']);
 });
 
-test('a citation says the line it is on', () => {
-  const findings = checkCitations(
-    citationsOf('# API\n\nSome text.\n\nDELETE /users removes one.\n'),
-    [{ method: 'GET', path: '/users' }],
-    ['api'],
-  );
+test('a citation says the line it is on', async () => {
+  const pages = await parseAll('', ['a.md'], async () => '# API\n\nSome text.\n\nDELETE /users removes one.\n');
+  const findings = checkCitations(citations(pages), [{ method: 'GET', path: '/users' }], ['api']);
   assert.equal(findings[0]!.doc.line, 5);
+});
+
+test('frontmatter, comments and imports are not documentation', async () => {
+  const text = '---\nnote: GET /secret\n---\n{/* DELETE /hidden */}\nVisible prose. Call GET /users here.\n';
+  const found = citations(await parseAll('', ['a.mdx'], async () => text));
+  assert.deepEqual(found.map((c) => `${c.method} ${c.path}:${c.line}`), ['GET /users:5']);
 });

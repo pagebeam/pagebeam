@@ -9,6 +9,7 @@ import { visit } from 'unist-util-visit';
 import { parseDirectives } from './directives.js';
 import type {
   DocCodeBlock,
+  DocText,
   DocCodeSpan,
   DocEmphasis,
   DocFormat,
@@ -78,7 +79,7 @@ function htmlLinks(raw: string, from = 0): DocLink[] {
   return out;
 }
 
-function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
+function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 'texts' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'> {
   // Without these an .mdx file parses as Markdown, so its expressions and
   // components are read as prose and its imports become paragraphs.
   const mdx = format === 'mdx';
@@ -94,6 +95,7 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
   const codeBlocks: DocCodeBlock[] = [];
   const emphasised: DocEmphasis[] = [];
   const prose: string[] = [];
+  const texts: DocText[] = [];
 
   visit(tree, (node: any) => {
     const start = node.position?.start;
@@ -131,6 +133,7 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
       }
     } else if (node.type === 'text' && typeof node.value === 'string') {
       prose.push(node.value);
+      texts.push({ value: node.value, line: node.position?.start?.line ?? 1 });
     } else if (node.type === 'mdxJsxFlowElement' || node.type === 'mdxJsxTextElement') {
       for (const attribute of node.attributes ?? []) {
         if (attribute?.type !== 'mdxJsxAttribute') continue;
@@ -160,7 +163,7 @@ function parseMarkdown(raw: string, format: DocFormat): Pick<DocPage, 'prose' | 
     }
   });
 
-  return { prose: prose.join('\n'), links, codeSpans, codeBlocks, emphasised };
+  return { prose: prose.join('\n'), texts, links, codeSpans, codeBlocks, emphasised };
 }
 
 const SKIP = new Set(['script', 'style']);
@@ -177,7 +180,7 @@ const EMPHASIS_TAGS: Record<string, 'strong' | 'emphasis' | 'code'> = {
 // component and a fenced block are all distinguishable.
 async function parseAstro(
   raw: string,
-): Promise<Pick<DocPage, 'prose' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'>> {
+): Promise<Pick<DocPage, 'prose' | 'texts' | 'links' | 'codeSpans' | 'codeBlocks' | 'emphasised'>> {
   const { parse } = await import('@astrojs/compiler');
   const { ast } = await parse(raw, { position: true });
 
@@ -186,6 +189,7 @@ async function parseAstro(
   const codeBlocks: DocCodeBlock[] = [];
   const emphasised: DocEmphasis[] = [];
   const prose: string[] = [];
+  const texts: DocText[] = [];
 
   const textOf = (node: any): string =>
     node?.type === 'text'
@@ -200,6 +204,7 @@ async function parseAstro(
 
     if (node?.type === 'text' && inside === null && typeof node.value === 'string') {
       prose.push(node.value);
+      texts.push({ value: node.value, line });
     }
 
     if (node?.type === 'element' || node?.type === 'component') {
@@ -252,7 +257,7 @@ async function parseAstro(
     if (child?.type === 'frontmatter') continue;
     walk(child, null);
   }
-  return { prose: prose.join(' '), links, codeSpans, codeBlocks, emphasised };
+  return { prose: prose.join(' '), texts, links, codeSpans, codeBlocks, emphasised };
 }
 
 export type Read = (relative: string) => Promise<string | null>;
