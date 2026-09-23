@@ -601,6 +601,16 @@ async function mend(
       for (const job of jobs) await job();
     }),
   );
+
+  // Findings are sorted by severity before they are written, which can put an
+  // earlier draft of a page after a later one. Each carries the page's final
+  // text, so the order they are written in cannot matter.
+  for (const [finding, kept] of answers) {
+    const change = kept.fix?.changes[0];
+    const last = change === undefined ? undefined : current.get(change.path);
+    if (change === undefined || last === undefined) continue;
+    answers.set(finding, { ...kept, fix: { ...kept.fix!, changes: [{ ...change, contents: last }] } });
+  }
   return findings.map((finding) => answers.get(finding) ?? finding);
 }
 

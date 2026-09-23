@@ -232,9 +232,12 @@ async function oneAtATime(): Promise<{ url: string; stop: () => Promise<void> }>
     const asked = (JSON.parse(body) as { messages: { role: string; content: string }[] }).messages
       .map((m) => m.content)
       .join('\n');
-    const name = asked.match(/^Problem: "([^"]+)"/m)?.[1] ?? '';
     const page = asked.slice(asked.indexOf('\n', asked.indexOf('Page (')) + 1);
-    return { choices: [{ message: { content: page.replace(`**${name}**`, '**Print**') } }] };
+    const name = asked.match(/^Problem: "([^"]+)"/m)?.[1];
+    if (name !== undefined) return { choices: [{ message: { content: page.replace(`**${name}**`, '**Print**') } }] };
+    const link = asked.match(/^Problem: (\S+) does not resolve/m)?.[1] ?? '';
+    const unlinked = page.replace(new RegExp(`\\[([^\\]]+)\\]\\(${link.replace(/[/.]/g, '\\$&')}\\)`), '$1');
+    return { choices: [{ message: { content: unlinked } }] };
   });
 }
 
@@ -259,6 +262,32 @@ test('two drafts for one page both reach the proposal', async () => {
     const proposed = execFileSync('git', ['-C', origin, 'show', 'pagebeam/drift:docs/ledger.md']).toString();
     assert.doesNotMatch(proposed, /Export ledger/);
     assert.doesNotMatch(proposed, /Archive ledger/);
+  } finally {
+    await llm.stop();
+    await api.stop();
+  }
+});
+
+test('drafts of different severity for one page all reach the proposal', async () => {
+  const llm = await oneAtATime();
+  const api = await forge();
+  try {
+    const { work, origin } = await repository(
+      {
+        'docs/ledger.md':
+          '# Ledger\n\nPress **Export ledger** to download every entry as a file.\n\nSee the [old archive](/archive) for entries from before.\n',
+        'app/Ledger.vue': '<template><button>Export ledger</button><button>Print</button></template>\n',
+        'pagebeam.config.yaml': `${CONFIG}model:\n  baseUrl: ${llm.url}\n  name: local\n`,
+      },
+      { 'app/Ledger.vue': '<template><button>Print</button></template>\n' },
+    );
+    const { stdout } = await run(process.execPath, [CLI, 'fix', '--cwd', work, '--publish'], {
+      env: { ...process.env, GITHUB_REPOSITORY: 'acme/docs', GITHUB_TOKEN: 'x', GITHUB_API_URL: api.url },
+    });
+    assert.match(stdout, /create/);
+    const proposed = execFileSync('git', ['-C', origin, 'show', 'pagebeam/drift:docs/ledger.md']).toString();
+    assert.doesNotMatch(proposed, /Export ledger/);
+    assert.doesNotMatch(proposed, /\(\/archive\)/);
   } finally {
     await llm.stop();
     await api.stop();
