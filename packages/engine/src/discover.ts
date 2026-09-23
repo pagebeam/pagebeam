@@ -11,7 +11,7 @@ import { isRoute } from '@pagebeam/app';
 // documentation, a directory holding components somebody can navigate between
 // is an application, and both are true whatever built them.
 const PROSE = '**/*.{md,mdx,markdown,mdoc,rst,adoc}';
-const PARTS = '**/*.{vue,svelte,astro,jsx,tsx}';
+const PARTS = '**/*.{vue,svelte,astro,jsx,tsx,js,ts}';
 const IGNORE = [
   '**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/.next/**',
   '**/.nuxt/**', '**/.output/**', '**/.svelte-kit/**', '**/vendor/**', '**/coverage/**',
@@ -90,7 +90,7 @@ async function beside(cwd: string): Promise<Found['apps']> {
     opened += 1;
     // Only where routes live, so a directory of anything else is passed over
     // without reading all of it.
-    const routes = await glob(['{pages,routes,views,app,screens,src}/**/*.{vue,svelte,astro,jsx,tsx}'], {
+    const routes = await glob(['{pages,routes,views,app,screens,src}/**/*.{vue,svelte,astro,jsx,tsx,js,ts}'], {
       cwd: at,
       ignore: IGNORE,
       dot: false,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addressOf, isRoute, screensOf } from '../dist/screens.js';
+import { addressOf, isRoute, routeOf, screensOf } from '../dist/screens.js';
 
 const of = (files: Record<string, string>) =>
   screensOf(Object.entries(files).map(([path, text]) => ({ path, text })));
@@ -93,4 +93,44 @@ test('what no route reaches is on no screen', () => {
 test('somewhere with no routes at all is not forced into having them', () => {
   const { reaches } = of({ 'src/Button.vue': '<template><button>Go</button></template>' });
   assert.equal(reaches.size, 0, 'a library has no screens, and saying it has one would be worse');
+});
+
+test('Next.js App Router: only page files are routes, at the address Next.js serves', () => {
+  assert.equal(addressOf('app/page.tsx'), '/');
+  assert.equal(addressOf('app/dashboard/page.tsx'), '/dashboard');
+  assert.equal(addressOf('app/(marketing)/pricing/page.tsx'), '/pricing');
+  assert.equal(addressOf('src/app/settings/page.ts'), '/settings');
+  assert.equal(addressOf('app/blog/[slug]/page.js'), '/blog/:slug');
+  assert.equal(addressOf('app/docs/[...slug]/page.tsx'), '/docs/:slug*');
+  assert.equal(addressOf('app/shop/[[...slug]]/page.tsx'), '/shop/:slug*?');
+  for (const file of ['app/layout.tsx', 'app/dashboard/loading.tsx', 'app/dashboard/Chart.tsx', 'app/_lib/page.tsx']) {
+    assert.ok(!isRoute(file), file);
+  }
+});
+
+test('Next.js Pages Router, SvelteKit and Remix read by their own rules', () => {
+  assert.equal(addressOf('pages/blog/[id].tsx'), '/blog/:id');
+  assert.ok(!isRoute('pages/_app.tsx'));
+  assert.ok(!isRoute('pages/api/users.ts'));
+  assert.equal(addressOf('src/pages/about.vue'), '/about');
+  assert.equal(addressOf('src/routes/(auth)/login/+page.svelte'), '/login');
+  assert.ok(!isRoute('src/routes/about/+layout.svelte'));
+  const kit = new Set(['src/routes/about/+page.svelte', 'src/routes/about/Card.svelte']);
+  assert.equal(routeOf('src/routes/about/Card.svelte', kit), null, 'a component beside a SvelteKit page');
+  assert.equal(addressOf('app/routes/_index.tsx'), '/');
+  assert.equal(addressOf('app/routes/users.$id.tsx'), '/users/:id');
+});
+
+test('a Next.js page wears every layout above it, and no other', () => {
+  const { reaches } = screensOf([
+    { path: 'app/layout.tsx', text: '<nav><button>Sign out</button></nav>' },
+    { path: 'app/dashboard/layout.tsx', text: '<aside>Filters</aside>' },
+    { path: 'app/dashboard/page.tsx', text: '<p>Dashboard</p>' },
+    { path: 'app/settings/page.tsx', text: '<p>Settings</p>' },
+  ]);
+  assert.ok(reaches.get('/dashboard')?.has('app/layout.tsx'));
+  assert.ok(reaches.get('/dashboard')?.has('app/dashboard/layout.tsx'));
+  assert.ok(reaches.get('/settings')?.has('app/layout.tsx'));
+  assert.ok(!reaches.get('/settings')?.has('app/dashboard/layout.tsx'));
+  assert.ok(!reaches.has('/layout') && !reaches.has('/dashboard/page'));
 });

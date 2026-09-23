@@ -7,8 +7,6 @@ import path from 'node:path';
 //
 // What a screen offers is everything the route reaches: itself, what it
 // imports, and what it uses by name where a framework resolves that for you.
-const ROUTES = /(^|\/)(pages|routes|views|app|screens)\//;
-const PAGE = /\.(vue|svelte|astro|[jt]sx)$/i;
 const COMPONENT = /\.(vue|svelte|astro|[jt]sx?)$/i;
 
 // Anything that is not part of a name may come before it: a newline in a
@@ -59,16 +57,109 @@ function resolve(from: string, specifier: string, have: Set<string>): string | n
   return null;
 }
 
+// Each framework decides which files are routes and what their addresses are.
+// Guessing from a directory name made `app/layout.tsx` a route and put
+// `page` into every Next.js address, so each convention gets its own reading.
+interface Route {
+  address: string;
+  // Files that wrap this route: a Next.js layout or template, a SvelteKit layout.
+  wrappers: (have: Set<string>) => string[];
+}
+
+const NEXT_APP_PAGE = /^(?:(.*)\/)?app\/(?:(.*)\/)?page\.(?:[jt]sx?|mdx)$/;
+const NEXT_APP_FILE = /^(?:.*\/)?app\//;
+const SVELTEKIT_PAGE = /^(?:(.*)\/)?routes\/(?:(.*)\/)?\+page\.svelte$/;
+const REMIX_ROUTE = /^(?:(.*)\/)?app\/routes\/([^/]+?)(?:\/route)?\.[jt]sx?$/;
+const PAGES = /^(?:(.*)\/)?pages\/(.+)\.(?:vue|astro|mdx?|[jt]sx?)$/;
+const FOLDERS = /^(?:(.*)\/)?(?:routes|views|screens)\/(.+)\.(?:vue|svelte|astro|[jt]sx)$/;
+
+// `[id]` is a parameter, `[...slug]` catches the rest, `[[...slug]]` may be
+// empty. A group `(name)` or a slot `@name` is not part of the address.
+function segment(part: string): string | null {
+  if (/^\(.*\)$/.test(part) || part.startsWith('@')) return null;
+  const optional = part.match(/^\[\[\.\.\.([^\]]+)\]\]$/);
+  if (optional) return `:${optional[1]}*?`;
+  const rest = part.match(/^\[\.\.\.([^\]]+)\]$/);
+  if (rest) return `:${rest[1]}*`;
+  return part.replace(/\[([^\]]+)\]/g, ':$1');
+}
+
+function addressFrom(parts: string[]): string {
+  const kept = parts.map(segment).filter((p): p is string => p !== null && p !== '');
+  return `/${kept.join('/')}`;
+}
+
+function ancestors(prefix: string, dirs: string[], names: string[], have: Set<string>): string[] {
+  const found: string[] = [];
+  for (let depth = 0; depth <= dirs.length; depth++) {
+    const at = [prefix, ...dirs.slice(0, depth)].filter((p) => p !== '').join('/');
+    for (const name of names) {
+      const file = at === '' ? name : `${at}/${name}`;
+      if (have.has(file)) found.push(file);
+    }
+  }
+  return found;
+}
+
+const NEXT_WRAPPERS = ['layout', 'template'].flatMap((n) => ['tsx', 'jsx', 'ts', 'js'].map((e) => `${n}.${e}`));
+
+// `have` is every file in the application, when known. It tells SvelteKit,
+// where only `+page.svelte` is a route, from Sapper, where any file under
+// `routes/` is one.
+export function routeOf(file: string, have?: Set<string>): Route | null {
+  const nextPage = file.match(NEXT_APP_PAGE);
+  if (nextPage && !file.includes('/routes/')) {
+    const dirs = (nextPage[2] ?? '').split('/').filter((p) => p !== '');
+    if (dirs.some((d) => d.startsWith('_'))) return null;
+    const appDir = [nextPage[1], 'app'].filter((p) => p !== undefined && p !== '').join('/');
+    return { address: addressFrom(dirs), wrappers: (have) => ancestors(appDir, dirs, NEXT_WRAPPERS, have) };
+  }
+
+  const svelte = file.match(SVELTEKIT_PAGE);
+  if (svelte) {
+    const dirs = (svelte[2] ?? '').split('/').filter((p) => p !== '');
+    const routesDir = [svelte[1], 'routes'].filter((p) => p !== undefined && p !== '').join('/');
+    return { address: addressFrom(dirs), wrappers: (have) => ancestors(routesDir, dirs, ['+layout.svelte'], have) };
+  }
+
+  const remix = file.match(REMIX_ROUTE);
+  if (remix) {
+    const name = remix[2] ?? '';
+    const parts = name
+      .split('.')
+      .filter((p) => p !== '_index' && !(p.startsWith('_') && p !== '_'))
+      .map((p) => (p === '$' ? ':*' : p.startsWith('$') ? `:${p.slice(1)}` : p.replace(/_$/, '')));
+    return { address: addressFrom(parts), wrappers: () => [] };
+  }
+
+  // Other files in a Next.js app directory, such as layouts, loading states
+  // and colocated components, are not places a reader can go.
+  if (NEXT_APP_FILE.test(file) && !file.includes('/routes/') && !/^(?:.*\/)?app\/(?:pages|views|screens)\//.test(file)) {
+    return null;
+  }
+
+  if (file.endsWith('.svelte') && have !== undefined && [...have].some((f) => f.endsWith('/+page.svelte'))) {
+    return null;
+  }
+
+  const pages = file.match(PAGES) ?? file.match(FOLDERS);
+  if (pages) {
+    const parts = (pages[2] ?? '').split('/');
+    if (parts[0] === 'api' || parts.some((p) => p.startsWith('_') || p.startsWith('+'))) return null;
+    if (parts[parts.length - 1] === 'index') parts.pop();
+    return { address: addressFrom(parts), wrappers: () => [] };
+  }
+  return null;
+}
+
 export function isRoute(file: string): boolean {
-  return ROUTES.test(file) && PAGE.test(file);
+  return routeOf(file) !== null;
 }
 
 // What a reader is shown when they arrive: `pages/dashboard/systems.vue`
 // becomes `/dashboard/systems`, and an index becomes the thing it indexes.
 export function addressOf(file: string): string {
-  const without = withoutExtension(file).replace(ROUTES, '/');
-  const cleaned = without.replace(/\/index$/, '').replace(/\[([^\]]+)\]/g, ':$1');
-  return cleaned === '' ? '/' : cleaned;
+  return routeOf(file)?.address ?? '/';
 }
 
 export interface Screens {
@@ -130,10 +221,15 @@ export function screensOf(files: { path: string; text: string }[]): Screens {
   const reached = new Set<string>();
 
   for (const file of files) {
-    if (!isRoute(file.path)) continue;
+    const route = routeOf(file.path, have);
+    if (route === null) continue;
     const worn = (text.get(file.path) ?? '').match(WEARS)?.[1] ?? 'default';
     const wrapping = layouts.get(worn);
-    const seen = new Set<string>([file.path, ...(wrapping === undefined ? [] : [wrapping])]);
+    const seen = new Set<string>([
+      file.path,
+      ...(wrapping === undefined ? [] : [wrapping]),
+      ...route.wrappers(have),
+    ]);
     const queue = [...seen];
     while (queue.length > 0) {
       const at = queue.pop()!;
@@ -143,7 +239,7 @@ export function screensOf(files: { path: string; text: string }[]): Screens {
         queue.push(next);
       }
     }
-    reaches.set(addressOf(file.path), new Set([...(reaches.get(addressOf(file.path)) ?? []), ...seen]));
+    reaches.set(route.address, new Set([...(reaches.get(route.address) ?? []), ...seen]));
     for (const one of seen) reached.add(one);
   }
 
