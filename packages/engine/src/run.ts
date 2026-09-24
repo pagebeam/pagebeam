@@ -9,7 +9,7 @@ import {
   type PagebeamConfig,
   type Snapshot,
 } from '@pagebeam/core';
-import { history, screensOf, snapshot } from '@pagebeam/app';
+import { envReads, history, screensOf, snapshot } from '@pagebeam/app';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
@@ -68,6 +68,7 @@ async function runConfigKeys(
     const root = rootOf(cwd, app);
     if (root === null) continue;
     for (const key of await configKeys.definedKeys(root, app.envFiles)) defined.add(key);
+    for (const key of await envReads(root, app.exclude)) defined.add(key);
     searched.push(app.name);
   }
   return configKeys.compare(configKeys.documentedKeys(pages), defined, searched);
@@ -79,14 +80,75 @@ async function exists(dir: string): Promise<boolean> {
     .catch(() => false);
 }
 
+interface Site {
+  // The folder holding the documentation site's package.json.
+  dir: string;
+  // Where its pages are written, when its framework decides that.
+  content: string | null;
+}
+
+// The documentation site the pages belong to: the nearest folder at or above
+// them with a package.json. Its build and its content folder are relative to
+// it, not to wherever pagebeam runs.
+async function siteOf(docsRoot: string, config: PagebeamConfig): Promise<Site | null> {
+  for (let dir = docsRoot; ; dir = path.dirname(dir)) {
+    const text = await readFile(path.join(dir, 'package.json'), 'utf8').catch(() => null);
+    if (text !== null) {
+      let uses: Record<string, unknown> = {};
+      try {
+        const manifest = JSON.parse(text) as Record<string, Record<string, unknown> | undefined>;
+        uses = { ...manifest.dependencies, ...manifest.devDependencies };
+      } catch {
+        // A manifest that does not parse names no framework.
+      }
+      const format =
+        config.docs.format !== 'auto'
+          ? config.docs.format
+          : '@astrojs/starlight' in uses
+            ? 'starlight'
+            : 'astro' in uses
+              ? 'astro'
+              : null;
+      const content =
+        format === 'starlight' ? path.join(dir, 'src/content/docs') : format === 'astro' ? path.join(dir, 'src/pages') : null;
+      return { dir, content };
+    }
+    if (path.dirname(dir) === dir) return null;
+  }
+}
+
+function buildCandidates(cwd: string, config: PagebeamConfig, site: Site | null): { dirs: string[]; declared: boolean } {
+  if (config.docs.buildDir) return { dirs: [path.resolve(cwd, config.docs.buildDir)], declared: true };
+  const near = [cwd, ...(site === null ? [] : [site.dir])];
+  return { dirs: [...new Set(near.flatMap((d) => [path.join(d, 'dist'), path.join(d, 'build')]))], declared: false };
+}
+
 // The same directory the link check reads, found the same way, so both are
 // talking about one site rather than two.
-async function builtSite(cwd: string, config: PagebeamConfig): Promise<string | null> {
-  const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
-  for (const dir of declared ? [declared] : [path.join(cwd, 'dist'), path.join(cwd, 'build')]) {
+async function builtSite(cwd: string, config: PagebeamConfig, docsRoot: string): Promise<string | null> {
+  for (const dir of buildCandidates(cwd, config, await siteOf(docsRoot, config)).dirs) {
     if (await exists(dir)) return dir;
   }
   return null;
+}
+
+// Routes the source pages publish. A framework that keeps its pages in a
+// content folder serves them from the site root, so the folder is not part of
+// the address, whether the configured root holds that folder or sits in it.
+function sourceRoutes(pages: DocPage[], config: PagebeamConfig, docsRoot: string, site: Site | null): Set<string> {
+  const prefix = config.docs.routeBase.replace(/\/+$/, '');
+  const content = site?.content ?? null;
+  if (content !== null) {
+    const down = path.relative(docsRoot, content);
+    if (down === '' || (!down.startsWith('..') && !path.isAbsolute(down))) {
+      return links.routesOf(pages, down.split(path.sep).join('/'), prefix);
+    }
+    const up = path.relative(content, docsRoot);
+    if (!up.startsWith('..') && !path.isAbsolute(up)) {
+      return links.routesOf(pages, '', `${prefix}/${up.split(path.sep).join('/')}`);
+    }
+  }
+  return links.routesOf(pages, links.baseFromPatterns(config.docs.include), prefix);
 }
 
 async function routeSet(
@@ -96,14 +158,17 @@ async function routeSet(
   docsRoot: string,
   earlier: boolean,
 ): Promise<links.RouteSet> {
-  const publicDir = config.docs.publicDir ? path.resolve(cwd, config.docs.publicDir) : undefined;
-  const prefix = config.docs.routeBase.replace(/\/+$/, '');
-  const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
-  const candidates = declared ? [declared] : [path.join(cwd, 'dist'), path.join(cwd, 'build')];
+  const site = await siteOf(docsRoot, config);
+  const publicDir = config.docs.publicDir
+    ? path.resolve(cwd, config.docs.publicDir)
+    : site !== null && (await exists(path.join(site.dir, 'public')))
+      ? path.join(site.dir, 'public')
+      : undefined;
+  const { dirs: candidates, declared } = buildCandidates(cwd, config, site);
 
   // The build on disk is today's. Comparing yesterday's pages against it would
   // let a route deleted today make an old link look like it was always broken.
-  const fromSource = links.routesOf(pages, links.baseFromPatterns(config.docs.include), prefix);
+  const fromSource = sourceRoutes(pages, config, docsRoot, site);
 
   for (const dir of earlier ? [] : candidates) {
     if (!(await exists(dir))) continue;
@@ -112,7 +177,7 @@ async function routeSet(
 
     // A build guessed at rather than declared has to be shown to belong to
     // this documentation: most of what the source publishes must be in it.
-    if (declared === null) {
+    if (!declared) {
       const shared = [...fromSource].filter((r) => routes.has(r)).length;
       if (fromSource.size === 0 || shared / fromSource.size < 0.5) continue;
     }
@@ -310,7 +375,7 @@ async function runOpenapi(
   // address. A site may publish its whole reference from the specification,
   // and then no source page names a single operation while every one of them
   // is documented.
-  const built = await builtSite(cwd, config);
+  const built = await builtSite(cwd, config, docsRoot);
   if (wanted === 'auto' && built === null) {
     skipped.push(
       'openapi: coverage needs the built site, and none was found. Set docs.buildDir, or build before running, or set checks.openapi.coverage to always to count what the source names instead',

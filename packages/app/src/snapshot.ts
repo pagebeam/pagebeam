@@ -12,6 +12,7 @@ import { html } from './html.js';
 import { jsx } from './jsx.js';
 import { vue } from './vue.js';
 import { ROUTE_CONFIG, routeFilePatterns, routeModel } from './screens.js';
+import { envReads } from './env.js';
 
 const ENV_ASSIGNMENT = /(?:^|\s)(?:-e\s+|--env\s+|export\s+|ENV\s+)?([A-Z][A-Z0-9_]{2,})\s*=/gm;
 
@@ -106,7 +107,7 @@ export async function snapshot(request: SnapshotRequest): Promise<Snapshot> {
     }
   }
 
-  const envKeys = new Set<string>();
+  const envKeys = await envReads(request.root, request.exclude, rev);
   const envPaths =
     rev === undefined
       ? await glob(request.envFiles, { cwd: request.root, ignore: ['**/node_modules/**'] })

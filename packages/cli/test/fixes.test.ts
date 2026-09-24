@@ -557,3 +557,59 @@ test('an operation only a component attribute names is not reported missing from
   const built = await checked({ ...cited, 'dist/api/index.html': '<p>POST /fake creates one.</p>' });
   assert.match(built, /POST \/fake is documented but not in/);
 });
+
+// A Starlight site in its own repository, beside a Nuxt app and a Laravel API.
+async function beside(extra: Record<string, string> = {}): Promise<string> {
+  const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-beside-'));
+  const files: Record<string, string> = {
+    'docs/package.json': '{"dependencies":{"astro":"6","@astrojs/starlight":"0.40"}}\n',
+    'docs/src/content/docs/agent/overview.md':
+      '# Overview\n\nSee [what it can do](/agent/what-it-can-do/) and [safety](/agent/safety/).\n\n```ini\nAGENTS_PROVIDER=your-provider\nAGENTS_SECRET=your-secret\n```\n',
+    'docs/src/content/docs/agent/what-it-can-do.md': '# What it can do\n\nBack to the [overview](/agent/overview/).\n',
+    'ui/pagebeam.config.yaml': 'docs:\n  root: ../docs\napps:\n  - name: ui\n    path: .\n  - name: api\n    path: ../api\n',
+    'ui/pages/index.vue': '<template><p>Home</p></template>\n',
+    'api/config/agents.php': "<?php\nreturn ['provider' => env('AGENTS_PROVIDER', 'gemini')];\n",
+    'api/vendor/acme/debug/page.vue': `<template><div>${BUTTONS}</div></template>\n`,
+    ...extra,
+  };
+  for (const [at, text] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, at)), { recursive: true });
+    await writeFile(path.join(root, at), text);
+  }
+  for (const repo of ['docs', 'ui', 'api']) {
+    const at = path.join(root, repo);
+    execFileSync('git', ['init', '-q', '-b', 'main', at]);
+    execFileSync('git', ['-C', at, 'add', '-A']);
+    execFileSync('git', ['-C', at, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'first']);
+  }
+  const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', path.join(root, 'ui')]).catch(
+    (error: { stdout: string }) => error,
+  );
+  return stdout;
+}
+
+test('a Starlight page is addressed without its content folder', async () => {
+  const stdout = await beside();
+  assert.doesNotMatch(stdout, /\/agent\/what-it-can-do does not resolve/);
+  assert.doesNotMatch(stdout, /\/agent\/overview does not resolve/);
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+});
+
+test('the docs site is built where its package.json is, not where pagebeam runs', async () => {
+  const stdout = await beside({
+    'docs/dist/agent/overview/index.html': '<p>Overview</p>',
+    'docs/dist/agent/what-it-can-do/index.html': '<p>What it can do</p>',
+  });
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+  assert.match(stdout, /No built page/);
+});
+
+test('a setting the code reads is defined even when no example file lists it', async () => {
+  const stdout = await beside();
+  assert.doesNotMatch(stdout, /AGENTS_PROVIDER is documented but/);
+  assert.match(stdout, /AGENTS_SECRET is documented but/);
+});
+
+test('controls in vendored dependencies are not the product', async () => {
+  assert.doesNotMatch(await beside(), /vendor|Publish Site/);
+});
