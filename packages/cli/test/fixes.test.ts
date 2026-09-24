@@ -613,3 +613,19 @@ test('a setting the code reads is defined even when no example file lists it', a
 test('controls in vendored dependencies are not the product', async () => {
   assert.doesNotMatch(await beside(), /vendor|Publish Site/);
 });
+
+test('a site generator nobody named is understood from what it built', async () => {
+  const stdout = await beside({
+    'docs/package.json': '{"dependencies":{"some-generator":"1"}}\n',
+    'docs/dist/agent/overview/index.html': '<p>Overview</p>',
+    'docs/dist/agent/what-it-can-do/index.html': '<p>What it can do</p>',
+  });
+  assert.doesNotMatch(stdout, /\/agent\/(overview|what-it-can-do) does not resolve/);
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+});
+
+test('addresses guessed from source that match no link are reported once, not as broken links', async () => {
+  const stdout = await beside({ 'docs/package.json': '{"dependencies":{"some-generator":"1"}}\n' });
+  assert.doesNotMatch(stdout, /does not resolve/);
+  assert.match(stdout, /3 of 3 links to site addresses match no page worked out from the source files/);
+});

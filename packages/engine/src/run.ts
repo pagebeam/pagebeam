@@ -166,21 +166,31 @@ async function routeSet(
       : undefined;
   const { dirs: candidates, declared } = buildCandidates(cwd, config, site);
 
-  // The build on disk is today's. Comparing yesterday's pages against it would
-  // let a route deleted today make an old link look like it was always broken.
-  const fromSource = sourceRoutes(pages, config, docsRoot, site);
+  const prefix = config.docs.routeBase.replace(/\/+$/, '');
+  let fromSource = sourceRoutes(pages, config, docsRoot, site);
 
-  for (const dir of earlier ? [] : candidates) {
+  for (const dir of candidates) {
     if (!(await exists(dir))) continue;
     const routes = await links.routesFromBuild(dir);
     if (routes.size === 0) continue;
 
+    // Where the source does not say how a path becomes an address, the build
+    // does. The same folder is dropped at every revision, so an earlier pass
+    // learns it here too.
+    const shared = (from: Set<string>) => [...from].filter((r) => routes.has(r)).length / Math.max(from.size, 1);
+    if (shared(fromSource) < 0.5) {
+      const base = links.learnedBase(pages, routes, prefix);
+      if (base !== null) fromSource = links.routesOf(pages, base, prefix);
+    }
+
+    // The build on disk is today's. Comparing yesterday's pages against it
+    // would let a route deleted today make an old link look like it was
+    // always broken.
+    if (earlier) break;
+
     // A build guessed at rather than declared has to be shown to belong to
     // this documentation: most of what the source publishes must be in it.
-    if (!declared) {
-      const shared = [...fromSource].filter((r) => routes.has(r)).length;
-      if (fromSource.size === 0 || shared / fromSource.size < 0.5) continue;
-    }
+    if (!declared && (fromSource.size === 0 || shared(fromSource) < 0.5)) continue;
     return { routes, source: 'build', docsRoot, ...(publicDir ? { publicDir } : {}) };
   }
   return { routes: fromSource, source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
@@ -221,6 +231,11 @@ async function runLinks(
   models[earlier ? 'then' : 'now'] = set.source;
   if (options.external && !earlier) set.reach = reacherFor(config, options);
   const outcome = await links.checkLinks(pages, set, { external: options.external });
+  if (outcome.unaddressed !== undefined) {
+    skipped.push(
+      `links: ${outcome.unaddressed.missed} of ${outcome.unaddressed.total} links to site addresses match no page worked out from the source files, so the addresses are what is wrong, not the links. They were not checked. Build the site, or set docs.buildDir to where it is built`,
+    );
+  }
   if (outcome.external.unknown > 0) {
     skipped.push(
       `links: ${outcome.external.unknown} external address(es) could not be reached either way, so they are unchecked rather than sound`,
