@@ -10,6 +10,7 @@ import {
   type Snapshot,
 } from '@pagebeam/core';
 import { envReads, history, screensOf, snapshot } from '@pagebeam/app';
+import { buildSite, OUTPUTS, siteOf, type Site } from './site.js';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
@@ -31,6 +32,7 @@ export interface RunResult {
   ran: string[];
   skipped: string[];
   recheckAt?: (docsRoot: string) => Promise<Finding[]>;
+  build?: ({ dir: string; command: string } | { failed: string; command: string | null }) & { framework: string | null };
 }
 
 function rootOf(cwd: string, app: { path?: string | undefined }): string | null {
@@ -80,53 +82,31 @@ async function exists(dir: string): Promise<boolean> {
     .catch(() => false);
 }
 
-interface Site {
-  // The folder holding the documentation site's package.json.
-  dir: string;
-  // Where its pages are written, when its framework decides that.
-  content: string | null;
-}
+const sites = new Map<string, Promise<Site | null>>();
 
-// The documentation site the pages belong to: the nearest folder at or above
-// them with a package.json. Its build and its content folder are relative to
-// it, not to wherever pagebeam runs.
-async function siteOf(docsRoot: string, config: PagebeamConfig): Promise<Site | null> {
-  for (let dir = docsRoot; ; dir = path.dirname(dir)) {
-    const text = await readFile(path.join(dir, 'package.json'), 'utf8').catch(() => null);
-    if (text !== null) {
-      let uses: Record<string, unknown> = {};
-      try {
-        const manifest = JSON.parse(text) as Record<string, Record<string, unknown> | undefined>;
-        uses = { ...manifest.dependencies, ...manifest.devDependencies };
-      } catch {
-        // A manifest that does not parse names no framework.
-      }
-      const format =
-        config.docs.format !== 'auto'
-          ? config.docs.format
-          : '@astrojs/starlight' in uses
-            ? 'starlight'
-            : 'astro' in uses
-              ? 'astro'
-              : null;
-      const content =
-        format === 'starlight' ? path.join(dir, 'src/content/docs') : format === 'astro' ? path.join(dir, 'src/pages') : null;
-      return { dir, content };
-    }
-    if (path.dirname(dir) === dir) return null;
-  }
+// A `docs.format` written in the config says where the pages are, whatever
+// the detection found.
+async function siteFor(docsRoot: string, config: PagebeamConfig): Promise<Site | null> {
+  if (!sites.has(docsRoot)) sites.set(docsRoot, siteOf(docsRoot));
+  const site = await sites.get(docsRoot)!;
+  if (site === null) return null;
+  const format = config.docs.format;
+  if (format === 'starlight') return { ...site, content: path.join(site.dir, 'src/content/docs') };
+  if (format === 'astro') return { ...site, content: path.join(site.dir, 'src/pages') };
+  return site;
 }
 
 function buildCandidates(cwd: string, config: PagebeamConfig, site: Site | null): { dirs: string[]; declared: boolean } {
   if (config.docs.buildDir) return { dirs: [path.resolve(cwd, config.docs.buildDir)], declared: true };
   const near = [cwd, ...(site === null ? [] : [site.dir])];
-  return { dirs: [...new Set(near.flatMap((d) => [path.join(d, 'dist'), path.join(d, 'build')]))], declared: false };
+  const output = site === null ? [] : [...(site.output ? [site.output] : []), ...OUTPUTS].map((o) => path.join(site.dir, o));
+  return { dirs: [...new Set([...output, ...near.flatMap((d) => [path.join(d, 'dist'), path.join(d, 'build')])])], declared: false };
 }
 
 // The same directory the link check reads, found the same way, so both are
 // talking about one site rather than two.
 async function builtSite(cwd: string, config: PagebeamConfig, docsRoot: string): Promise<string | null> {
-  for (const dir of buildCandidates(cwd, config, await siteOf(docsRoot, config)).dirs) {
+  for (const dir of buildCandidates(cwd, config, await siteFor(docsRoot, config)).dirs) {
     if (await exists(dir)) return dir;
   }
   return null;
@@ -158,7 +138,7 @@ async function routeSet(
   docsRoot: string,
   earlier: boolean,
 ): Promise<links.RouteSet> {
-  const site = await siteOf(docsRoot, config);
+  const site = await siteFor(docsRoot, config);
   const publicDir = config.docs.publicDir
     ? path.resolve(cwd, config.docs.publicDir)
     : site !== null && (await exists(path.join(site.dir, 'public')))
@@ -769,11 +749,16 @@ export interface Asking {
   // does not propose, so a run that only reports has no reason to put a
   // finding to a model, and no reason to spend anything doing it.
   proposing?: boolean | undefined;
+  // Build the documentation site first, so links are checked against the
+  // pages it really publishes. Runs the site's own code, so only on request.
+  // What it writes is held to the same test as any build found on disk, and
+  // a build that fails leaves the run as it would have been without one.
+  build?: boolean | undefined;
 }
 
 export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> {
   try {
-    return await attempt(cwd, asking.proposing === true);
+    return await attempt(cwd, asking.proposing === true, asking.build === true);
   } catch (error) {
     // A file that could not be read is not a file with nothing in it.
     return {
@@ -791,7 +776,7 @@ export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> 
   }
 }
 
-async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
+async function attempt(cwd: string, proposing: boolean, building: boolean): Promise<RunResult> {
   const { config, from, asked } = await loadConfig(cwd);
   // Without one, the only thing to check documentation against is a guess at
   // where it is, and a clean answer from a guess is worse than no answer.
@@ -813,6 +798,13 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
       ran: [],
       skipped: [],
     };
+  }
+
+  let build: RunResult['build'];
+  if (building) {
+    const site = await siteFor(docsRoot, config);
+    const done = site === null ? { failed: `no documentation site was found at or above ${docsRoot}`, command: null } : await buildSite(site);
+    build = { ...done, framework: site?.framework?.name ?? null };
   }
 
   const evidence = await gather(cwd, config);
@@ -912,6 +904,7 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
   return {
     problem: null,
     degraded,
+    ...(build === undefined ? {} : { build }),
     comparedWith,
     grade: evidence?.grade ?? null,
     configFrom: from,

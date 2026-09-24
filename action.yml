@@ -34,6 +34,13 @@ inputs:
     description: Whether fix opens or updates the pull request. Without it, fix only says what it would propose.
     required: false
     default: 'false'
+  build:
+    description: >-
+      Whether to build the documentation site first, so links are checked
+      against the pages it publishes. Its dependencies are installed from its
+      lockfile.
+    required: false
+    default: 'true'
   cwd:
     description: >-
       The folder holding the config, relative to the workspace. Defaults to the
@@ -131,6 +138,7 @@ runs:
         PAGEBEAM_COMMAND: ${{ inputs.command }}
         PAGEBEAM_PROFILE: ${{ inputs.profile }}
         PAGEBEAM_PUBLISH: ${{ inputs.publish }}
+        PAGEBEAM_BUILD: ${{ inputs.build }}
         PAGEBEAM_CWD: ${{ inputs.cwd || inputs.docs || steps.where.outputs.self }}
         PAGEBEAM_VERSION: ${{ inputs.version }}
         MODEL_KEY: ${{ inputs.model-key }}
@@ -157,6 +165,10 @@ runs:
         esac
 
         args=("$PAGEBEAM_COMMAND" --cwd "$cwd")
+        # A release pinned from before --build existed would refuse the flag.
+        if [ "$PAGEBEAM_BUILD" = true ] && npx --yes "pagebeam@$version" --help 2>/dev/null | grep -q -- '--build'; then
+          args+=(--build)
+        fi
         if [ "$PAGEBEAM_COMMAND" = check ]; then
           args+=(--profile "$PAGEBEAM_PROFILE")
         elif [ "$PAGEBEAM_PUBLISH" = true ]; then

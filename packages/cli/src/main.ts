@@ -8,12 +8,16 @@ import { propose } from './propose.js';
 
 const USAGE = `pagebeam - find documentation that no longer matches the product
 
-  pagebeam check [--cwd <dir>] [--json] [--profile observe|enforce]
-  pagebeam fix   [--cwd <dir>] [--publish]
+  pagebeam check [--cwd <dir>] [--json] [--profile observe|enforce] [--build]
+  pagebeam fix   [--cwd <dir>] [--publish] [--build]
   pagebeam init  [--cwd <dir>]
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
   --json     machine-readable output
+  --build    build the docs site first, as its project builds it, and check
+             links against the pages it publishes. Installs its dependencies
+             from the lockfile when they are missing. This runs the site's
+             own code
   --publish  actually open or update the pull request. Without it, fix says
              what it would propose and touches nothing
   --profile  observe: report everything, block nothing (default)
@@ -32,6 +36,7 @@ interface Args {
   cwd: string;
   json: boolean;
   publish: boolean;
+  build: boolean;
   profile: 'observe' | 'enforce' | 'enforce-all';
 }
 
@@ -45,12 +50,14 @@ function parse(argv: string[]): Args {
     cwd: process.cwd(),
     json: false,
     publish: false,
+    build: false,
     profile: 'observe',
   };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '--json') args.json = true;
     else if (a === '--publish') args.publish = true;
+    else if (a === '--build') args.build = true;
     else if (a === '--cwd') {
       const value = argv[++i];
       if (value === undefined) throw new BadUsage('--cwd needs a directory');
@@ -120,7 +127,7 @@ if (args.command !== 'check' && args.command !== 'fix') {
 }
 
 // Only a run that will propose something has a reason to draft it.
-const result = await run(args.cwd, { proposing: args.command === 'fix' });
+const result = await run(args.cwd, { proposing: args.command === 'fix', build: args.build });
 
 // Guessing where the documentation is and then reporting a clean run tells
 // somebody their documentation is fine when nothing read it.

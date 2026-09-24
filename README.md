@@ -73,6 +73,7 @@ repository at `$GITHUB_WORKSPACE/<owner>/<name>`, not at the workspace root.
 | `command`       | `check` to report, `fix` to propose                                              | `check`                |
 | `profile`       | `observe`, `enforce` or `enforce-all`                                            | `observe`              |
 | `publish`       | With `fix`, open or update the pull request                                      | `false`                |
+| `build`         | Build the docs site first, and check links against what it built                | `true`                 |
 | `token`         | Reads the other repositories and opens the pull request                          | the job's own token    |
 | `model-key`     | Your model provider's key, as a secret                                           | none                   |
 | `model-key-env` | The variable your config's `model.apiKeyEnv` names                               | `OPENAI_API_KEY`       |
@@ -123,7 +124,15 @@ pagebeam check --profile enforce       block on proven findings this change intr
 pagebeam check --profile enforce-all   block on every proven finding
 pagebeam fix                           say what it would propose
 pagebeam fix --publish                 open or update the pull request
+pagebeam check --build                 build the docs site first, as its project does
 ```
+
+With `--build`, pagebeam recognises the docs site the way a hosting platform
+does, from the files and packages its framework leaves behind, and runs the
+project's own build script. Missing dependencies are installed from its
+lockfile. Links are then checked against the pages it built. This runs the
+site's own code, so it happens only when asked for. A build that fails is
+reported, and the rest of the run goes on as it would without it.
 
 Exit `0`: nothing blocks. `1`: a proven finding blocks. `2`: the answer cannot
 be trusted, because nothing was read or a requested check could not run.

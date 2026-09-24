@@ -559,7 +559,7 @@ test('an operation only a component attribute names is not reported missing from
 });
 
 // A Starlight site in its own repository, beside a Nuxt app and a Laravel API.
-async function beside(extra: Record<string, string> = {}): Promise<string> {
+async function beside(extra: Record<string, string> = {}, flags: string[] = []): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-beside-'));
   const files: Record<string, string> = {
     'docs/package.json': '{"dependencies":{"astro":"6","@astrojs/starlight":"0.40"}}\n',
@@ -582,7 +582,7 @@ async function beside(extra: Record<string, string> = {}): Promise<string> {
     execFileSync('git', ['-C', at, 'add', '-A']);
     execFileSync('git', ['-C', at, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'first']);
   }
-  const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', path.join(root, 'ui')]).catch(
+  const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', path.join(root, 'ui'), ...flags]).catch(
     (error: { stdout: string }) => error,
   );
   return stdout;
@@ -628,4 +628,38 @@ test('addresses guessed from source that match no link are reported once, not as
   const stdout = await beside({ 'docs/package.json': '{"dependencies":{"some-generator":"1"}}\n' });
   assert.doesNotMatch(stdout, /does not resolve/);
   assert.match(stdout, /3 of 3 links to site addresses match no page worked out from the source files/);
+});
+
+const BUILDS_PAGES =
+  "import { mkdirSync, writeFileSync } from 'node:fs';\n" +
+  "for (const p of ['agent/overview', 'agent/what-it-can-do']) {\n" +
+  "  mkdirSync(`dist/${p}`, { recursive: true });\n" +
+  "  writeFileSync(`dist/${p}/index.html`, '<p>page</p>');\n" +
+  "}\n" +
+  "writeFileSync('dist/index.html', '<p>home</p>');\n";
+
+test('--build builds the docs site as its project does and checks links against what it built', async () => {
+  const stdout = await beside(
+    {
+      'docs/package.json': '{"scripts":{"build":"node build.mjs"},"dependencies":{"some-generator":"1"}}\n',
+      'docs/build.mjs': BUILDS_PAGES,
+      'docs/node_modules/.keep': '',
+    },
+    ['--build'],
+  );
+  assert.match(stdout, /built the docs with npm run build/);
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+  assert.match(stdout, /No built page/);
+});
+
+test('a build that fails is reported, and the run is what it would have been without it', async () => {
+  const stdout = await beside(
+    {
+      'docs/package.json': '{"scripts":{"build":"node -e \\"process.exit(3)\\""},"dependencies":{"@astrojs/starlight":"0","astro":"6"}}\n',
+      'docs/node_modules/.keep': '',
+    },
+    ['--build'],
+  );
+  assert.match(stdout, /could not build the docs \(Astro\) npm run build failed/);
+  assert.match(stdout, /\/agent\/safety does not resolve/);
 });

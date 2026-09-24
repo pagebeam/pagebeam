@@ -22,10 +22,11 @@
     "@pagebeam/checks": "0.1.0",
     "@pagebeam/core": "0.1.0",
     "@pagebeam/docs": "0.1.0",
-    "picomatch": "^4.0.7",
-    "yaml": "^2.6.1",
     "@pagebeam/model": "0.1.0",
-    "picocolors": "^1.1.1"
+    "@vercel/frameworks": "^3.34.0",
+    "picocolors": "^1.1.1",
+    "picomatch": "^4.0.7",
+    "yaml": "^2.6.1"
   },
   "description": "Runs the checks and grades what they find",
   "homepage": "https://pagebeam.dev",

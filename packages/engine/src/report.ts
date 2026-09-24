@@ -41,6 +41,16 @@ function heading(result: RunResult): string[] {
   }
   lines.push(dim(aside.join('  ·  ')));
 
+  const build = result.build;
+  if (build !== undefined) {
+    const by = build.framework === null ? '' : ` (${build.framework})`;
+    lines.push(
+      'dir' in build
+        ? dim(`built the docs with ${build.command}${by}`)
+        : `${colour.yellow('could not build')} ${bold('the docs')}${by} ${dim(build.failed)}`,
+    );
+  }
+
   for (const skipped of result.skipped) {
     const name = skipped.split(':')[0] as string;
     const asked = result.degraded.includes(name);
@@ -115,7 +125,7 @@ export function pretty(result: RunResult): string {
 
 export function json(result: RunResult): string {
   return JSON.stringify(
-    { problem: result.problem, degraded: result.degraded, comparedWith: result.comparedWith, grade: result.grade, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
+    { problem: result.problem, degraded: result.degraded, ...(result.build === undefined ? {} : { build: result.build }), comparedWith: result.comparedWith, grade: result.grade, pages: result.pages, apps: result.apps, ran: result.ran, skipped: result.skipped, findings: result.findings },
     null,
     2,
   );
