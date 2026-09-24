@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.4
+
+### Built sites first
+
+- `check --build` builds the docs site the way its project does, then checks
+  links against the pages it built. The site's framework is recognised from
+  the files and packages it leaves behind, using the list Vercel maintains.
+  Missing dependencies are installed from the lockfile, at the workspace root
+  when the site is part of one. A build that fails exits 2.
+- `--build=auto` builds only a docs site of its own with a recognised
+  framework. The action uses it by default.
+- Without a known framework, the folder a site drops from a page's path is
+  learned from its build.
+- When addresses can only be guessed and most links miss them, those links
+  are reported once as unchecked instead of each as broken.
+
+### Other fixes
+
+- Docs in their own repository are addressed as their site serves them. A
+  Starlight site's pages no longer look broken when the root is its repository.
+- A setting the code reads, such as `env('X')` or `process.env.X`, counts as
+  defined.
+- `vendor/` is left out of applications by default.
+- A public assets folder is no longer taken for a built site.
+
 ## 0.1.3
 
 ### A GitHub Action

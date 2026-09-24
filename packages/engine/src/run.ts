@@ -9,7 +9,8 @@ import {
   type PagebeamConfig,
   type Snapshot,
 } from '@pagebeam/core';
-import { history, screensOf, snapshot } from '@pagebeam/app';
+import { envReads, history, screensOf, snapshot } from '@pagebeam/app';
+import { buildSite, OUTPUTS, siteOf, type Site } from './site.js';
 import picomatch from 'picomatch';
 import { discover, parseAll, type DocPage } from '@pagebeam/docs';
 import { configKeys, links, moved, openapi, strings, undocumented } from '@pagebeam/checks';
@@ -31,6 +32,9 @@ export interface RunResult {
   ran: string[];
   skipped: string[];
   recheckAt?: (docsRoot: string) => Promise<Finding[]>;
+  build?: ({ dir: string; command: string } | { failed: string; command: string | null } | { skipped: string }) & {
+    framework: string | null;
+  };
 }
 
 function rootOf(cwd: string, app: { path?: string | undefined }): string | null {
@@ -68,6 +72,7 @@ async function runConfigKeys(
     const root = rootOf(cwd, app);
     if (root === null) continue;
     for (const key of await configKeys.definedKeys(root, app.envFiles)) defined.add(key);
+    for (const key of await envReads(root, app.exclude)) defined.add(key);
     searched.push(app.name);
   }
   return configKeys.compare(configKeys.documentedKeys(pages), defined, searched);
@@ -79,14 +84,57 @@ async function exists(dir: string): Promise<boolean> {
     .catch(() => false);
 }
 
-// The same directory the link check reads, found the same way, so both are
-// talking about one site rather than two.
-async function builtSite(cwd: string, config: PagebeamConfig): Promise<string | null> {
-  const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
-  for (const dir of declared ? [declared] : [path.join(cwd, 'dist'), path.join(cwd, 'build')]) {
-    if (await exists(dir)) return dir;
+const sites = new Map<string, Promise<Site | null>>();
+
+// A `docs.format` written in the config says where the pages are, whatever
+// the detection found.
+async function siteFor(docsRoot: string, config: PagebeamConfig): Promise<Site | null> {
+  if (!sites.has(docsRoot)) sites.set(docsRoot, siteOf(docsRoot));
+  const site = await sites.get(docsRoot)!;
+  if (site === null) return null;
+  const format = config.docs.format;
+  if (format === 'starlight') return { ...site, content: path.join(site.dir, 'src/content/docs') };
+  if (format === 'astro') return { ...site, content: path.join(site.dir, 'src/pages') };
+  return site;
+}
+
+// The folder a build asked for in this run wrote, by the docs it was for.
+const justBuilt = new Map<string, string>();
+
+function buildCandidates(cwd: string, config: PagebeamConfig, site: Site | null, docsRoot: string): { dirs: string[]; declared: boolean } {
+  if (config.docs.buildDir) return { dirs: [path.resolve(cwd, config.docs.buildDir)], declared: true };
+  const fresh = justBuilt.get(docsRoot);
+  const near = [cwd, ...(site === null ? [] : [site.dir])];
+  const output = site === null ? [] : [...(site.output ? [site.output] : []), ...OUTPUTS].map((o) => path.join(site.dir, o));
+  return {
+    dirs: [...new Set([...(fresh === undefined ? [] : [fresh]), ...output, ...near.flatMap((d) => [path.join(d, 'dist'), path.join(d, 'build')])])],
+    declared: false,
+  };
+}
+
+// The build the link check validated, so both checks read one site.
+async function builtSite(pages: DocPage[], cwd: string, config: PagebeamConfig, docsRoot: string): Promise<string | null> {
+  const set = await routeSet(pages, cwd, config, docsRoot, false);
+  return set.source === 'build' ? (set.builtDir ?? null) : null;
+}
+
+// Routes the source pages publish. A framework that keeps its pages in a
+// content folder serves them from the site root, so the folder is not part of
+// the address, whether the configured root holds that folder or sits in it.
+function sourceRoutes(pages: DocPage[], config: PagebeamConfig, docsRoot: string, site: Site | null): Set<string> {
+  const prefix = config.docs.routeBase.replace(/\/+$/, '');
+  const content = site?.content ?? null;
+  if (content !== null) {
+    const down = path.relative(docsRoot, content);
+    if (down === '' || (!down.startsWith('..') && !path.isAbsolute(down))) {
+      return links.routesOf(pages, down.split(path.sep).join('/'), prefix);
+    }
+    const up = path.relative(content, docsRoot);
+    if (!up.startsWith('..') && !path.isAbsolute(up)) {
+      return links.routesOf(pages, '', `${prefix}/${up.split(path.sep).join('/')}`);
+    }
   }
-  return null;
+  return links.routesOf(pages, links.baseFromPatterns(config.docs.include), prefix);
 }
 
 async function routeSet(
@@ -96,27 +144,40 @@ async function routeSet(
   docsRoot: string,
   earlier: boolean,
 ): Promise<links.RouteSet> {
-  const publicDir = config.docs.publicDir ? path.resolve(cwd, config.docs.publicDir) : undefined;
+  const site = await siteFor(docsRoot, config);
+  const publicDir = config.docs.publicDir
+    ? path.resolve(cwd, config.docs.publicDir)
+    : site !== null && (await exists(path.join(site.dir, 'public')))
+      ? path.join(site.dir, 'public')
+      : undefined;
+  const { dirs: candidates, declared } = buildCandidates(cwd, config, site, docsRoot);
+
   const prefix = config.docs.routeBase.replace(/\/+$/, '');
-  const declared = config.docs.buildDir ? path.resolve(cwd, config.docs.buildDir) : null;
-  const candidates = declared ? [declared] : [path.join(cwd, 'dist'), path.join(cwd, 'build')];
+  let fromSource = sourceRoutes(pages, config, docsRoot, site);
 
-  // The build on disk is today's. Comparing yesterday's pages against it would
-  // let a route deleted today make an old link look like it was always broken.
-  const fromSource = links.routesOf(pages, links.baseFromPatterns(config.docs.include), prefix);
-
-  for (const dir of earlier ? [] : candidates) {
+  for (const dir of candidates) {
     if (!(await exists(dir))) continue;
     const routes = await links.routesFromBuild(dir);
     if (routes.size === 0) continue;
 
+    // Where the source does not say how a path becomes an address, the build
+    // does. The same folder is dropped at every revision, so an earlier pass
+    // learns it here too.
+    const shared = (from: Set<string>) => [...from].filter((r) => routes.has(r)).length / Math.max(from.size, 1);
+    if (shared(fromSource) < 0.5) {
+      const base = links.learnedBase(pages, routes, prefix);
+      if (base !== null) fromSource = links.routesOf(pages, base, prefix);
+    }
+
+    // The build on disk is today's. Comparing yesterday's pages against it
+    // would let a route deleted today make an old link look like it was
+    // always broken.
+    if (earlier) break;
+
     // A build guessed at rather than declared has to be shown to belong to
     // this documentation: most of what the source publishes must be in it.
-    if (declared === null) {
-      const shared = [...fromSource].filter((r) => routes.has(r)).length;
-      if (fromSource.size === 0 || shared / fromSource.size < 0.5) continue;
-    }
-    return { routes, source: 'build', docsRoot, ...(publicDir ? { publicDir } : {}) };
+    if (!declared && (fromSource.size === 0 || shared(fromSource) < 0.5)) continue;
+    return { routes, source: 'build', builtDir: dir, docsRoot, ...(publicDir ? { publicDir } : {}) };
   }
   return { routes: fromSource, source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
 }
@@ -156,6 +217,11 @@ async function runLinks(
   models[earlier ? 'then' : 'now'] = set.source;
   if (options.external && !earlier) set.reach = reacherFor(config, options);
   const outcome = await links.checkLinks(pages, set, { external: options.external });
+  if (outcome.unaddressed !== undefined) {
+    skipped.push(
+      `links: ${outcome.unaddressed.missed} of ${outcome.unaddressed.total} links to site addresses match no page worked out from the source files, so the addresses are what is wrong, not the links. They were not checked. Build the site, or set docs.buildDir to where it is built`,
+    );
+  }
   if (outcome.external.unknown > 0) {
     skipped.push(
       `links: ${outcome.external.unknown} external address(es) could not be reached either way, so they are unchecked rather than sound`,
@@ -310,7 +376,7 @@ async function runOpenapi(
   // address. A site may publish its whole reference from the specification,
   // and then no source page names a single operation while every one of them
   // is documented.
-  const built = await builtSite(cwd, config);
+  const built = await builtSite(pages, cwd, config, docsRoot);
   if (wanted === 'auto' && built === null) {
     skipped.push(
       'openapi: coverage needs the built site, and none was found. Set docs.buildDir, or build before running, or set checks.openapi.coverage to always to count what the source names instead',
@@ -689,11 +755,15 @@ export interface Asking {
   // does not propose, so a run that only reports has no reason to put a
   // finding to a model, and no reason to spend anything doing it.
   proposing?: boolean | undefined;
+  // `always` builds whatever site the docs belong to. `auto` builds only a
+  // site of their own that a framework is recognised in, and says why not
+  // otherwise. Either way a build that was started and failed degrades the run.
+  build?: 'always' | 'auto' | undefined;
 }
 
 export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> {
   try {
-    return await attempt(cwd, asking.proposing === true);
+    return await attempt(cwd, asking.proposing === true, asking.build);
   } catch (error) {
     // A file that could not be read is not a file with nothing in it.
     return {
@@ -711,7 +781,7 @@ export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> 
   }
 }
 
-async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
+async function attempt(cwd: string, proposing: boolean, building: Asking['build']): Promise<RunResult> {
   const { config, from, asked } = await loadConfig(cwd);
   // Without one, the only thing to check documentation against is a guess at
   // where it is, and a clean answer from a guess is worse than no answer.
@@ -733,6 +803,28 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
       ran: [],
       skipped: [],
     };
+  }
+
+  let build: RunResult['build'];
+  if (building !== undefined) {
+    const site = await siteFor(docsRoot, config);
+    const isApp = site !== null && config.apps.some((a) => path.resolve(cwd, a.path) === site.dir);
+    const framework = site?.framework?.name ?? null;
+    if (building === 'auto' && (site === null || site.framework === null || isApp)) {
+      build = {
+        skipped:
+          site === null || site.framework === null
+            ? 'no site generator was recognised for the docs'
+            : `the docs are part of ${path.relative(cwd, site.dir) || 'this application'}, not a site of their own`,
+        framework,
+      };
+    } else if (site === null) {
+      build = { failed: `no documentation site was found at or above ${docsRoot}`, command: null, framework };
+    } else {
+      const done = await buildSite(site);
+      if ('dir' in done) justBuilt.set(docsRoot, done.dir);
+      build = { ...done, framework };
+    }
   }
 
   const evidence = await gather(cwd, config);
@@ -828,10 +920,12 @@ async function attempt(cwd: string, proposing: boolean): Promise<RunResult> {
   const degraded = [
     ...[...skippedNames].filter((name) => asked.has(configured.get(name) ?? name)),
     ...refusedToOpen,
+    ...(build !== undefined && 'failed' in build ? ['building the docs site'] : []),
   ];
   return {
     problem: null,
     degraded,
+    ...(build === undefined ? {} : { build }),
     comparedWith,
     grade: evidence?.grade ?? null,
     configFrom: from,

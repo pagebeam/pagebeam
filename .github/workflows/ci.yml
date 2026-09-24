@@ -63,11 +63,25 @@ jobs:
               path: .
           YAML
 
+      # The version this commit declares, once it is on npm. Before its
+      # release it is not, and the last release stands in for it.
+      - name: Choose the release to run
+        id: release
+        run: |
+          set -euo pipefail
+          declared="$(node -p "require('./packages/cli/package.json').version")"
+          if npm view "pagebeam@$declared" version > /dev/null 2>&1; then
+            echo "version=$declared" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: ./
         id: pagebeam
         continue-on-error: true
         with:
           cwd: ${{ runner.temp }}/product
+          version: ${{ steps.release.outputs.version }}
 
       - name: It ran, said something, and said where it ran
         run: |

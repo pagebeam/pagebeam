@@ -34,7 +34,7 @@ const appSchema = z.strictObject({
   include: z.array(z.string()).default(['**/*.{ts,tsx,js,jsx,vue,svelte}']),
   exclude: z
     .array(z.string())
-    .default(['**/node_modules/**', '**/*.test.*', '**/*.spec.*', '**/*.stories.*', '**/dist/**']),
+    .default(['**/node_modules/**', '**/vendor/**', '**/*.test.*', '**/*.spec.*', '**/*.stories.*', '**/dist/**']),
   envFiles: z.array(z.string()).default(['**/.env.example']),
   openapi: z.strictObject({ spec: z.string() }).optional(),
 });

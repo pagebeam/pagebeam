@@ -10,6 +10,7 @@ export interface RouteSet {
   publicDir?: string;
   docsRoot: string;
   source: 'build' | 'content';
+  builtDir?: string;
   reach?: ((href: string) => Promise<Verdict>) | undefined;
 }
 
@@ -78,6 +79,34 @@ export function routesOf(pages: DocPage[], base = '', prefix = ''): Set<string> 
   return routes;
 }
 
+// The folder a site drops from a page's path to make its address, learned
+// from what it built: `src/content/docs/agent/overview.md` published at
+// `/agent/overview` drops `src/content/docs`. Null when no single folder
+// explains most pages.
+export function learnedBase(pages: DocPage[], built: Set<string>, prefix = ''): string | null {
+  const bare = prefix.replace(/\/+$/, '');
+  const served = new Set(
+    [...built].map((r) => (bare !== '' && (r === bare || r.startsWith(`${bare}/`)) ? normalise(r.slice(bare.length)) : r)),
+  );
+  const votes = new Map<string, number>();
+  let counted = 0;
+  for (const route of routesOf(pages.filter((p) => !(typeof p.slug === 'string' && p.slug.trim() !== '')))) {
+    if (route === '/') continue;
+    counted += 1;
+    const parts = route.slice(1).split('/');
+    for (let drop = 0; drop < parts.length; drop++) {
+      const rest = normalise(`/${parts.slice(drop).join('/')}`);
+      if (rest !== '/' && served.has(rest)) {
+        const base = parts.slice(0, drop).join('/');
+        votes.set(base, (votes.get(base) ?? 0) + 1);
+        break;
+      }
+    }
+  }
+  const [best, count] = [...votes].sort((a, b) => b[1] - a[1])[0] ?? ['', 0];
+  return counted > 0 && count / counted >= 0.5 ? best : null;
+}
+
 async function isFile(candidate: string): Promise<boolean> {
   return stat(candidate)
     .then((s) => s.isFile())
@@ -87,7 +116,13 @@ async function isFile(candidate: string): Promise<boolean> {
 export interface LinkOutcome {
   findings: Finding[];
   external: { alive: number; dead: number; unknown: number; skipped: number };
+  // Links to site addresses left unchecked because the addresses worked out
+  // from source matched too few of them to be trusted.
+  unaddressed?: { missed: number; total: number };
 }
+
+// Below this many site links, a mismatch says little about the addresses.
+const ADDRESSES_WORTH_JUDGING = 3;
 
 export async function checkLinks(
   pages: DocPage[],
@@ -96,6 +131,8 @@ export async function checkLinks(
 ): Promise<LinkOutcome> {
   const findings: Finding[] = [];
   const external: { page: DocPage; link: DocLink; href: string }[] = [];
+  const missed: Finding[] = [];
+  let addressed = 0;
 
   for (const page of pages) {
     for (const link of page.links) {
@@ -121,10 +158,11 @@ export async function checkLinks(
       }
 
       const target = normalise(pathname);
+      addressed += 1;
       if (set.routes.has(target)) continue;
       if (set.publicDir && (await isFile(path.join(set.publicDir, pathname)))) continue;
 
-      findings.push(
+      missed.push(
         finding(
           'links',
           page,
@@ -138,6 +176,15 @@ export async function checkLinks(
         ),
       );
     }
+  }
+
+  // Addresses worked out from source are a guess. When most links miss them,
+  // the guess is wrong, not the links.
+  let unaddressed: LinkOutcome['unaddressed'];
+  if (set.source === 'content' && missed.length >= ADDRESSES_WORTH_JUDGING && missed.length / addressed > 0.5) {
+    unaddressed = { missed: missed.length, total: addressed };
+  } else {
+    findings.push(...missed);
   }
 
   const counted = { alive: 0, dead: 0, unknown: 0, skipped: 0 };
@@ -154,12 +201,12 @@ export async function checkLinks(
       );
     }
   }
-  return { findings, external: counted };
+  return { findings, external: counted, ...(unaddressed === undefined ? {} : { unaddressed }) };
 }
 
 export async function routesFromBuild(buildDir: string): Promise<Set<string>> {
   const { glob } = await import('tinyglobby');
-  const pages = await glob(['**/index.html', '*.html'], {
+  const pages = await glob(['**/*.html'], {
     cwd: buildDir,
     ignore: ['**/node_modules/**'],
     absolute: false,

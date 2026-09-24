@@ -69,8 +69,8 @@ export function compare(
       title: `${key} is documented but defined nowhere in the app`,
       detail:
         `The docs describe ${key} as a configuration key. ` +
-        `It appears in no example environment file in ${searched.length === 1 ? searched[0] : `any of ${searched.length} applications`}. ` +
-        `Either it was renamed or removed, or the example files are missing it.`,
+        `No example environment file lists it and no source reads it, in ${searched.length === 1 ? searched[0] : `any of ${searched.length} applications`}. ` +
+        `Either it was renamed or removed, or it is read somewhere pagebeam does not look.`,
       evidence: [
         { kind: 'documented-at', detail: `${where.page}:${where.line}` },
         { kind: 'searched', detail: searched.join(', ') },

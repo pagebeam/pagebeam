@@ -557,3 +557,133 @@ test('an operation only a component attribute names is not reported missing from
   const built = await checked({ ...cited, 'dist/api/index.html': '<p>POST /fake creates one.</p>' });
   assert.match(built, /POST \/fake is documented but not in/);
 });
+
+// A Starlight site in its own repository, beside a Nuxt app and a Laravel API.
+async function beside(extra: Record<string, string> = {}, flags: string[] = []): Promise<string> {
+  return (await besideRun(extra, flags)).stdout;
+}
+
+async function besideRun(extra: Record<string, string> = {}, flags: string[] = []): Promise<{ stdout: string; code: number }> {
+  const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-beside-'));
+  const files: Record<string, string> = {
+    'docs/package.json': '{"dependencies":{"astro":"6","@astrojs/starlight":"0.40"}}\n',
+    'docs/src/content/docs/agent/overview.md':
+      '# Overview\n\nSee [what it can do](/agent/what-it-can-do/) and [safety](/agent/safety/).\n\n```ini\nAGENTS_PROVIDER=your-provider\nAGENTS_SECRET=your-secret\n```\n',
+    'docs/src/content/docs/agent/what-it-can-do.md': '# What it can do\n\nBack to the [overview](/agent/overview/).\n',
+    'ui/pagebeam.config.yaml': 'docs:\n  root: ../docs\napps:\n  - name: ui\n    path: .\n  - name: api\n    path: ../api\n',
+    'ui/pages/index.vue': '<template><p>Home</p></template>\n',
+    'api/config/agents.php': "<?php\nreturn ['provider' => env('AGENTS_PROVIDER', 'gemini')];\n",
+    'api/vendor/acme/debug/page.vue': `<template><div>${BUTTONS}</div></template>\n`,
+    ...extra,
+  };
+  for (const [at, text] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, at)), { recursive: true });
+    await writeFile(path.join(root, at), text);
+  }
+  for (const repo of ['docs', 'ui', 'api']) {
+    const at = path.join(root, repo);
+    execFileSync('git', ['init', '-q', '-b', 'main', at]);
+    execFileSync('git', ['-C', at, 'add', '-A']);
+    execFileSync('git', ['-C', at, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'first']);
+  }
+  return run(process.execPath, [CLI, 'check', '--cwd', path.join(root, 'ui'), ...flags]).then(
+    ({ stdout }) => ({ stdout, code: 0 }),
+    (error: { stdout: string; code: number }) => ({ stdout: error.stdout, code: error.code }),
+  );
+}
+
+test('a Starlight page is addressed without its content folder', async () => {
+  const stdout = await beside();
+  assert.doesNotMatch(stdout, /\/agent\/what-it-can-do does not resolve/);
+  assert.doesNotMatch(stdout, /\/agent\/overview does not resolve/);
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+});
+
+test('the docs site is built where its package.json is, not where pagebeam runs', async () => {
+  const stdout = await beside({
+    'docs/dist/agent/overview/index.html': '<p>Overview</p>',
+    'docs/dist/agent/what-it-can-do/index.html': '<p>What it can do</p>',
+  });
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+  assert.match(stdout, /No built page/);
+});
+
+test('a setting the code reads is defined even when no example file lists it', async () => {
+  const stdout = await beside();
+  assert.doesNotMatch(stdout, /AGENTS_PROVIDER is documented but/);
+  assert.match(stdout, /AGENTS_SECRET is documented but/);
+});
+
+test('controls in vendored dependencies are not the product', async () => {
+  assert.doesNotMatch(await beside(), /vendor|Publish Site/);
+});
+
+test('a site generator nobody named is understood from what it built', async () => {
+  const stdout = await beside({
+    'docs/package.json': '{"dependencies":{"some-generator":"1"}}\n',
+    'docs/dist/agent/overview/index.html': '<p>Overview</p>',
+    'docs/dist/agent/what-it-can-do/index.html': '<p>What it can do</p>',
+  });
+  assert.doesNotMatch(stdout, /\/agent\/(overview|what-it-can-do) does not resolve/);
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+});
+
+test('addresses guessed from source that match no link are reported once, not as broken links', async () => {
+  const stdout = await beside({ 'docs/package.json': '{"dependencies":{"some-generator":"1"}}\n' });
+  assert.doesNotMatch(stdout, /does not resolve/);
+  assert.match(stdout, /3 of 3 links to site addresses match no page worked out from the source files/);
+});
+
+const BUILDS_PAGES =
+  "import { mkdirSync, writeFileSync } from 'node:fs';\n" +
+  "for (const p of ['agent/overview', 'agent/what-it-can-do']) {\n" +
+  "  mkdirSync(`dist/${p}`, { recursive: true });\n" +
+  "  writeFileSync(`dist/${p}/index.html`, '<p>page</p>');\n" +
+  "}\n" +
+  "writeFileSync('dist/index.html', '<p>home</p>');\n";
+
+test('--build builds the docs site as its project does and checks links against what it built', async () => {
+  const stdout = await beside(
+    {
+      'docs/package.json': '{"scripts":{"build":"node build.mjs"},"dependencies":{"some-generator":"1"}}\n',
+      'docs/build.mjs': BUILDS_PAGES,
+      'docs/node_modules/.keep': '',
+    },
+    ['--build'],
+  );
+  assert.match(stdout, /built the docs with npm run build/);
+  assert.match(stdout, /\/agent\/safety does not resolve/);
+  assert.match(stdout, /No built page/);
+});
+
+test('a build that was asked for and failed is reported, and the answer cannot be trusted', async () => {
+  const { stdout, code } = await besideRun(
+    {
+      'docs/package.json': '{"scripts":{"build":"node -e \\"process.exit(3)\\""},"dependencies":{"@astrojs/starlight":"0","astro":"6"}}\n',
+      'docs/node_modules/.keep': '',
+    },
+    ['--build'],
+  );
+  assert.match(stdout, /could not build the docs \(Astro\) npm run build failed/);
+  assert.equal(code, 2);
+});
+
+test('--build=auto leaves docs alone when no site generator is recognised', async () => {
+  const { stdout, code } = await besideRun(
+    { 'docs/package.json': '{"scripts":{"build":"node -e \\"process.exit(3)\\""}}\n', 'docs/node_modules/.keep': '' },
+    ['--build=auto'],
+  );
+  assert.match(stdout, /did not build the docs: no site generator was recognised/);
+  assert.equal(code, 0);
+});
+
+test('a public assets folder is not taken for a built site', async () => {
+  const stdout = await beside({
+    'docs/public/logo.txt': 'logo',
+    'ui/pagebeam.config.yaml':
+      'docs:\n  root: ../docs\napps:\n  - name: api\n    path: ../api\n    openapi:\n      spec: ../api/openapi.json\n',
+    'api/openapi.json': JSON.stringify({ openapi: '3.0.0', info: { title: 't', version: '1' }, paths: { '/x': { get: { responses: {} } } } }),
+  });
+  assert.match(stdout, /coverage needs the built site/);
+  assert.doesNotMatch(stdout, /API operations are not documented/);
+});
