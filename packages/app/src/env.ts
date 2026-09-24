@@ -31,9 +31,6 @@ function keysIn(text: string, into: Set<string>): void {
   }
 }
 
-// Environment variables an application's own source reads, today or at a
-// revision. A setting read in code is defined even where no example file
-// lists it.
 export async function envReads(root: string, exclude: string[], rev?: string): Promise<Set<string>> {
   const keys = new Set<string>();
   if (rev === undefined) {

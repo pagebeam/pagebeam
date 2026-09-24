@@ -112,8 +112,7 @@ function buildCandidates(cwd: string, config: PagebeamConfig, site: Site | null,
   };
 }
 
-// The same built site the link check reads, held to the same test, so both
-// are talking about one site rather than two.
+// The build the link check validated, so both checks read one site.
 async function builtSite(pages: DocPage[], cwd: string, config: PagebeamConfig, docsRoot: string): Promise<string | null> {
   const set = await routeSet(pages, cwd, config, docsRoot, false);
   return set.source === 'build' ? (set.builtDir ?? null) : null;
@@ -756,9 +755,6 @@ export interface Asking {
   // does not propose, so a run that only reports has no reason to put a
   // finding to a model, and no reason to spend anything doing it.
   proposing?: boolean | undefined;
-  // Build the documentation site first, so links are checked against the
-  // pages it really publishes. Runs the site's own code, so only on request.
-  // What it writes is held to the same test as any build found on disk.
   // `always` builds whatever site the docs belong to. `auto` builds only a
   // site of their own that a framework is recognised in, and says why not
   // otherwise. Either way a build that was started and failed degrades the run.

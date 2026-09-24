@@ -5,7 +5,6 @@ import { frameworks as listed } from '@vercel/frameworks';
 import { glob } from 'tinyglobby';
 
 type Detector = { path?: string; matchContent?: string; matchPackage?: string };
-// The part of each entry read here.
 interface Framework {
   slug: string | null;
   name: string;
@@ -16,10 +15,8 @@ interface Framework {
 }
 const frameworks = listed as unknown as readonly Framework[];
 
-// The documentation site the pages belong to, recognised the way a hosting
-// platform recognises a project it is asked to deploy: by the files and
-// packages each framework is known to leave behind. The list is Vercel's,
-// kept current by the people who deploy these frameworks every day.
+// The documentation site the pages belong to, recognised by the files and
+// packages each framework leaves behind, from Vercel's framework list.
 export interface Site {
   dir: string;
   framework: { slug: string | null; name: string } | null;
@@ -191,9 +188,6 @@ function lastLine(text: string): string {
   return text.trim().split('\n').filter((l) => l.trim() !== '').pop()?.trim() ?? 'no output';
 }
 
-// Builds the site the way its project does: dependencies from its lockfile
-// when they are not installed yet, then its build. This runs the project's
-// own code, so it happens only when asked for.
 export async function buildSite(site: Site): Promise<Built> {
   if (site.build === null) {
     return { failed: `nothing says how to build ${site.dir}: no build script and no recognised framework`, command: null };

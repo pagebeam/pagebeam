@@ -10,7 +10,6 @@ export interface RouteSet {
   publicDir?: string;
   docsRoot: string;
   source: 'build' | 'content';
-  // The folder the routes were read from, when they came from a build.
   builtDir?: string;
   reach?: ((href: string) => Promise<Verdict>) | undefined;
 }
@@ -82,8 +81,8 @@ export function routesOf(pages: DocPage[], base = '', prefix = ''): Set<string> 
 
 // The folder a site drops from a page's path to make its address, learned
 // from what it built: `src/content/docs/agent/overview.md` published at
-// `/agent/overview` drops `src/content/docs`. Nothing here knows which site
-// generator did that. Null when no single folder explains most pages.
+// `/agent/overview` drops `src/content/docs`. Null when no single folder
+// explains most pages.
 export function learnedBase(pages: DocPage[], built: Set<string>, prefix = ''): string | null {
   const bare = prefix.replace(/\/+$/, '');
   const served = new Set(
@@ -179,9 +178,8 @@ export async function checkLinks(
     }
   }
 
-  // Addresses worked out from source files are a guess at how the site maps
-  // a path to a URL. When most links miss them, the guess is what is wrong,
-  // and reporting every link as broken would say the opposite.
+  // Addresses worked out from source are a guess. When most links miss them,
+  // the guess is wrong, not the links.
   let unaddressed: LinkOutcome['unaddressed'];
   if (set.source === 'content' && missed.length >= ADDRESSES_WORTH_JUDGING && missed.length / addressed > 0.5) {
     unaddressed = { missed: missed.length, total: addressed };
