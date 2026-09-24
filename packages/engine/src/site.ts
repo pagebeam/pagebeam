@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { frameworks as listed } from '@vercel/frameworks';
+import { glob } from 'tinyglobby';
 
 type Detector = { path?: string; matchContent?: string; matchPackage?: string };
 // The part of each entry read here.
@@ -29,6 +30,7 @@ export interface Site {
   build: string | null;
   output: string | null;
   install: string | null;
+  installDir: string;
 }
 
 async function isFile(at: string): Promise<boolean> {
@@ -81,17 +83,25 @@ function settingOf(setting: unknown): string | null {
   return first?.[1] ?? null;
 }
 
-async function packageManager(dir: string): Promise<string | null> {
-  for (const [lock, name] of [
-    ['pnpm-lock.yaml', 'pnpm'],
-    ['yarn.lock', 'yarn'],
-    ['bun.lock', 'bun'],
-    ['bun.lockb', 'bun'],
-    ['package-lock.json', 'npm'],
-  ] as const) {
-    if (await exists(path.join(dir, lock))) return name;
+const LOCKFILES = [
+  ['pnpm-lock.yaml', 'pnpm'],
+  ['yarn.lock', 'yarn'],
+  ['bun.lock', 'bun'],
+  ['bun.lockb', 'bun'],
+  ['package-lock.json', 'npm'],
+] as const;
+
+// The package manager and the folder it installs from. A site inside a
+// workspace is installed from the workspace root, whose lockfile it shares,
+// so the nearest lockfile between the site and its repository decides.
+async function packageManager(dir: string): Promise<{ name: string; root: string; locked: boolean } | null> {
+  for (let at = dir; ; at = path.dirname(at)) {
+    for (const [lock, name] of LOCKFILES) {
+      if (await exists(path.join(at, lock))) return { name, root: at, locked: true };
+    }
+    if ((await exists(path.join(at, '.git'))) || path.dirname(at) === at) break;
   }
-  return (await exists(path.join(dir, 'package.json'))) ? 'npm' : null;
+  return (await exists(path.join(dir, 'package.json'))) ? { name: 'npm', root: dir, locked: false } : null;
 }
 
 const INSTALL: Record<string, string> = {
@@ -108,19 +118,16 @@ async function describe(dir: string, framework: Framework | null): Promise<Site>
   );
   const manager = await packageManager(dir);
   // The project's own build script is what its authors run, so it wins over
-  // the framework's generic command.
-  const script = manifest?.scripts?.build !== undefined && manager !== null ? `${manager} run build` : null;
+  // the framework's generic command. Run in the site's folder, it builds the
+  // site's package whichever workspace it belongs to.
+  const script = manifest?.scripts?.build !== undefined && manager !== null ? `${manager.name} run build` : null;
   const uses = { ...manifest?.dependencies, ...manifest?.devDependencies };
   const content =
     framework?.slug === 'astro'
       ? path.join(dir, '@astrojs/starlight' in uses ? 'src/content/docs' : 'src/pages')
       : null;
   const install =
-    manager === null
-      ? null
-      : manager === 'npm' && !(await exists(path.join(dir, 'package-lock.json')))
-        ? 'npm install'
-        : INSTALL[manager]!;
+    manager === null ? null : manager.locked ? INSTALL[manager.name]! : `${manager.name} install`;
   return {
     dir,
     framework: framework === null ? null : { slug: framework.slug, name: framework.name },
@@ -128,6 +135,7 @@ async function describe(dir: string, framework: Framework | null): Promise<Site>
     build: script ?? settingOf(framework?.settings.buildCommand),
     output: settingOf(framework?.settings.outputDirectory),
     install,
+    installDir: manager?.root ?? dir,
   };
 }
 
@@ -149,10 +157,14 @@ export async function siteOf(docsRoot: string): Promise<Site | null> {
 // to the project.
 export const OUTPUTS = ['dist', 'build', 'out', 'public', '_site', 'site', '.output/public'];
 
+async function holdsPages(dir: string): Promise<boolean> {
+  return (await glob(['**/*.html'], { cwd: dir, ignore: ['**/node_modules/**'] })).length > 0;
+}
+
 export async function builtOutput(site: Site): Promise<string | null> {
   for (const at of [...(site.output === null ? [] : [site.output]), ...OUTPUTS]) {
     const dir = path.join(site.dir, at);
-    if (await isFile(path.join(dir, 'index.html'))) return dir;
+    if ((await exists(dir)) && (await holdsPages(dir))) return dir;
   }
   return null;
 }
@@ -186,8 +198,8 @@ export async function buildSite(site: Site): Promise<Built> {
   if (site.build === null) {
     return { failed: `nothing says how to build ${site.dir}: no build script and no recognised framework`, command: null };
   }
-  if (site.install !== null && !(await exists(path.join(site.dir, 'node_modules')))) {
-    const installed = await sh(site.install, site.dir);
+  if (site.install !== null && !(await exists(path.join(site.installDir, 'node_modules')))) {
+    const installed = await sh(site.install, site.installDir);
     if (installed.code !== 0) return { failed: `${site.install} failed: ${lastLine(installed.tail)}`, command: site.install };
   }
   const built = await sh(site.build, site.dir);

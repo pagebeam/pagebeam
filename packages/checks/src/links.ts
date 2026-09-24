@@ -10,6 +10,8 @@ export interface RouteSet {
   publicDir?: string;
   docsRoot: string;
   source: 'build' | 'content';
+  // The folder the routes were read from, when they came from a build.
+  builtDir?: string;
   reach?: ((href: string) => Promise<Verdict>) | undefined;
 }
 

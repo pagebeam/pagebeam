@@ -73,7 +73,7 @@ repository at `$GITHUB_WORKSPACE/<owner>/<name>`, not at the workspace root.
 | `command`       | `check` to report, `fix` to propose                                              | `check`                |
 | `profile`       | `observe`, `enforce` or `enforce-all`                                            | `observe`              |
 | `publish`       | With `fix`, open or update the pull request                                      | `false`                |
-| `build`         | Build the docs site first, and check links against what it built                | `true`                 |
+| `build`         | Build the docs site first: `auto`, `true` or `false`                             | `auto`                 |
 | `token`         | Reads the other repositories and opens the pull request                          | the job's own token    |
 | `model-key`     | Your model provider's key, as a secret                                           | none                   |
 | `model-key-env` | The variable your config's `model.apiKeyEnv` names                               | `OPENAI_API_KEY`       |
@@ -131,8 +131,9 @@ With `--build`, pagebeam recognises the docs site the way a hosting platform
 does, from the files and packages its framework leaves behind, and runs the
 project's own build script. Missing dependencies are installed from its
 lockfile. Links are then checked against the pages it built. This runs the
-site's own code, so it happens only when asked for. A build that fails is
-reported, and the rest of the run goes on as it would without it.
+site's own code, so it happens only when asked for. A build that fails exits
+`2`. `--build=auto` builds only a docs site of its own whose framework is
+recognised, and says why when it does not build.
 
 Exit `0`: nothing blocks. `1`: a proven finding blocks. `2`: the answer cannot
 be trusted, because nothing was read or a requested check could not run.

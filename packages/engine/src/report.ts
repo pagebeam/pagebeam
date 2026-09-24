@@ -47,7 +47,9 @@ function heading(result: RunResult): string[] {
     lines.push(
       'dir' in build
         ? dim(`built the docs with ${build.command}${by}`)
-        : `${colour.yellow('could not build')} ${bold('the docs')}${by} ${dim(build.failed)}`,
+        : 'skipped' in build
+          ? dim(`did not build the docs: ${build.skipped}`)
+          : `${colour.yellow('could not build')} ${bold('the docs')}${by} ${dim(build.failed)}`,
     );
   }
 

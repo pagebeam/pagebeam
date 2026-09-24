@@ -17,7 +17,10 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   --build    build the docs site first, as its project builds it, and check
              links against the pages it publishes. Installs its dependencies
              from the lockfile when they are missing. This runs the site's
-             own code
+             own code. A build that fails exits 2
+  --build=auto
+             build only a docs site of its own whose framework is
+             recognised, and say why not otherwise
   --publish  actually open or update the pull request. Without it, fix says
              what it would propose and touches nothing
   --profile  observe: report everything, block nothing (default)
@@ -36,7 +39,7 @@ interface Args {
   cwd: string;
   json: boolean;
   publish: boolean;
-  build: boolean;
+  build: 'always' | 'auto' | undefined;
   profile: 'observe' | 'enforce' | 'enforce-all';
 }
 
@@ -50,14 +53,15 @@ function parse(argv: string[]): Args {
     cwd: process.cwd(),
     json: false,
     publish: false,
-    build: false,
+    build: undefined,
     profile: 'observe',
   };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '--json') args.json = true;
     else if (a === '--publish') args.publish = true;
-    else if (a === '--build') args.build = true;
+    else if (a === '--build') args.build = 'always';
+    else if (a === '--build=auto') args.build = 'auto';
     else if (a === '--cwd') {
       const value = argv[++i];
       if (value === undefined) throw new BadUsage('--cwd needs a directory');

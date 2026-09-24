@@ -32,7 +32,9 @@ export interface RunResult {
   ran: string[];
   skipped: string[];
   recheckAt?: (docsRoot: string) => Promise<Finding[]>;
-  build?: ({ dir: string; command: string } | { failed: string; command: string | null }) & { framework: string | null };
+  build?: ({ dir: string; command: string } | { failed: string; command: string | null } | { skipped: string }) & {
+    framework: string | null;
+  };
 }
 
 function rootOf(cwd: string, app: { path?: string | undefined }): string | null {
@@ -96,20 +98,25 @@ async function siteFor(docsRoot: string, config: PagebeamConfig): Promise<Site |
   return site;
 }
 
-function buildCandidates(cwd: string, config: PagebeamConfig, site: Site | null): { dirs: string[]; declared: boolean } {
+// The folder a build asked for in this run wrote, by the docs it was for.
+const justBuilt = new Map<string, string>();
+
+function buildCandidates(cwd: string, config: PagebeamConfig, site: Site | null, docsRoot: string): { dirs: string[]; declared: boolean } {
   if (config.docs.buildDir) return { dirs: [path.resolve(cwd, config.docs.buildDir)], declared: true };
+  const fresh = justBuilt.get(docsRoot);
   const near = [cwd, ...(site === null ? [] : [site.dir])];
   const output = site === null ? [] : [...(site.output ? [site.output] : []), ...OUTPUTS].map((o) => path.join(site.dir, o));
-  return { dirs: [...new Set([...output, ...near.flatMap((d) => [path.join(d, 'dist'), path.join(d, 'build')])])], declared: false };
+  return {
+    dirs: [...new Set([...(fresh === undefined ? [] : [fresh]), ...output, ...near.flatMap((d) => [path.join(d, 'dist'), path.join(d, 'build')])])],
+    declared: false,
+  };
 }
 
-// The same directory the link check reads, found the same way, so both are
-// talking about one site rather than two.
-async function builtSite(cwd: string, config: PagebeamConfig, docsRoot: string): Promise<string | null> {
-  for (const dir of buildCandidates(cwd, config, await siteFor(docsRoot, config)).dirs) {
-    if (await exists(dir)) return dir;
-  }
-  return null;
+// The same built site the link check reads, held to the same test, so both
+// are talking about one site rather than two.
+async function builtSite(pages: DocPage[], cwd: string, config: PagebeamConfig, docsRoot: string): Promise<string | null> {
+  const set = await routeSet(pages, cwd, config, docsRoot, false);
+  return set.source === 'build' ? (set.builtDir ?? null) : null;
 }
 
 // Routes the source pages publish. A framework that keeps its pages in a
@@ -144,7 +151,7 @@ async function routeSet(
     : site !== null && (await exists(path.join(site.dir, 'public')))
       ? path.join(site.dir, 'public')
       : undefined;
-  const { dirs: candidates, declared } = buildCandidates(cwd, config, site);
+  const { dirs: candidates, declared } = buildCandidates(cwd, config, site, docsRoot);
 
   const prefix = config.docs.routeBase.replace(/\/+$/, '');
   let fromSource = sourceRoutes(pages, config, docsRoot, site);
@@ -171,7 +178,7 @@ async function routeSet(
     // A build guessed at rather than declared has to be shown to belong to
     // this documentation: most of what the source publishes must be in it.
     if (!declared && (fromSource.size === 0 || shared(fromSource) < 0.5)) continue;
-    return { routes, source: 'build', docsRoot, ...(publicDir ? { publicDir } : {}) };
+    return { routes, source: 'build', builtDir: dir, docsRoot, ...(publicDir ? { publicDir } : {}) };
   }
   return { routes: fromSource, source: 'content', docsRoot, ...(publicDir ? { publicDir } : {}) };
 }
@@ -370,7 +377,7 @@ async function runOpenapi(
   // address. A site may publish its whole reference from the specification,
   // and then no source page names a single operation while every one of them
   // is documented.
-  const built = await builtSite(cwd, config, docsRoot);
+  const built = await builtSite(pages, cwd, config, docsRoot);
   if (wanted === 'auto' && built === null) {
     skipped.push(
       'openapi: coverage needs the built site, and none was found. Set docs.buildDir, or build before running, or set checks.openapi.coverage to always to count what the source names instead',
@@ -751,14 +758,16 @@ export interface Asking {
   proposing?: boolean | undefined;
   // Build the documentation site first, so links are checked against the
   // pages it really publishes. Runs the site's own code, so only on request.
-  // What it writes is held to the same test as any build found on disk, and
-  // a build that fails leaves the run as it would have been without one.
-  build?: boolean | undefined;
+  // What it writes is held to the same test as any build found on disk.
+  // `always` builds whatever site the docs belong to. `auto` builds only a
+  // site of their own that a framework is recognised in, and says why not
+  // otherwise. Either way a build that was started and failed degrades the run.
+  build?: 'always' | 'auto' | undefined;
 }
 
 export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> {
   try {
-    return await attempt(cwd, asking.proposing === true, asking.build === true);
+    return await attempt(cwd, asking.proposing === true, asking.build);
   } catch (error) {
     // A file that could not be read is not a file with nothing in it.
     return {
@@ -776,7 +785,7 @@ export async function run(cwd: string, asking: Asking = {}): Promise<RunResult> 
   }
 }
 
-async function attempt(cwd: string, proposing: boolean, building: boolean): Promise<RunResult> {
+async function attempt(cwd: string, proposing: boolean, building: Asking['build']): Promise<RunResult> {
   const { config, from, asked } = await loadConfig(cwd);
   // Without one, the only thing to check documentation against is a guess at
   // where it is, and a clean answer from a guess is worse than no answer.
@@ -801,10 +810,25 @@ async function attempt(cwd: string, proposing: boolean, building: boolean): Prom
   }
 
   let build: RunResult['build'];
-  if (building) {
+  if (building !== undefined) {
     const site = await siteFor(docsRoot, config);
-    const done = site === null ? { failed: `no documentation site was found at or above ${docsRoot}`, command: null } : await buildSite(site);
-    build = { ...done, framework: site?.framework?.name ?? null };
+    const isApp = site !== null && config.apps.some((a) => path.resolve(cwd, a.path) === site.dir);
+    const framework = site?.framework?.name ?? null;
+    if (building === 'auto' && (site === null || site.framework === null || isApp)) {
+      build = {
+        skipped:
+          site === null || site.framework === null
+            ? 'no site generator was recognised for the docs'
+            : `the docs are part of ${path.relative(cwd, site.dir) || 'this application'}, not a site of their own`,
+        framework,
+      };
+    } else if (site === null) {
+      build = { failed: `no documentation site was found at or above ${docsRoot}`, command: null, framework };
+    } else {
+      const done = await buildSite(site);
+      if ('dir' in done) justBuilt.set(docsRoot, done.dir);
+      build = { ...done, framework };
+    }
   }
 
   const evidence = await gather(cwd, config);
@@ -900,6 +924,7 @@ async function attempt(cwd: string, proposing: boolean, building: boolean): Prom
   const degraded = [
     ...[...skippedNames].filter((name) => asked.has(configured.get(name) ?? name)),
     ...refusedToOpen,
+    ...(build !== undefined && 'failed' in build ? ['building the docs site'] : []),
   ];
   return {
     problem: null,

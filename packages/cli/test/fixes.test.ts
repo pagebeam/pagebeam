@@ -560,6 +560,10 @@ test('an operation only a component attribute names is not reported missing from
 
 // A Starlight site in its own repository, beside a Nuxt app and a Laravel API.
 async function beside(extra: Record<string, string> = {}, flags: string[] = []): Promise<string> {
+  return (await besideRun(extra, flags)).stdout;
+}
+
+async function besideRun(extra: Record<string, string> = {}, flags: string[] = []): Promise<{ stdout: string; code: number }> {
   const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-beside-'));
   const files: Record<string, string> = {
     'docs/package.json': '{"dependencies":{"astro":"6","@astrojs/starlight":"0.40"}}\n',
@@ -582,10 +586,10 @@ async function beside(extra: Record<string, string> = {}, flags: string[] = []):
     execFileSync('git', ['-C', at, 'add', '-A']);
     execFileSync('git', ['-C', at, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'first']);
   }
-  const { stdout } = await run(process.execPath, [CLI, 'check', '--cwd', path.join(root, 'ui'), ...flags]).catch(
-    (error: { stdout: string }) => error,
+  return run(process.execPath, [CLI, 'check', '--cwd', path.join(root, 'ui'), ...flags]).then(
+    ({ stdout }) => ({ stdout, code: 0 }),
+    (error: { stdout: string; code: number }) => ({ stdout: error.stdout, code: error.code }),
   );
-  return stdout;
 }
 
 test('a Starlight page is addressed without its content folder', async () => {
@@ -652,8 +656,8 @@ test('--build builds the docs site as its project does and checks links against 
   assert.match(stdout, /No built page/);
 });
 
-test('a build that fails is reported, and the run is what it would have been without it', async () => {
-  const stdout = await beside(
+test('a build that was asked for and failed is reported, and the answer cannot be trusted', async () => {
+  const { stdout, code } = await besideRun(
     {
       'docs/package.json': '{"scripts":{"build":"node -e \\"process.exit(3)\\""},"dependencies":{"@astrojs/starlight":"0","astro":"6"}}\n',
       'docs/node_modules/.keep': '',
@@ -661,5 +665,25 @@ test('a build that fails is reported, and the run is what it would have been wit
     ['--build'],
   );
   assert.match(stdout, /could not build the docs \(Astro\) npm run build failed/);
-  assert.match(stdout, /\/agent\/safety does not resolve/);
+  assert.equal(code, 2);
+});
+
+test('--build=auto leaves docs alone when no site generator is recognised', async () => {
+  const { stdout, code } = await besideRun(
+    { 'docs/package.json': '{"scripts":{"build":"node -e \\"process.exit(3)\\""}}\n', 'docs/node_modules/.keep': '' },
+    ['--build=auto'],
+  );
+  assert.match(stdout, /did not build the docs: no site generator was recognised/);
+  assert.equal(code, 0);
+});
+
+test('a public assets folder is not taken for a built site', async () => {
+  const stdout = await beside({
+    'docs/public/logo.txt': 'logo',
+    'ui/pagebeam.config.yaml':
+      'docs:\n  root: ../docs\napps:\n  - name: api\n    path: ../api\n    openapi:\n      spec: ../api/openapi.json\n',
+    'api/openapi.json': JSON.stringify({ openapi: '3.0.0', info: { title: 't', version: '1' }, paths: { '/x': { get: { responses: {} } } } }),
+  });
+  assert.match(stdout, /coverage needs the built site/);
+  assert.doesNotMatch(stdout, /API operations are not documented/);
 });

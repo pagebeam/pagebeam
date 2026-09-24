@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { siteOf } from '../dist/site.js';
+import { builtOutput, siteOf } from '../dist/site.js';
 
 async function project(files: Record<string, string>): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'pagebeam-site-'));
@@ -45,4 +45,23 @@ test('the site is found above the pages, and not beyond their repository', async
   assert.equal((await siteOf(path.join(root, 'src/content/docs')))?.dir, root);
   const bare = await project({ 'docs/a.md': '# A' });
   assert.equal(await siteOf(path.join(bare, 'docs')), null);
+});
+
+test('a site inside a workspace installs from the workspace root with its package manager', async () => {
+  const root = await project({
+    'pnpm-lock.yaml': '',
+    'package.json': JSON.stringify({ private: true }),
+    'docs/package.json': deps({ astro: '6' }, { build: 'astro build' }),
+  });
+  const site = await siteOf(path.join(root, 'docs'));
+  assert.equal(site?.dir, path.join(root, 'docs'));
+  assert.equal(site?.build, 'pnpm run build');
+  assert.equal(site?.install, 'pnpm install --frozen-lockfile');
+  assert.equal(site?.installDir, root);
+});
+
+test('a build without a home page is still a build', async () => {
+  const root = await project({ 'package.json': deps({ astro: '6' }), 'dist/guide/index.html': '<p>guide</p>' });
+  const site = await siteOf(root);
+  assert.equal(await builtOutput(site!), path.join(root, 'dist'));
 });
