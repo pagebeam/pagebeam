@@ -17,6 +17,9 @@
       "path": "packages/model"
     },
     {
+      "path": "packages/tour"
+    },
+    {
       "path": "packages/engine"
     },
     {

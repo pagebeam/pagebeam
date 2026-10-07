@@ -1,0 +1,35 @@
+{
+  "name": "@pagebeam/tour",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@pagebeam/app": "0.1.0",
+    "@pagebeam/core": "0.1.0"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.63.0"
+  },
+  "description": "Follows journeys through a running application and photographs them",
+  "homepage": "https://pagebeam.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pagebeam/pagebeam.git",
+    "directory": "packages/tour"
+  },
+  "private": true
+}

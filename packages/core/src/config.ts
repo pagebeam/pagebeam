@@ -85,6 +85,137 @@ const checksSchema = z.strictObject({
     .default(false),
 });
 
+const requirementSchema = z.union([
+  z.strictObject({
+    goto: z.string().optional(),
+    count: z.strictObject({ selector: z.string(), min: z.number().int().nonnegative() }),
+  }),
+  z.strictObject({ goto: z.string().optional(), text: z.string() }),
+  z.strictObject({ request: z.string(), status: z.number().int().default(200) }),
+]);
+
+const accountSchema = z
+  .strictObject({
+    purpose: z.string(),
+    login: z
+      .strictObject({
+        // A module whose default export is given the page and the credentials.
+        script: z.string().optional(),
+        usernameEnv: z.string().optional(),
+        passwordEnv: z.string().optional(),
+        form: z
+          .strictObject({
+            url: z.string(),
+            username: z.string(),
+            password: z.string(),
+            submit: z.string(),
+          })
+          .optional(),
+      })
+      .refine((login) => login.script !== undefined || login.form !== undefined, {
+        message: 'login needs a script or a form',
+      }),
+    confirm: z.string(),
+    // A new user for every run, made by the seed, for screens only a new user sees.
+    fresh: z.boolean().default(false),
+    seed: z
+      .strictObject({
+        command: z.string(),
+        // Where the seed may run. Unlisted, only a target on this machine.
+        targets: z.array(z.string()).optional(),
+      })
+      .optional(),
+    requires: z.array(requirementSchema).default([]),
+  })
+  .superRefine((account, ctx) => {
+    if (account.fresh && account.seed === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['seed'], message: 'a fresh account needs a seed' });
+    }
+    const { form, usernameEnv, passwordEnv } = account.login;
+    if (form !== undefined && !account.fresh && (usernameEnv === undefined || passwordEnv === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['login'],
+        message: 'a login form needs usernameEnv and passwordEnv, or a fresh account',
+      });
+    }
+  });
+
+const stepSchema = z.union([
+  z.strictObject({ goto: z.string() }),
+  z.strictObject({ click: z.string() }),
+  z.strictObject({
+    fill: z
+      .strictObject({ selector: z.string(), value: z.string().optional(), valueEnv: z.string().optional() })
+      .refine((fill) => (fill.value === undefined) !== (fill.valueEnv === undefined), {
+        message: 'fill needs exactly one of value or valueEnv',
+      }),
+  }),
+  z.strictObject({ select: z.strictObject({ selector: z.string(), value: z.string() }) }),
+  z.strictObject({ wait: z.union([z.string(), z.number().int().nonnegative()]) }),
+  z.strictObject({ expect: z.strictObject({ selector: z.string(), text: z.string().optional() }) }),
+  z.strictObject({
+    shot: z.strictObject({
+      name: z.string().regex(/^[\w.-]+$/, 'a shot name becomes part of a file name'),
+      caption: z.string().optional(),
+      focus: z.array(z.string()).default([]),
+      fullPage: z.boolean().default(false),
+    }),
+  }),
+]);
+
+const viewportSchema = z.strictObject({
+  name: z.string().regex(/^[\w-]+$/, 'a viewport name becomes part of a file name'),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  scale: z.number().positive().default(2),
+});
+
+const toursSchema = z
+  .strictObject({
+    targets: z.record(z.strictObject({ url: z.string().url() })),
+    accounts: z.record(accountSchema),
+    journeys: z.record(
+      z.strictObject({
+        account: z.string(),
+        viewports: z
+          .array(viewportSchema)
+          .min(1)
+          .default([{ name: 'desktop', width: 1440, height: 900, scale: 2 }]),
+        steps: z.array(stepSchema).min(1),
+      }),
+    ),
+    timeoutMs: z.number().int().positive().default(15_000),
+  })
+  .superRefine((tours, ctx) => {
+    for (const [name, journey] of Object.entries(tours.journeys)) {
+      if (!(journey.account in tours.accounts)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['journeys', name, 'account'],
+          message: `no account is named ${journey.account}`,
+        });
+      }
+    }
+    for (const [name, account] of Object.entries(tours.accounts)) {
+      for (const target of account.seed?.targets ?? []) {
+        if (!(target in tours.targets)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['accounts', name, 'seed', 'targets'],
+            message: `no target is named ${target}`,
+          });
+        }
+      }
+    }
+  });
+
+export type Tours = z.infer<typeof toursSchema>;
+export type TourAccount = Tours['accounts'][string];
+export type TourJourney = Tours['journeys'][string];
+export type TourStep = TourJourney['steps'][number];
+export type TourRequirement = TourAccount['requires'][number];
+
 export const configSchema = z.strictObject({
   docs: docsSchema,
   apps: z.array(appSchema).default([]),
@@ -110,6 +241,9 @@ export const configSchema = z.strictObject({
     })
     .default({}),
   checks: checksSchema.default({}),
+  // Journeys through a running application, signed in as named accounts, that
+  // `pagebeam shoot` follows and photographs.
+  tours: toursSchema.optional(),
   // Anything answering the OpenAI chat completions shape, which a router run
   // beside this does. Absent means the deterministic checks answer alone and
   // findings they cannot mend are reported without a change to propose.
