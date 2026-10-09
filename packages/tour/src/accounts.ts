@@ -5,6 +5,19 @@ import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { moduleDefault } from '@pagebeam/app';
 import type { TourAccount, TourRequirement } from '@pagebeam/core';
 
+// A live site can keep a connection open for as long as the page is, so the
+// network never goes idle: wait for the load, then briefly for quiet.
+const QUIET_MS = 5000;
+
+export async function settle(page: Page, timeout: number): Promise<void> {
+  await page.waitForLoadState('networkidle', { timeout: Math.min(timeout, QUIET_MS) }).catch(() => undefined);
+}
+
+export async function open(page: Page, url: string, timeout: number): Promise<void> {
+  await page.goto(url, { waitUntil: 'load', timeout });
+  await settle(page, timeout);
+}
+
 const exec = promisify(execFile);
 
 export class TourFailure extends Error {}
@@ -105,7 +118,7 @@ async function unmet(page: Page, check: TourRequirement, base: string, timeout: 
     return response.status() === check.status ? null : `it answered ${response.status()}`;
   }
   if (check.goto !== undefined) {
-    await page.goto(new URL(check.goto, base).href, { waitUntil: 'networkidle', timeout });
+    await open(page, new URL(check.goto, base).href, timeout);
   }
   if ('count' in check) {
     const { selector, min } = check.count;
@@ -150,12 +163,12 @@ export async function signIn(
       if (credentials === undefined) {
         throw new TourFailure(`account "${name}" has a login form but no credentials`);
       }
-      await page.goto(new URL(form.url, target.url).href, { waitUntil: 'networkidle', timeout });
+      await open(page, new URL(form.url, target.url).href, timeout);
       await page.locator(form.username).first().fill(credentials.username, { timeout });
       await page.locator(form.password).first().fill(credentials.password, { timeout });
       await page.locator(form.submit).first().click({ timeout });
     } else {
-      await page.goto(target.url, { waitUntil: 'networkidle', timeout });
+      await open(page, target.url, timeout);
     }
     if (account.login.script !== undefined) {
       const script = await moduleDefault(path.resolve(cwd, account.login.script));

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { history, launchBrowser, unavailable, type Unavailable } from '@pagebeam/app';
 import type { TourJourney, TourStep, Tours } from '@pagebeam/core';
-import { missingEnv, signIn, TourFailure, TourUsage, type Target } from './accounts.js';
+import { missingEnv, open, settle, signIn, TourFailure, TourUsage, type Target } from './accounts.js';
 
 export { TourFailure, TourUsage } from './accounts.js';
 
@@ -101,13 +101,9 @@ function said(step: TourStep): string {
   return `${kind} ${String(value)}`;
 }
 
-async function settle(page: Page, timeout: number): Promise<void> {
-  await page.waitForLoadState('networkidle', { timeout }).catch(() => undefined);
-}
-
 async function act(page: Page, step: TourStep, base: string, timeout: number): Promise<void> {
   if ('goto' in step) {
-    await page.goto(new URL(step.goto, base).href, { waitUntil: 'networkidle', timeout });
+    await open(page, new URL(step.goto, base).href, timeout);
   } else if ('click' in step) {
     await page.locator(step.click).first().click({ timeout });
     await settle(page, timeout);
@@ -182,7 +178,12 @@ async function follow(
   let taken = 0;
   try {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await page.goto(target.url, { waitUntil: 'networkidle', timeout });
+    await open(page, target.url, timeout).catch((error: Error) => {
+      throw new TourFailure(
+        `journey "${name}" (${viewport.name}) could not open ${target.url}: ` +
+          (error.message.split('\n')[0] ?? 'no reason given'),
+      );
+    });
     for (const [i, step] of journey.steps.entries()) {
       try {
         if (!('shot' in step)) {
