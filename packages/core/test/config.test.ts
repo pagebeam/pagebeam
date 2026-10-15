@@ -115,3 +115,76 @@ test('whether coverage is counted is decided, not assumed', () => {
   );
   assert.throws(() => parseConfig({ ...base, checks: { openapi: { coverage: 'sometimes' } } }));
 });
+
+const tours = {
+  targets: { local: { url: 'http://localhost:3000' } },
+  accounts: {
+    writer: {
+      purpose: 'a user with notes',
+      login: { script: './login.mjs' },
+      confirm: 'text=Sign out',
+    },
+  },
+  journeys: { write: { account: 'writer', steps: [{ goto: '/notes' }, { shot: { name: 'notes' } }] } },
+};
+
+test('a journey is shot at one desktop viewport at scale 2 unless it says otherwise', () => {
+  const parsed = parseConfig({ ...base, tours });
+  assert.deepEqual(parsed.tours?.journeys.write?.viewports, [
+    { name: 'desktop', width: 1440, height: 900, scale: 2 },
+  ]);
+});
+
+test('a tours setting that does not exist is an error, at any depth', () => {
+  assert.throws(() => parseConfig({ ...base, tours: { ...tours, extra: true } }));
+  assert.throws(() =>
+    parseConfig({
+      ...base,
+      tours: { ...tours, accounts: { writer: { ...tours.accounts.writer, password: 'x' } } },
+    }),
+  );
+  assert.throws(() =>
+    parseConfig({
+      ...base,
+      tours: { ...tours, journeys: { write: { account: 'writer', steps: [{ shot: { name: 'a', zoom: 2 } }] } } },
+    }),
+  );
+});
+
+test('a step does exactly one thing', () => {
+  assert.throws(() =>
+    parseConfig({
+      ...base,
+      tours: { ...tours, journeys: { write: { account: 'writer', steps: [{ goto: '/', click: 'a' }] } } },
+    }),
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        ...base,
+        tours: {
+          ...tours,
+          journeys: { write: { account: 'writer', steps: [{ fill: { selector: '#a', value: 'x', valueEnv: 'X' } }] } },
+        },
+      }),
+    /exactly one of value or valueEnv/,
+  );
+});
+
+test('a fresh account without a seed to make it is refused', () => {
+  assert.throws(
+    () =>
+      parseConfig({
+        ...base,
+        tours: { ...tours, accounts: { writer: { ...tours.accounts.writer, fresh: true } } },
+      }),
+    /a fresh account needs a seed/,
+  );
+});
+
+test('a journey signed in as an account that does not exist is refused', () => {
+  assert.throws(
+    () => parseConfig({ ...base, tours: { ...tours, journeys: { write: { account: 'nobody', steps: [{ goto: '/' }] } } } }),
+    /no account is named nobody/,
+  );
+});

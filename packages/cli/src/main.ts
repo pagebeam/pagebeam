@@ -11,6 +11,7 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   pagebeam check [--cwd <dir>] [--json] [--profile observe|enforce] [--build]
   pagebeam fix   [--cwd <dir>] [--publish] [--build]
   pagebeam init  [--cwd <dir>]
+  pagebeam shoot [--cwd <dir>] [--target <name>] [--journey <name>] [--out <dir>] [--json]
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
   --json     machine-readable output
@@ -23,6 +24,11 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
              recognised, and say why not otherwise
   --publish  actually open or update the pull request. Without it, fix says
              what it would propose and touches nothing
+  --target   shoot: the tours target to open (default: local, else the first)
+  --journey  shoot: follow only this journey (default: every journey)
+  --out      shoot: where screenshots go (default: .pagebeam/shots), as
+             <out>/<target>/<journey>/NN-<shot>.<viewport>.png with a
+             manifest.json beside them
   --profile  observe: report everything, block nothing (default)
              enforce: block on proven findings this change introduced.
                       A finding of unknown age never blocks here
@@ -32,6 +38,10 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   exit 1  a proven finding blocks, under an enforcing profile
   exit 2  the answer cannot be trusted: nothing was read, or a check that was
           asked for could not run
+
+  shoot exits 1 when an account is not ready or a step fails, and 2 when
+  nothing could be shot: no tours, an unknown target or journey, an unset
+  variable, or no browser to drive
 `;
 
 interface Args {
@@ -41,6 +51,9 @@ interface Args {
   publish: boolean;
   build: 'always' | 'auto' | undefined;
   profile: 'observe' | 'enforce' | 'enforce-all';
+  target: string | undefined;
+  journey: string | undefined;
+  out: string | undefined;
 }
 
 const PROFILES = new Set(['observe', 'enforce', 'enforce-all']);
@@ -55,6 +68,9 @@ function parse(argv: string[]): Args {
     publish: false,
     build: undefined,
     profile: 'observe',
+    target: undefined,
+    journey: undefined,
+    out: undefined,
   };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] as string;
@@ -66,6 +82,10 @@ function parse(argv: string[]): Args {
       const value = argv[++i];
       if (value === undefined) throw new BadUsage('--cwd needs a directory');
       args.cwd = value;
+    } else if (a === '--target' || a === '--journey' || a === '--out') {
+      const value = argv[++i];
+      if (value === undefined) throw new BadUsage(`${a} needs a value`);
+      args[a.slice(2) as 'target' | 'journey' | 'out'] = value;
     } else if (a === '--profile') {
       const value = argv[++i];
       if (value === undefined || !PROFILES.has(value)) {
@@ -123,6 +143,14 @@ if (args.command === 'init') {
   said.push('', 'Read it, then run: pagebeam check');
   process.stdout.write(said.join('\n') + '\n');
   process.exit(0);
+}
+
+if (args.command === 'shoot') {
+  const { shootCommand } = await import('./shoot.js');
+  const outcome = await shootCommand(args.cwd, args);
+  process.stdout.write(outcome.out);
+  process.stderr.write(outcome.err);
+  process.exit(outcome.code);
 }
 
 if (args.command !== 'check' && args.command !== 'fix') {
