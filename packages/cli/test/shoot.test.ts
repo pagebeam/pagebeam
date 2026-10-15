@@ -116,3 +116,43 @@ test('an invalid tours setting is named', async () => {
   assert.equal(code, 2);
   assert.match(err, /tours\.accounts\.writer: Unrecognized key\(s\) in object: 'password'/);
 });
+
+const recorded = (url: string): string =>
+  config(url).replace(
+    "        - shot: { name: list, caption: Your notes, focus: ['#new'] }\n",
+    "        - say: Your notes\n        - click: '#new'\n      record: { typeMs: 0, moveMs: 100, holdMs: 100 }\n",
+  );
+
+test('shoot records a journey paced by the narration it is given', async (t) => {
+  const app = await notesApp();
+  const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-shoot-'));
+  await writeFile(path.join(cwd, 'pagebeam.config.yaml'), recorded(app.url));
+  await writeFile(path.join(cwd, 'narration.json'), JSON.stringify({ notes: [700] }));
+  try {
+    const env = { NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' };
+    const { code, out, err } = await invoke(['shoot', '--cwd', cwd, '--narration', 'narration.json'], env);
+    if (code === 2 && /no browser|no ffmpeg/.test(err)) {
+      t.skip(err.trim());
+      return;
+    }
+    assert.equal(code, 0, err);
+    assert.match(out, /\.pagebeam\/shots\/local\/notes\/recording\.desktop\.mp4 \(\d+\.\d s\)/);
+    const manifest = JSON.parse(await readFile(path.join(cwd, '.pagebeam/shots/local/notes/manifest.json'), 'utf8'));
+    const line = manifest.recordings[0].timeline.find((m: { action: string }) => m.action === 'say');
+    assert.equal(line.until - line.at, 700);
+  } finally {
+    await app.stop();
+  }
+});
+
+test('shoot refuses narration that is not lengths by journey', async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-shoot-'));
+  await writeFile(path.join(cwd, 'pagebeam.config.yaml'), recorded('http://127.0.0.1:1'));
+  await writeFile(path.join(cwd, 'narration.json'), JSON.stringify([700]));
+  const { code, err } = await invoke(['shoot', '--cwd', cwd, '--narration', 'narration.json'], {
+    NOTES_USER: 'ada',
+    NOTES_PASSWORD: 'pw-ada',
+  });
+  assert.equal(code, 2);
+  assert.match(err, /The narration must be \{"journey": \[ms, \.\.\.\]\}/);
+});

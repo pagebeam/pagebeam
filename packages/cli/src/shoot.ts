@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig } from '@pagebeam/engine';
 import { unavailable } from '@pagebeam/app';
@@ -7,6 +8,7 @@ interface Asked {
   target: string | undefined;
   journey: string | undefined;
   out: string | undefined;
+  narration: string | undefined;
   json: boolean;
 }
 
@@ -39,8 +41,32 @@ export async function shootCommand(cwd: string, asked: Asked): Promise<Outcome> 
     return { code: 2, out: '', err: 'No tours are configured, so there is nothing to shoot.\n' };
   }
 
+  let narration: Record<string, number[]> | undefined;
+  if (asked.narration !== undefined) {
+    try {
+      narration = JSON.parse(await readFile(path.resolve(cwd, asked.narration), 'utf8')) as Record<string, number[]>;
+    } catch (error) {
+      return { code: 2, out: '', err: `The narration could not be read: ${(error as Error).message}\n` };
+    }
+    const valid =
+      typeof narration === 'object' &&
+      narration !== null &&
+      !Array.isArray(narration) &&
+      Object.values(narration).every((lengths) => Array.isArray(lengths));
+    if (!valid) {
+      return { code: 2, out: '', err: 'The narration must be {"journey": [ms, ...]}.\n' };
+    }
+  }
+
   try {
-    const result = await shoot({ cwd, tours, target: asked.target, journey: asked.journey, out: asked.out });
+    const result = await shoot({
+      cwd,
+      tours,
+      target: asked.target,
+      journey: asked.journey,
+      out: asked.out,
+      narration,
+    });
     if (unavailable(result)) {
       return { code: 2, out: '', err: `Nothing was shot: ${result.reason}\n` };
     }
@@ -49,6 +75,10 @@ export async function shootCommand(cwd: string, asked: Asked): Promise<Outcome> 
     for (const { file, manifest } of result.manifests) {
       lines.push(`${manifest.journey}: ${manifest.shots.length} shot(s) as ${manifest.account}`);
       lines.push(`  ${path.relative(cwd, file) || file}`);
+      for (const recording of manifest.recordings) {
+        const seconds = (recording.durationMs / 1000).toFixed(1);
+        lines.push(`  ${path.relative(cwd, path.join(path.dirname(file), recording.file))} (${seconds} s)`);
+      }
     }
     return { code: 0, out: lines.join('\n') + '\n', err: '' };
   } catch (error) {

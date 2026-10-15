@@ -11,7 +11,8 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   pagebeam check [--cwd <dir>] [--json] [--profile observe|enforce] [--build]
   pagebeam fix   [--cwd <dir>] [--publish] [--build]
   pagebeam init  [--cwd <dir>]
-  pagebeam shoot [--cwd <dir>] [--target <name>] [--journey <name>] [--out <dir>] [--json]
+  pagebeam shoot [--cwd <dir>] [--target <name>] [--journey <name>] [--out <dir>]
+                 [--narration <file>] [--json]
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
   --json     machine-readable output
@@ -28,7 +29,11 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   --journey  shoot: follow only this journey (default: every journey)
   --out      shoot: where screenshots go (default: .pagebeam/shots), as
              <out>/<target>/<journey>/NN-<shot>.<viewport>.png with a
-             manifest.json beside them
+             manifest.json beside them. A journey with record set also
+             leaves recording.<viewport>.mp4 and its timeline in the manifest
+  --narration
+             shoot: a JSON file of how long each journey's say lines take,
+             {"journey": [ms, ...]}, so a recording waits for each line
   --profile  observe: report everything, block nothing (default)
              enforce: block on proven findings this change introduced.
                       A finding of unknown age never blocks here
@@ -41,7 +46,7 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
 
   shoot exits 1 when an account is not ready or a step fails, and 2 when
   nothing could be shot: no tours, an unknown target or journey, an unset
-  variable, or no browser to drive
+  variable, or no browser or ffmpeg to drive
 `;
 
 interface Args {
@@ -54,6 +59,7 @@ interface Args {
   target: string | undefined;
   journey: string | undefined;
   out: string | undefined;
+  narration: string | undefined;
 }
 
 const PROFILES = new Set(['observe', 'enforce', 'enforce-all']);
@@ -71,6 +77,7 @@ function parse(argv: string[]): Args {
     target: undefined,
     journey: undefined,
     out: undefined,
+    narration: undefined,
   };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] as string;
@@ -82,10 +89,10 @@ function parse(argv: string[]): Args {
       const value = argv[++i];
       if (value === undefined) throw new BadUsage('--cwd needs a directory');
       args.cwd = value;
-    } else if (a === '--target' || a === '--journey' || a === '--out') {
+    } else if (a === '--target' || a === '--journey' || a === '--out' || a === '--narration') {
       const value = argv[++i];
       if (value === undefined) throw new BadUsage(`${a} needs a value`);
-      args[a.slice(2) as 'target' | 'journey' | 'out'] = value;
+      args[a.slice(2) as 'target' | 'journey' | 'out' | 'narration'] = value;
     } else if (a === '--profile') {
       const value = argv[++i];
       if (value === undefined || !PROFILES.has(value)) {

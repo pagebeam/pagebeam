@@ -188,3 +188,27 @@ test('a journey signed in as an account that does not exist is refused', () => {
     /no account is named nobody/,
   );
 });
+
+test('a journey is not recorded unless it asks, and record: true takes the default pace', () => {
+  assert.equal(parseConfig({ ...base, tours }).tours?.journeys.write?.record, false);
+  const recorded = (record: unknown) =>
+    parseConfig({
+      ...base,
+      tours: { ...tours, journeys: { write: { account: 'writer', record, steps: [{ goto: '/' }] } } },
+    }).tours?.journeys.write?.record;
+  assert.deepEqual(recorded(true), { typeMs: 70, moveMs: 500, holdMs: 700, cursor: true });
+  assert.deepEqual(recorded({ holdMs: 0 }), { typeMs: 70, moveMs: 500, holdMs: 0, cursor: true });
+  assert.throws(() => recorded({ fps: 60 }));
+});
+
+test('a line to say is its text, with how long it takes when that is known', () => {
+  const steps = (say: unknown) =>
+    parseConfig({
+      ...base,
+      tours: { ...tours, journeys: { write: { account: 'writer', steps: [{ say }] } } },
+    }).tours?.journeys.write?.steps;
+  assert.deepEqual(steps('Here are your notes'), [{ say: 'Here are your notes' }]);
+  assert.deepEqual(steps({ text: 'Done', ms: 600 }), [{ say: { text: 'Done', ms: 600 } }]);
+  assert.throws(() => steps(''));
+  assert.throws(() => steps({ text: 'Done', ms: 0 }));
+});
