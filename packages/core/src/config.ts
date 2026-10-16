@@ -141,19 +141,24 @@ const accountSchema = z
     }
   });
 
+// What a step does and why, in words. It is never spoken: a script for a
+// recording is written from it.
+const note = { note: z.string().min(1).optional() };
+
 const stepSchema = z.union([
-  z.strictObject({ goto: z.string() }),
-  z.strictObject({ click: z.string() }),
+  z.strictObject({ goto: z.string(), ...note }),
+  z.strictObject({ click: z.string(), ...note }),
   z.strictObject({
     fill: z
       .strictObject({ selector: z.string(), value: z.string().optional(), valueEnv: z.string().optional() })
       .refine((fill) => (fill.value === undefined) !== (fill.valueEnv === undefined), {
         message: 'fill needs exactly one of value or valueEnv',
       }),
+    ...note,
   }),
-  z.strictObject({ select: z.strictObject({ selector: z.string(), value: z.string() }) }),
-  z.strictObject({ wait: z.union([z.string(), z.number().int().nonnegative()]) }),
-  z.strictObject({ expect: z.strictObject({ selector: z.string(), text: z.string().optional() }) }),
+  z.strictObject({ select: z.strictObject({ selector: z.string(), value: z.string() }), ...note }),
+  z.strictObject({ wait: z.union([z.string(), z.number().int().nonnegative()]), ...note }),
+  z.strictObject({ expect: z.strictObject({ selector: z.string(), text: z.string().optional() }), ...note }),
   z.strictObject({
     shot: z.strictObject({
       name: z.string().regex(/^[\w.-]+$/, 'a shot name becomes part of a file name'),
@@ -161,13 +166,7 @@ const stepSchema = z.union([
       focus: z.array(z.string()).default([]),
       fullPage: z.boolean().default(false),
     }),
-  }),
-  // A narration line, kept with when it is said. Only a recording waits for it.
-  z.strictObject({
-    say: z.union([
-      z.string().min(1),
-      z.strictObject({ text: z.string().min(1), ms: z.number().int().positive().optional() }),
-    ]),
+    ...note,
   }),
 ]);
 

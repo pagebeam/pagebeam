@@ -32,8 +32,9 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
              manifest.json beside them. A journey with record set also
              leaves recording.<viewport>.mp4 and its timeline in the manifest
   --narration
-             shoot: a JSON file of how long each journey's say lines take,
-             {"journey": [ms, ...]}, so a recording waits for each line
+             shoot: a JSON file of how long the voice over for each step
+             lasts, {"journey": {"step": ms}}, so a recording holds each
+             step until its line is said
   --profile  observe: report everything, block nothing (default)
              enforce: block on proven findings this change introduced.
                       A finding of unknown age never blocks here
