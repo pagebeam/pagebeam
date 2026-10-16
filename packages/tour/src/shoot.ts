@@ -155,7 +155,10 @@ async function act(
       box = await point(step.fill.selector);
       await field.click({ timeout });
       await field.fill('', { timeout });
-      await field.pressSequentially(value, { delay: recorder.pace.typeMs, timeout });
+      await field.pressSequentially(value, {
+        delay: recorder.pace.typeMs,
+        timeout: timeout + value.length * recorder.pace.typeMs,
+      });
     }
   } else if ('select' in step) {
     box = await point(step.select.selector);
@@ -236,7 +239,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
   const { name, journey, viewport, target, dir, timeout, sha } = run;
   const page = await context.newPage();
   const pace = paceOf(journey);
-  const recorder = pace === null ? null : new Recorder(page, pace);
+  const recorder = pace === null ? null : new Recorder(page, pace, viewport);
   const shots: Shot[] = [];
   let taken = 0;
   let lines = 0;
@@ -312,7 +315,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
     await recorder.finish();
     const file = `recording.${viewport.name}.mp4`;
     const durationMs = await recorder
-      .stop(viewport, path.join(dir, file), run.ffmpeg)
+      .stop(path.join(dir, file), run.ffmpeg)
       .catch((error: unknown) => {
         throw failed(run, error, 'could not be recorded');
       });
@@ -326,6 +329,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
       },
     };
   } finally {
+    await recorder?.discard();
     await page.close().catch(() => undefined);
   }
 }

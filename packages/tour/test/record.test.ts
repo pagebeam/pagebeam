@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -174,4 +174,60 @@ test('a recording without ffmpeg to encode it is reported, not attempted', async
   const result = await signedIn(() => shoot({ cwd: tmpdir(), tours, ffmpeg: '/nonexistent/ffmpeg' }));
   assert.ok(unavailable(result));
   assert.match(result.reason, /no ffmpeg was found to encode recordings/);
+});
+
+test('a recorded journey that fails leaves no frames behind', async (t) => {
+  const app = await notesApp();
+  const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-record-'));
+  const scratch = await mkdtemp(path.join(tmpdir(), 'pagebeam-record-tmp-'));
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = scratch;
+  try {
+    const tours = toursFor(app.url, {
+      broken: {
+        account: 'writer',
+        record: QUICK,
+        viewports: [{ name: 'desktop', width: 800, height: 600 }],
+        steps: [{ goto: '/notes' }, { click: '#missing' }],
+      },
+    });
+    const outcome = await signedIn(() => shoot({ cwd, tours })).catch((e: unknown) => e as Error);
+    if (!(outcome instanceof Error) && unavailable(outcome)) {
+      t.skip(`nothing to record with: ${outcome.reason}`);
+      return;
+    }
+    assert.ok(outcome instanceof Error);
+    assert.match(outcome.message, /step 1 \(click #missing\) failed/);
+    assert.deepEqual(await readdir(scratch), []);
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+    await app.stop();
+  }
+});
+
+test('typing longer than the step timeout still finishes', async (t) => {
+  const app = await notesApp();
+  const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-record-'));
+  const title = 'A note title long enough that typing it takes longer than the timeout';
+  try {
+    const tours = toursFor(app.url, {
+      long: {
+        account: 'writer',
+        record: { ...QUICK, typeMs: 50 },
+        viewports: [{ name: 'desktop', width: 800, height: 600 }],
+        steps: [{ goto: '/notes' }, { click: '#new' }, { fill: { selector: '#title', value: title } }],
+      },
+    });
+    assert.ok(title.length * 50 > 3000, 'the typing outlasts the 3 s timeout');
+    const result = await signedIn(() => shoot({ cwd, tours }));
+    if (unavailable(result)) {
+      t.skip(`nothing to record with: ${result.reason}`);
+      return;
+    }
+    const fill = result.manifests[0]!.manifest.recordings[0]!.timeline.find((m) => m.action === 'fill #title');
+    assert.ok(fill!.until - fill!.at >= title.length * 50);
+  } finally {
+    await app.stop();
+  }
 });

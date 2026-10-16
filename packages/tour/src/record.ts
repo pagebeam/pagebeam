@@ -81,6 +81,18 @@ interface Size {
   height: number;
 }
 
+function jpegSize(image: Buffer): Size | null {
+  let at = 2;
+  while (at + 9 < image.length && image[at] === 0xff) {
+    const marker = image[at + 1]!;
+    if (marker >= 0xc0 && marker <= 0xc3) {
+      return { height: image.readUInt16BE(at + 5), width: image.readUInt16BE(at + 7) };
+    }
+    at += 2 + image.readUInt16BE(at + 2);
+  }
+  return null;
+}
+
 interface Frame {
   file: string;
   at: number;
@@ -90,9 +102,7 @@ const FPS = 30;
 
 // Chrome sends a frame only when the page changes. Each tick of a steady frame
 // rate shows the latest frame sent by then, so the video keeps the real timing.
-async function encode(frames: Frame[], end: number, size: Size, out: string, ffmpeg: string): Promise<void> {
-  const width = Math.ceil(size.width / 2) * 2;
-  const height = Math.ceil(size.height / 2) * 2;
+async function encode(frames: Frame[], end: number, out: string, ffmpeg: string): Promise<void> {
   const child = spawn(
     ffmpeg,
     [
@@ -106,9 +116,7 @@ async function encode(frames: Frame[], end: number, size: Size, out: string, ffm
       '-i',
       '-',
       '-vf',
-      // Chrome can send a frame at another size while a page settles, and the
-      // video would otherwise take the size of the first frame.
-      `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+      'pad=ceil(iw/2)*2:ceil(ih/2)*2',
       '-c:v',
       'libx264',
       '-pix_fmt',
@@ -165,9 +173,12 @@ export class Recorder {
   private pointer: [number, number] = [24, 24];
   private sayingUntil = 0;
 
-  constructor(page: Page, pace: Pace) {
+  private readonly size: Size;
+
+  constructor(page: Page, pace: Pace, size: Size) {
     this.page = page;
     this.pace = pace;
+    this.size = size;
   }
 
   async start(): Promise<void> {
@@ -175,9 +186,15 @@ export class Recorder {
     this.dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-frames-'));
     this.session = await this.page.context().newCDPSession(this.page);
     this.session.on('Page.screencastFrame', (frame) => {
-      const file = path.join(this.dir, `${String(this.frames.length).padStart(6, '0')}.jpg`);
-      this.frames.push({ file, at: Date.now() });
-      this.writes.push(writeFile(file, Buffer.from(frame.data, 'base64')));
+      const image = Buffer.from(frame.data, 'base64');
+      const found = jpegSize(image);
+      // While a viewport is applied Chrome can send frames at the old size, and
+      // ffmpeg cannot start a piped stream from a frame of another size.
+      if (found?.width === this.size.width && found.height === this.size.height) {
+        const file = path.join(this.dir, `${String(this.frames.length).padStart(6, '0')}.jpg`);
+        this.frames.push({ file, at: Date.now() });
+        this.writes.push(writeFile(file, image));
+      }
       this.session?.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => undefined);
     });
     await this.session.send('Page.startScreencast', { format: 'jpeg', quality: 92, everyNthFrame: 1 });
@@ -231,13 +248,19 @@ export class Recorder {
     await this.hold();
   }
 
-  async stop(size: Size, out: string, ffmpeg: string): Promise<number> {
+  async discard(): Promise<void> {
+    await this.session?.send('Page.stopScreencast').catch(() => undefined);
+    await Promise.allSettled(this.writes);
+    if (this.dir !== '') await rm(this.dir, { recursive: true, force: true });
+  }
+
+  async stop(out: string, ffmpeg: string): Promise<number> {
     const end = Date.now();
     try {
       await this.session?.send('Page.stopScreencast').catch(() => undefined);
       await Promise.all(this.writes);
       if (this.frames.length === 0) throw new Error('the browser sent no frames to record');
-      await encode(this.frames, end, size, out, ffmpeg);
+      await encode(this.frames, end, out, ffmpeg);
       return end - this.frames[0]!.at;
     } finally {
       await rm(this.dir, { recursive: true, force: true });
