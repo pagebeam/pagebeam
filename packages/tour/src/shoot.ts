@@ -4,8 +4,10 @@ import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { history, launchBrowser, unavailable, type Unavailable } from '@pagebeam/app';
 import type { TourJourney, TourStep, Tours } from '@pagebeam/core';
 import { missingEnv, open, settle, signIn, TourFailure, TourUsage, type Target } from './accounts.js';
+import { ffmpegFound, HIDE_CURSOR, paceOf, Recorder, type Box, type Recording } from './record.js';
 
 export { TourFailure, TourUsage } from './accounts.js';
+export type { Box, Moment, Recording } from './record.js';
 
 export interface ShootRequest {
   cwd: string;
@@ -14,6 +16,10 @@ export interface ShootRequest {
   journey?: string | undefined;
   out?: string | undefined;
   executablePath?: string | undefined;
+  ffmpeg?: string | undefined;
+  // How long each journey's lines take to say, in the order its say steps
+  // appear, measured from the recorded or generated narration.
+  narration?: Record<string, number[]> | undefined;
 }
 
 export interface FocusBox {
@@ -45,6 +51,7 @@ export interface Manifest {
   sha: string | null;
   takenAt: string;
   shots: Shot[];
+  recordings: Recording[];
 }
 
 export interface Shoot {
@@ -92,25 +99,69 @@ function checkEnv(tours: Tours, journeys: [string, TourJourney][]): void {
   if (missing.size > 0) throw new TourUsage(`not set: ${[...missing].join(', ')}`);
 }
 
+function checkNarration(tours: Tours, narration: Record<string, number[]>): void {
+  for (const [name, lengths] of Object.entries(narration)) {
+    const journey = tours.journeys[name];
+    if (journey === undefined) throw new TourUsage(`the narration names no journey called ${name}`);
+    const lines = journey.steps.filter((step) => 'say' in step).length;
+    if (lengths.length !== lines) {
+      throw new TourUsage(
+        `the narration gives ${lengths.length} length(s) for journey "${name}", which says ${lines} line(s)`,
+      );
+    }
+    if (!lengths.every((ms) => Number.isInteger(ms) && ms > 0)) {
+      throw new TourUsage(`the narration for journey "${name}" must be whole milliseconds above zero`);
+    }
+  }
+}
+
+const MS_PER_WORD = 400;
+const SHORTEST_LINE_MS = 1200;
+
+function spoken(text: string): number {
+  return Math.max(SHORTEST_LINE_MS, text.trim().split(/\s+/).length * MS_PER_WORD);
+}
+
 function said(step: TourStep): string {
   const [kind, value] = Object.entries(step)[0]!;
   if (typeof value === 'object' && value !== null) {
-    const v = value as { selector?: string; name?: string };
-    return `${kind} ${v.selector ?? v.name ?? ''}`.trim();
+    const v = value as { selector?: string; name?: string; text?: string };
+    return `${kind} ${v.selector ?? v.name ?? v.text ?? ''}`.trim();
   }
   return `${kind} ${String(value)}`;
 }
 
-async function act(page: Page, step: TourStep, base: string, timeout: number): Promise<void> {
+async function act(
+  page: Page,
+  step: TourStep,
+  base: string,
+  timeout: number,
+  recorder: Recorder | null,
+): Promise<Box | undefined> {
+  const point = (selector: string) => recorder?.pointAt(page.locator(selector).first(), timeout);
+  let box: Box | undefined;
   if ('goto' in step) {
     await open(page, new URL(step.goto, base).href, timeout);
   } else if ('click' in step) {
+    box = await point(step.click);
     await page.locator(step.click).first().click({ timeout });
     await settle(page, timeout);
   } else if ('fill' in step) {
     const value = step.fill.value ?? process.env[step.fill.valueEnv!] ?? '';
-    await page.locator(step.fill.selector).first().fill(value, { timeout });
+    const field = page.locator(step.fill.selector).first();
+    if (recorder === null) {
+      await field.fill(value, { timeout });
+    } else {
+      box = await point(step.fill.selector);
+      await field.click({ timeout });
+      await field.fill('', { timeout });
+      await field.pressSequentially(value, {
+        delay: recorder.pace.typeMs,
+        timeout: timeout + value.length * recorder.pace.typeMs,
+      });
+    }
   } else if ('select' in step) {
+    box = await point(step.select.selector);
     await page.locator(step.select.selector).first().selectOption(step.select.value, { timeout });
   } else if ('wait' in step) {
     if (typeof step.wait === 'number') await page.waitForTimeout(step.wait);
@@ -122,6 +173,7 @@ async function act(page: Page, step: TourStep, base: string, timeout: number): P
       .first()
       .waitFor({ state: 'visible', timeout });
   }
+  return box;
 }
 
 async function focusBoxes(
@@ -157,27 +209,43 @@ async function focusBoxes(
 async function clear(dir: string): Promise<void> {
   const names = await readdir(dir).catch(() => [] as string[]);
   for (const name of names) {
-    if (/^\d{2,}-.+\.png$/.test(name) || name === 'manifest.json') {
+    if (/^\d{2,}-.+\.png$/.test(name) || /^recording\..+\.mp4$/.test(name) || name === 'manifest.json') {
       await rm(path.join(dir, name), { force: true });
     }
   }
 }
 
-async function follow(
-  context: BrowserContext,
-  name: string,
-  journey: TourJourney,
-  viewport: Viewport,
-  target: Target,
-  dir: string,
-  timeout: number,
-  sha: string | null,
-): Promise<Shot[]> {
+interface Run {
+  name: string;
+  journey: TourJourney;
+  viewport: Viewport;
+  target: Target;
+  dir: string;
+  timeout: number;
+  sha: string | null;
+  narration: number[] | undefined;
+  ffmpeg: string;
+}
+
+function failed(run: Run, error: unknown, where: string): TourFailure {
+  if (error instanceof TourFailure) return error;
+  return new TourFailure(
+    `journey "${run.name}" (${run.viewport.name}) ${where}: ` +
+      ((error as Error).message.split('\n')[0] ?? 'no reason given'),
+  );
+}
+
+async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[]; recording?: Recording }> {
+  const { name, journey, viewport, target, dir, timeout, sha } = run;
   const page = await context.newPage();
+  const pace = paceOf(journey);
+  const recorder = pace === null ? null : new Recorder(page, pace, viewport);
   const shots: Shot[] = [];
   let taken = 0;
+  let lines = 0;
   try {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await recorder?.start();
     await open(page, target.url, timeout).catch((error: Error) => {
       throw new TourFailure(
         `journey "${name}" (${viewport.name}) could not open ${target.url}: ` +
@@ -186,8 +254,27 @@ async function follow(
     });
     for (const [i, step] of journey.steps.entries()) {
       try {
+        if ('say' in step) {
+          const text = typeof step.say === 'string' ? step.say : step.say.text;
+          const given = typeof step.say === 'string' ? undefined : step.say.ms;
+          const ms = run.narration?.[lines] ?? given ?? spoken(text);
+          lines += 1;
+          await recorder?.say(i, text, ms);
+          continue;
+        }
         if (!('shot' in step)) {
-          await act(page, step, target.url, timeout);
+          const at = recorder?.now() ?? 0;
+          const box = await act(page, step, target.url, timeout, recorder);
+          if (recorder !== null) {
+            await recorder.hold();
+            recorder.timeline.push({
+              step: i,
+              action: said(step),
+              at,
+              until: recorder.now(),
+              ...(box !== undefined ? { box } : {}),
+            });
+          }
           continue;
         }
         const { name: shotName, caption, focus, fullPage } = step.shot;
@@ -200,6 +287,7 @@ async function follow(
           fullPage,
           animations: 'disabled',
           caret: 'hide',
+          style: HIDE_CURSOR,
           timeout,
         });
         shots.push({
@@ -220,23 +308,42 @@ async function follow(
           sha,
         });
       } catch (error) {
-        if (error instanceof TourFailure) throw error;
-        throw new TourFailure(
-          `journey "${name}" (${viewport.name}) step ${i} (${said(step)}) failed: ` +
-            ((error as Error).message.split('\n')[0] ?? 'no reason given'),
-        );
+        throw failed(run, error, `step ${i} (${said(step)}) failed`);
       }
     }
+    if (recorder === null) return { shots };
+    await recorder.finish();
+    const file = `recording.${viewport.name}.mp4`;
+    const durationMs = await recorder
+      .stop(path.join(dir, file), run.ffmpeg)
+      .catch((error: unknown) => {
+        throw failed(run, error, 'could not be recorded');
+      });
+    return {
+      shots,
+      recording: {
+        file,
+        viewport: { name: viewport.name, width: viewport.width, height: viewport.height },
+        durationMs,
+        timeline: recorder.timeline,
+      },
+    };
   } finally {
+    await recorder?.discard();
     await page.close().catch(() => undefined);
   }
-  return shots;
 }
 
 export async function shoot(request: ShootRequest): Promise<Shoot | Unavailable> {
   const { tours, cwd } = request;
   const { target, journeys } = pick(tours, request);
   checkEnv(tours, journeys);
+  if (request.narration !== undefined) checkNarration(tours, request.narration);
+
+  const ffmpeg = request.ffmpeg ?? 'ffmpeg';
+  if (journeys.some(([, journey]) => paceOf(journey) !== null) && !(await ffmpegFound(ffmpeg))) {
+    return { reason: `no ffmpeg was found to encode recordings (${ffmpeg})` };
+  }
 
   const launched = await launchBrowser(request.executablePath);
   if (unavailable(launched)) return launched;
@@ -278,9 +385,13 @@ export async function shoot(request: ShootRequest): Promise<Shoot | Unavailable>
       await mkdir(dir, { recursive: true });
       await clear(dir);
       const shots: Shot[] = [];
+      const recordings: Recording[] = [];
       for (const viewport of journey.viewports) {
         const context = await contextFor(journey.account, viewport.scale);
-        shots.push(...(await follow(context, name, journey, viewport, target, dir, timeout, sha)));
+        const run = { name, journey, viewport, target, dir, timeout, sha, ffmpeg, narration: request.narration?.[name] };
+        const followed = await follow(context, run);
+        shots.push(...followed.shots);
+        if (followed.recording !== undefined) recordings.push(followed.recording);
       }
       const manifest: Manifest = {
         target: target.name,
@@ -290,6 +401,7 @@ export async function shoot(request: ShootRequest): Promise<Shoot | Unavailable>
         sha,
         takenAt: new Date().toISOString(),
         shots,
+        recordings,
       };
       const file = path.join(dir, 'manifest.json');
       await writeFile(file, JSON.stringify(manifest, null, 2) + '\n');

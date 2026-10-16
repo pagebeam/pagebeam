@@ -162,6 +162,26 @@ const stepSchema = z.union([
       fullPage: z.boolean().default(false),
     }),
   }),
+  // A narration line, kept with when it is said. Only a recording waits for it.
+  z.strictObject({
+    say: z.union([
+      z.string().min(1),
+      z.strictObject({ text: z.string().min(1), ms: z.number().int().positive().optional() }),
+    ]),
+  }),
+]);
+
+const paceSchema = z.strictObject({
+  typeMs: z.number().int().nonnegative().default(70),
+  moveMs: z.number().int().nonnegative().default(500),
+  holdMs: z.number().int().nonnegative().default(700),
+  cursor: z.boolean().default(true),
+});
+
+const recordSchema = z.union([
+  z.literal(false),
+  z.literal(true).transform(() => paceSchema.parse({})),
+  paceSchema,
 ]);
 
 const viewportSchema = z.strictObject({
@@ -183,6 +203,7 @@ const toursSchema = z
           .min(1)
           .default([{ name: 'desktop', width: 1440, height: 900, scale: 2 }]),
         steps: z.array(stepSchema).min(1),
+        record: recordSchema.default(false),
       }),
     ),
     timeoutMs: z.number().int().positive().default(15_000),
