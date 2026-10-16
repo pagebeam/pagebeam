@@ -161,6 +161,10 @@ test('narration naming a step that cannot hold is refused before a browser start
       /names step 5 of journey "intro", which has steps 0 to 1/,
     );
     await assert.rejects(shoot({ cwd: tmpdir(), tours, narration: { intro: { '1': 900 } } }), /a shot/);
+    await assert.rejects(
+      shoot({ cwd: tmpdir(), tours, narration: { intro: { '00': 900 } } }),
+      /names step 00 of journey "intro", which has steps 0 to 1/,
+    );
     await assert.rejects(shoot({ cwd: tmpdir(), tours, narration: { outro: { '0': 900 } } }), /no journey called outro/);
   });
 });

@@ -107,7 +107,7 @@ function checkNarration(tours: Tours, narration: Narration): void {
     const journey = tours.journeys[name];
     if (journey === undefined) throw new TourUsage(`the narration names no journey called ${name}`);
     for (const [key, ms] of Object.entries(lengths)) {
-      const step = /^\d+$/.test(key) ? journey.steps[Number(key)] : undefined;
+      const step = /^(0|[1-9]\d*)$/.test(key) ? journey.steps[Number(key)] : undefined;
       if (step === undefined) {
         throw new TourUsage(
           `the narration names step ${key} of journey "${name}", which has steps 0 to ${journey.steps.length - 1}`,
