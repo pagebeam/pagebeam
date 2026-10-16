@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig } from '@pagebeam/engine';
 import { unavailable } from '@pagebeam/app';
-import { shoot, TourFailure, TourUsage } from '@pagebeam/tour';
+import { shoot, TourFailure, TourUsage, type Narration } from '@pagebeam/tour';
 
 interface Asked {
   target: string | undefined;
@@ -41,20 +41,16 @@ export async function shootCommand(cwd: string, asked: Asked): Promise<Outcome> 
     return { code: 2, out: '', err: 'No tours are configured, so there is nothing to shoot.\n' };
   }
 
-  let narration: Record<string, number[]> | undefined;
+  let narration: Narration | undefined;
   if (asked.narration !== undefined) {
     try {
-      narration = JSON.parse(await readFile(path.resolve(cwd, asked.narration), 'utf8')) as Record<string, number[]>;
+      narration = JSON.parse(await readFile(path.resolve(cwd, asked.narration), 'utf8')) as Narration;
     } catch (error) {
       return { code: 2, out: '', err: `The narration could not be read: ${(error as Error).message}\n` };
     }
-    const valid =
-      typeof narration === 'object' &&
-      narration !== null &&
-      !Array.isArray(narration) &&
-      Object.values(narration).every((lengths) => Array.isArray(lengths));
-    if (!valid) {
-      return { code: 2, out: '', err: 'The narration must be {"journey": [ms, ...]}.\n' };
+    const isMap = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value);
+    if (!isMap(narration) || !Object.values(narration!).every(isMap)) {
+      return { code: 2, out: '', err: 'The narration must be {"journey": {"step": ms, ...}}.\n' };
     }
   }
 

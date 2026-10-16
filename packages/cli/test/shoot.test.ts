@@ -120,14 +120,14 @@ test('an invalid tours setting is named', async () => {
 const recorded = (url: string): string =>
   config(url).replace(
     "        - shot: { name: list, caption: Your notes, focus: ['#new'] }\n",
-    "        - say: Your notes\n        - click: '#new'\n      record: { typeMs: 0, moveMs: 100, holdMs: 100 }\n",
+    "        - click: '#new'\n          note: Start a note\n      record: { typeMs: 0, moveMs: 100, holdMs: 100 }\n",
   );
 
 test('shoot records a journey paced by the narration it is given', async (t) => {
   const app = await notesApp();
   const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-shoot-'));
   await writeFile(path.join(cwd, 'pagebeam.config.yaml'), recorded(app.url));
-  await writeFile(path.join(cwd, 'narration.json'), JSON.stringify({ notes: [700] }));
+  await writeFile(path.join(cwd, 'narration.json'), JSON.stringify({ notes: { '1': 700 } }));
   try {
     const env = { NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' };
     const { code, out, err } = await invoke(['shoot', '--cwd', cwd, '--narration', 'narration.json'], env);
@@ -138,14 +138,15 @@ test('shoot records a journey paced by the narration it is given', async (t) => 
     assert.equal(code, 0, err);
     assert.match(out, /\.pagebeam\/shots\/local\/notes\/recording\.desktop\.mp4 \(\d+\.\d s\)/);
     const manifest = JSON.parse(await readFile(path.join(cwd, '.pagebeam/shots/local/notes/manifest.json'), 'utf8'));
-    const line = manifest.recordings[0].timeline.find((m: { action: string }) => m.action === 'say');
-    assert.equal(line.until - line.at, 700);
+    const click = manifest.recordings[0].timeline.find((m: { action: string }) => m.action === 'click #new');
+    assert.equal(click.note, 'Start a note');
+    assert.ok(click.until - click.at >= 700);
   } finally {
     await app.stop();
   }
 });
 
-test('shoot refuses narration that is not lengths by journey', async () => {
+test('shoot refuses narration that is not lengths by journey and step', async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-shoot-'));
   await writeFile(path.join(cwd, 'pagebeam.config.yaml'), recorded('http://127.0.0.1:1'));
   await writeFile(path.join(cwd, 'narration.json'), JSON.stringify([700]));
@@ -154,5 +155,5 @@ test('shoot refuses narration that is not lengths by journey', async () => {
     NOTES_PASSWORD: 'pw-ada',
   });
   assert.equal(code, 2);
-  assert.match(err, /The narration must be \{"journey": \[ms, \.\.\.\]\}/);
+  assert.match(err, /The narration must be \{"journey": \{"step": ms, \.\.\.\}\}/);
 });

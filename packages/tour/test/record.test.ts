@@ -62,7 +62,7 @@ interface Moment {
   at: number;
   until: number;
   box?: { x: number; y: number; width: number; height: number };
-  say?: string;
+  note?: string;
 }
 
 test('a recorded journey leaves a video and a timeline of when each step happens', async (t) => {
@@ -75,13 +75,11 @@ test('a recorded journey leaves a video and a timeline of when each step happens
         record: QUICK,
         viewports: [{ name: 'desktop', width: 800, height: 600 }],
         steps: [
-          { goto: '/notes' },
-          { say: 'Here are your notes' },
-          { click: '#new' },
+          { goto: '/notes', note: 'Every note in one list' },
+          { click: '#new', note: 'Start a note from anywhere' },
           { wait: '#dialog' },
           { fill: { selector: '#title', value: 'Groceries' } },
-          { shot: { name: 'dialog', focus: ['#title'] } },
-          { say: { text: 'That is it', ms: 600 } },
+          { shot: { name: 'dialog', focus: ['#title'], caption: 'A title is all it needs' }, note: 'The new note' },
         ],
       },
     });
@@ -106,28 +104,28 @@ test('a recorded journey leaves a video and a timeline of when each step happens
     const timeline: Moment[] = recording.timeline;
     assert.deepEqual(
       timeline.map((m) => m.action),
-      ['goto /notes', 'say', 'click #new', 'wait #dialog', 'fill #title', 'say'],
+      ['goto /notes', 'click #new', 'wait #dialog', 'fill #title'],
     );
     for (const [i, moment] of timeline.entries()) {
       assert.ok(moment.until >= moment.at, `moment ${i} ends after it starts`);
       if (i > 0) assert.ok(moment.at >= timeline[i - 1]!.at, `moment ${i} starts in order`);
     }
 
-    const [, first, click, , fill, last] = timeline;
-    assert.equal(first!.say, 'Here are your notes');
-    assert.equal(first!.until - first!.at, 1600, 'four words, unmeasured, take 400 ms each');
-    assert.ok(click!.at < first!.until, 'what is done carries on while a line is said');
+    const [open, click, , fill] = timeline;
+    assert.equal(open!.note, 'Every note in one list');
+    assert.equal(click!.note, 'Start a note from anywhere');
+    assert.equal(fill!.note, undefined);
     assert.deepEqual(click!.box, { x: 100, y: 50, width: 200, height: 40 });
     assert.ok(fill!.until - fill!.at >= 'Groceries'.length * QUICK.typeMs, 'typed a letter at a time');
-    assert.ok(last!.at >= first!.until, 'a line waits for the one before it');
-    assert.equal(last!.until - last!.at, 600);
-    assert.ok(recording.durationMs >= last!.until, 'the video runs until the last line is said');
+    assert.ok(recording.durationMs >= fill!.until, 'the video runs past the last step');
+    assert.equal(manifest.shots[0].note, 'The new note');
+    assert.equal(manifest.shots[0].caption, 'A title is all it needs');
   } finally {
     await app.stop();
   }
 });
 
-test('measured narration sets how long each line holds the recording', async (t) => {
+test('measured narration holds each step until its line is said', async (t) => {
   const app = await notesApp();
   const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-record-'));
   try {
@@ -136,34 +134,34 @@ test('measured narration sets how long each line holds the recording', async (t)
         account: 'writer',
         record: { ...QUICK, cursor: false },
         viewports: [{ name: 'phone', width: 390, height: 600 }],
-        steps: [{ goto: '/notes' }, { say: 'One' }, { say: { text: 'Two', ms: 5000 } }],
+        steps: [{ goto: '/notes' }, { click: '#new' }, { wait: '#dialog' }],
       },
     });
-    const result = await signedIn(() => shoot({ cwd, tours, narration: { intro: [900, 300] } }));
+    const result = await signedIn(() => shoot({ cwd, tours, narration: { intro: { '1': 1500 } } }));
     if (unavailable(result)) {
       t.skip(`nothing to record with: ${result.reason}`);
       return;
     }
     const timeline: Moment[] = result.manifests[0]!.manifest.recordings[0]!.timeline;
-    const [, one, two] = timeline;
-    assert.equal(one!.until - one!.at, 900);
-    assert.equal(two!.until - two!.at, 300, 'a measured length wins over the one in the config');
-    assert.ok(two!.at >= one!.until);
+    const [, click, wait] = timeline;
+    assert.ok(click!.until - click!.at >= 1500, 'the click holds for its line');
+    assert.ok(wait!.at >= click!.at + 1500, 'the next step starts after the line');
   } finally {
     await app.stop();
   }
 });
 
-test('narration that does not match the lines a journey says is refused before a browser starts', async () => {
+test('narration naming a step that cannot hold is refused before a browser starts', async () => {
   const tours = toursFor('http://127.0.0.1:1', {
-    intro: { account: 'writer', record: true, steps: [{ say: 'One' }, { say: 'Two' }] },
+    intro: { account: 'writer', record: true, steps: [{ goto: '/' }, { shot: { name: 'home' } }] },
   });
   await signedIn(async () => {
     await assert.rejects(
-      shoot({ cwd: tmpdir(), tours, narration: { intro: [900] } }),
-      /the narration gives 1 length\(s\) for journey "intro", which says 2 line\(s\)/,
+      shoot({ cwd: tmpdir(), tours, narration: { intro: { '5': 900 } } }),
+      /names step 5 of journey "intro", which has steps 0 to 1/,
     );
-    await assert.rejects(shoot({ cwd: tmpdir(), tours, narration: { outro: [900] } }), /no journey called outro/);
+    await assert.rejects(shoot({ cwd: tmpdir(), tours, narration: { intro: { '1': 900 } } }), /a shot/);
+    await assert.rejects(shoot({ cwd: tmpdir(), tours, narration: { outro: { '0': 900 } } }), /no journey called outro/);
   });
 });
 

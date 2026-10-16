@@ -201,14 +201,15 @@ test('a journey is not recorded unless it asks, and record: true takes the defau
   assert.throws(() => recorded({ fps: 60 }));
 });
 
-test('a line to say is its text, with how long it takes when that is known', () => {
-  const steps = (say: unknown) =>
+test('any step can carry a note, and there is no say step', () => {
+  const steps = (list: unknown[]) =>
     parseConfig({
       ...base,
-      tours: { ...tours, journeys: { write: { account: 'writer', steps: [{ say }] } } },
+      tours: { ...tours, journeys: { write: { account: 'writer', steps: list } } },
     }).tours?.journeys.write?.steps;
-  assert.deepEqual(steps('Here are your notes'), [{ say: 'Here are your notes' }]);
-  assert.deepEqual(steps({ text: 'Done', ms: 600 }), [{ say: { text: 'Done', ms: 600 } }]);
-  assert.throws(() => steps(''));
-  assert.throws(() => steps({ text: 'Done', ms: 0 }));
+  assert.deepEqual(steps([{ click: '#new', note: 'Start a note' }]), [{ click: '#new', note: 'Start a note' }]);
+  assert.equal((steps([{ note: 'Notes', shot: { name: 'a' } }])![0] as { note?: string }).note, 'Notes');
+  assert.throws(() => steps([{ click: '#new', note: '' }]));
+  assert.throws(() => steps([{ say: 'Here are your notes' }]));
+  assert.throws(() => steps([{ note: 'Only a note' }]));
 });

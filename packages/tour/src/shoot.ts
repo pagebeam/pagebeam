@@ -17,10 +17,12 @@ export interface ShootRequest {
   out?: string | undefined;
   executablePath?: string | undefined;
   ffmpeg?: string | undefined;
-  // How long each journey's lines take to say, in the order its say steps
-  // appear, measured from the recorded or generated narration.
-  narration?: Record<string, number[]> | undefined;
+  // How long the narration for a step lasts, by journey and step number,
+  // measured from the recorded or generated voice over.
+  narration?: Narration | undefined;
 }
+
+export type Narration = Record<string, Record<string, number>>;
 
 export interface FocusBox {
   selector: string;
@@ -36,6 +38,7 @@ export interface Shot {
   step: number;
   name: string;
   caption?: string;
+  note?: string;
   account: string;
   url: string;
   viewport: { name: string; width: number; height: number; scale: number };
@@ -99,34 +102,32 @@ function checkEnv(tours: Tours, journeys: [string, TourJourney][]): void {
   if (missing.size > 0) throw new TourUsage(`not set: ${[...missing].join(', ')}`);
 }
 
-function checkNarration(tours: Tours, narration: Record<string, number[]>): void {
+function checkNarration(tours: Tours, narration: Narration): void {
   for (const [name, lengths] of Object.entries(narration)) {
     const journey = tours.journeys[name];
     if (journey === undefined) throw new TourUsage(`the narration names no journey called ${name}`);
-    const lines = journey.steps.filter((step) => 'say' in step).length;
-    if (lengths.length !== lines) {
-      throw new TourUsage(
-        `the narration gives ${lengths.length} length(s) for journey "${name}", which says ${lines} line(s)`,
-      );
-    }
-    if (!lengths.every((ms) => Number.isInteger(ms) && ms > 0)) {
-      throw new TourUsage(`the narration for journey "${name}" must be whole milliseconds above zero`);
+    for (const [key, ms] of Object.entries(lengths)) {
+      const step = /^\d+$/.test(key) ? journey.steps[Number(key)] : undefined;
+      if (step === undefined) {
+        throw new TourUsage(
+          `the narration names step ${key} of journey "${name}", which has steps 0 to ${journey.steps.length - 1}`,
+        );
+      }
+      if ('shot' in step) {
+        throw new TourUsage(`the narration names step ${key} of journey "${name}", a shot, which a recording does not hold`);
+      }
+      if (!Number.isInteger(ms) || ms <= 0) {
+        throw new TourUsage(`the narration for journey "${name}" must be whole milliseconds above zero`);
+      }
     }
   }
 }
 
-const MS_PER_WORD = 400;
-const SHORTEST_LINE_MS = 1200;
-
-function spoken(text: string): number {
-  return Math.max(SHORTEST_LINE_MS, text.trim().split(/\s+/).length * MS_PER_WORD);
-}
-
 function said(step: TourStep): string {
-  const [kind, value] = Object.entries(step)[0]!;
+  const [kind, value] = Object.entries(step).find(([key]) => key !== 'note')!;
   if (typeof value === 'object' && value !== null) {
-    const v = value as { selector?: string; name?: string; text?: string };
-    return `${kind} ${v.selector ?? v.name ?? v.text ?? ''}`.trim();
+    const v = value as { selector?: string; name?: string };
+    return `${kind} ${v.selector ?? v.name ?? ''}`.trim();
   }
   return `${kind} ${String(value)}`;
 }
@@ -223,7 +224,7 @@ interface Run {
   dir: string;
   timeout: number;
   sha: string | null;
-  narration: number[] | undefined;
+  narration: Record<string, number> | undefined;
   ffmpeg: string;
 }
 
@@ -242,7 +243,6 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
   const recorder = pace === null ? null : new Recorder(page, pace, viewport);
   const shots: Shot[] = [];
   let taken = 0;
-  let lines = 0;
   try {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await recorder?.start();
@@ -254,25 +254,20 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
     });
     for (const [i, step] of journey.steps.entries()) {
       try {
-        if ('say' in step) {
-          const text = typeof step.say === 'string' ? step.say : step.say.text;
-          const given = typeof step.say === 'string' ? undefined : step.say.ms;
-          const ms = run.narration?.[lines] ?? given ?? spoken(text);
-          lines += 1;
-          await recorder?.say(i, text, ms);
-          continue;
-        }
         if (!('shot' in step)) {
           const at = recorder?.now() ?? 0;
           const box = await act(page, step, target.url, timeout, recorder);
           if (recorder !== null) {
             await recorder.hold();
+            const narrated = run.narration?.[String(i)];
+            if (narrated !== undefined) await recorder.holdUntil(at + narrated);
             recorder.timeline.push({
               step: i,
               action: said(step),
               at,
               until: recorder.now(),
               ...(box !== undefined ? { box } : {}),
+              ...(step.note !== undefined ? { note: step.note } : {}),
             });
           }
           continue;
@@ -296,6 +291,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
           step: i,
           name: shotName,
           ...(caption !== undefined ? { caption } : {}),
+          ...(step.note !== undefined ? { note: step.note } : {}),
           account: journey.account,
           url: page.url(),
           viewport: {
@@ -312,7 +308,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
       }
     }
     if (recorder === null) return { shots };
-    await recorder.finish();
+    await recorder.hold();
     const file = `recording.${viewport.name}.mp4`;
     const durationMs = await recorder
       .stop(path.join(dir, file), run.ffmpeg)

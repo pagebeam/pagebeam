@@ -66,7 +66,7 @@ export interface Moment {
   at: number;
   until: number;
   box?: Box;
-  say?: string;
+  note?: string;
 }
 
 export interface Recording {
@@ -171,7 +171,6 @@ export class Recorder {
   private dir = '';
   private writes: Promise<void>[] = [];
   private pointer: [number, number] = [24, 24];
-  private sayingUntil = 0;
 
   private readonly size: Size;
 
@@ -232,20 +231,9 @@ export class Recorder {
     };
   }
 
-  // A line starts once the one before it has finished, while the steps after it
-  // carry on, so what is said plays over what is done.
-  async say(step: number, text: string, ms: number): Promise<void> {
-    const wait = this.sayingUntil - this.now();
+  async holdUntil(at: number): Promise<void> {
+    const wait = at - this.now();
     if (wait > 0) await this.page.waitForTimeout(wait);
-    const at = this.now();
-    this.sayingUntil = at + ms;
-    this.timeline.push({ step, action: 'say', at, until: this.sayingUntil, say: text });
-  }
-
-  async finish(): Promise<void> {
-    const wait = this.sayingUntil - this.now();
-    if (wait > 0) await this.page.waitForTimeout(wait);
-    await this.hold();
   }
 
   async discard(): Promise<void> {
