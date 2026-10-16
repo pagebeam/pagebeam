@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.5
+
+### Guided screenshots
+
+- `pagebeam shoot` follows journeys through a running app, signed in as a
+  named account, and saves screenshots at each viewport, 2x by default.
+- Journeys live under `tours` in the config: targets, accounts and steps
+  (`goto`, `click`, `fill`, `select`, `wait`, `expect`, `shot`).
+- Accounts are contracts. A seeded account must pass its `requires` checks
+  before any journey runs, and a failed check names the seed to run. A
+  `fresh` account is a new user made by its seed on every run. Seeds run only
+  on the targets they list, or on this machine when none are listed.
+- Each run writes a `manifest.json` with the account, address and viewport of
+  every shot, and the box of each element a shot focuses on.
+- A login form that rejects the password stops the run instead of being
+  photographed.
+
+### Recorded journeys
+
+- `record` on a journey also saves it as `recording.<viewport>.mp4`, with a
+  drawn pointer, typing at a human pace and a hold after each step. The
+  pointer is kept out of screenshots.
+- The manifest gets a timeline for each recording: when each step starts and
+  ends, and where its element sits in the video.
+- Any step can carry a `note` saying what it does and why. Notes go into the
+  manifest, so a voice over can be written from what the journey did.
+- `--narration` gives the length of each step's voice over, by journey and
+  step number. A step holds until its line has been said.
+- Recording uses Chrome's screencast and the system `ffmpeg`. Without
+  `ffmpeg`, a recorded journey exits 2 before a browser starts.
+
 ## 0.1.4
 
 ### Built sites first
