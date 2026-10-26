@@ -10,12 +10,13 @@ import { notesApp } from '../../tour/test/fixture.ts';
 
 const exec = promisify(execFile);
 const cli = path.join(import.meta.dirname, '../dist/main.js');
+const fixtures = await mkdtemp(path.join(tmpdir(), 'pagebeam-impact-suite-'));
 async function put(cwd: string, name: string, text: string): Promise<void> {
   await mkdir(path.dirname(path.join(cwd, name)), { recursive: true });
   await writeFile(path.join(cwd, name), text);
 }
 async function workspace() {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-impact-'));
+  const cwd = await mkdtemp(path.join(fixtures, 'app-'));
   const config = {
     tours: {
       targets: { local: { url: 'http://127.0.0.1:1' } }, timeoutMs: 3000,
@@ -183,7 +184,7 @@ async function action(cwd: string, changed: string[], plan: boolean) {
   const actionRoot = path.resolve(import.meta.dirname, '../../..');
   const definition = parse(await readFile(path.join(actionRoot, 'action.yml'), 'utf8'));
   const step = definition.runs.steps.find((step: {id?: string}) => step.id === 'run');
-  const temporary = await mkdtemp(path.join(tmpdir(), 'pagebeam-action-plan-'));
+  const temporary = await mkdtemp(path.join(fixtures, 'action-'));
   const output = path.join(temporary, 'output');
   const summary = path.join(temporary, 'summary');
   await put(cwd, 'changed.json', JSON.stringify(changed));
