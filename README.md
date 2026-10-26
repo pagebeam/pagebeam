@@ -298,12 +298,14 @@ readiness URL come from the selected capture environment. Baselines are archived
 untracked files, local dependencies and external submodule contents are not copied.
 
 The default output is a Markdown before-and-after table (`report.md`), portable structured metadata
-(`outcome.json`), JSON run reports, and screenshot files. Add `--html` to generate HTML as well.
+(`outcome.json`), JSON run reports, and screenshot files. JSON CLI output also includes the portable `outcome` object.
+Add `--html` to generate HTML as well.
 Unmapped changes and incomplete comparisons remain labelled in the outcome and reports.
 
 Capture outcomes, renderers and publishers are separate interfaces. `Outcome` carries status and
 file evidence; `CaptureOutcome` also carries revision and screenshot pairs. An `OutcomeRenderer`
-chooses the presentation, and an `OutcomePublisher` returns URLs for published evidence. The
+chooses the presentation, and an `OutcomePublisher` receives the complete outcome and returns published evidence URLs and an
+optional report URL. The
 `writeOutcome` API accepts custom outcome kinds, renderers and publishers. Markdown and HTML
 renderers consume the same data, so a service can render saved outcomes without rerunning capture.
 

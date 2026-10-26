@@ -314,6 +314,7 @@ test('capture defaults to desktop and captures mobile only when requested', asyn
       assert.equal(result.gallery, undefined);
       assert.ok((await readFile(result.markdown, 'utf8')).includes('| Screen | Before | After |'));
       const outcome = JSON.parse(await readFile(result.manifest, 'utf8'));
+      assert.deepEqual(result.outcome, outcome);
       assert.equal(outcome.captures.length, expected.length);
       assert.equal(outcome.evidence.filter((item: {mediaType: string}) => item.mediaType === 'image/png').length, expected.length);
     }

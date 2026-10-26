@@ -30,14 +30,14 @@ export function captureOutcome(directory: string, head: Run, base?: Run, compari
 export async function writeOutcome<T extends Outcome>(outcome: T, options: {
   directory: string;
   renderers: readonly OutcomeRenderer<T>[];
-  publisher?: OutcomePublisher;
+  publisher?: OutcomePublisher<T>;
   namespace?: string;
 }): Promise<{ manifest: string; outputs: Record<string, string>; publication: Publication }> {
   const directory = path.resolve(options.directory);
   await mkdir(directory, { recursive: true });
   const manifest = path.join(directory, 'outcome.json');
   await writeFile(manifest, JSON.stringify(outcome, null, 2) + '\n');
-  const publication = options.publisher ? await options.publisher.publish(outcome.evidence, { directory, namespace: options.namespace ?? '' }) : { urls: {} };
+  const publication = options.publisher ? await options.publisher.publish(outcome, { directory, namespace: options.namespace ?? '' }) : { urls: {} };
   const outputs: Record<string, string> = {};
   for (const renderer of options.renderers) {
     if (!/^[a-zA-Z0-9][\w.-]*$/.test(renderer.filename) || renderer.filename === 'outcome.json') throw new Error('renderer filename must stay inside the outcome directory');
@@ -48,9 +48,9 @@ export async function writeOutcome<T extends Outcome>(outcome: T, options: {
   return { manifest, outputs, publication };
 }
 
-export async function writeCaptureOutcome(directory: string, head: Run, base?: Run, comparison?: Comparison, options: { html?: boolean } = {}): Promise<{ manifest: string; markdown: string; gallery?: string }> {
+export async function writeCaptureOutcome(directory: string, head: Run, base?: Run, comparison?: Comparison, options: { html?: boolean } = {}): Promise<{ outcome: CaptureOutcome; manifest: string; markdown: string; gallery?: string }> {
   const outcome = captureOutcome(directory, head, base, comparison);
   const renderers = [markdownRenderer, ...(options.html ? [htmlRenderer] : [])];
   const result = await writeOutcome(outcome, { directory, renderers });
-  return { manifest: result.manifest, markdown: result.outputs.markdown!, ...(result.outputs.html ? { gallery: result.outputs.html } : {}) };
+  return { outcome, manifest: result.manifest, markdown: result.outputs.markdown!, ...(result.outputs.html ? { gallery: result.outputs.html } : {}) };
 }

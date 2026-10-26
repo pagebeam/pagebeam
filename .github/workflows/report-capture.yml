@@ -39,6 +39,7 @@ jobs:
           CAPTURE_SHA: ${{ inputs.head-sha }}
           CAPTURE_STATUS: ${{ inputs.status }}
         with:
+          retries: 3
           script: |
             const integer = name => {
               const value = process.env[name];
@@ -81,6 +82,7 @@ jobs:
           CAPTURE_STATUS: ${{ inputs.status }}
           CAPTURE_STORAGE_RELEASE: ${{ inputs.storage-release }}
         with:
+          retries: 3
           script: |
             const fs = require('node:fs/promises');
             const path = require('node:path');
@@ -95,14 +97,14 @@ jobs:
             const status = process.env.CAPTURE_STATUS;
             if (outcome.schemaVersion !== 1 || outcome.kind !== 'capture' || outcome.head?.revision !== sha && outcome.status !== 'empty') throw new Error('Outcome does not match the capture revision');
             if (!Array.isArray(outcome.captures) || outcome.captures.length > 100 || !Array.isArray(outcome.evidence)) throw new Error('Invalid capture outcome');
-            const files = [...new Set(outcome.captures.flatMap(shot => [shot.base, shot.head]).filter(file => file !== null))];
-            const evidence = files.map(id => {
-              const item = outcome.evidence.find(item => item.id === id && item.mediaType === 'image/png');
-              if (!item) throw new Error('Screenshot evidence is missing');
-              return item;
-            });
             const publisher = {
-              async publish(items, {directory, namespace}) {
+              async publish(result, {directory, namespace}) {
+                const files = [...new Set(result.captures.flatMap(shot => [shot.base, shot.head]).filter(file => file !== null))];
+                const items = files.map(id => {
+                  const item = result.evidence.find(item => item.id === id && item.mediaType === 'image/png');
+                  if (!item) throw new Error('Screenshot evidence is missing');
+                  return item;
+                });
                 const urls = Object.create(null);
                 if (!items.length) return {urls};
                 const images = [];
@@ -136,7 +138,13 @@ jobs:
                 for (const image of images) {
                   let asset = assets.find(asset => asset.name === image.name);
                   if (!asset) {
-                    asset = (await github.rest.repos.uploadReleaseAsset({...context.repo, release_id: release.id, name: image.name, data: image.data, headers: {'content-type': 'image/png', 'content-length': image.data.length}})).data;
+                    try {
+                      asset = (await github.rest.repos.uploadReleaseAsset({...context.repo, release_id: release.id, name: image.name, data: image.data, headers: {'content-type': 'image/png', 'content-length': image.data.length}})).data;
+                    } catch (error) {
+                      if (error.status !== 422) throw error;
+                      asset = (await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id: release.id})).find(asset => asset.name === image.name);
+                      if (!asset) throw error;
+                    }
                     assets.push(asset);
                   }
                   if (asset.size !== image.data.length || asset.digest && asset.digest !== `sha256:${image.hash}`) throw new Error('Stored screenshot does not match its contents');
@@ -147,7 +155,7 @@ jobs:
                 return {urls};
               }
             };
-            const publication = await publisher.publish(evidence, {directory: root, namespace: `pr-${issue_number}-run-${run_id}`});
+            const publication = await publisher.publish(outcome, {directory: root, namespace: `pr-${issue_number}-run-${run_id}`});
             const text = value => String(value).replace(/[&<>]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[char]).replace(/[\\`*_[\]|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
             const image = (id, label) => id === null ? 'Screenshot unavailable' : `![${label}](<${publication.urls[id]}>)`;
             const marker = '<!-- pagebeam-screenshots -->';

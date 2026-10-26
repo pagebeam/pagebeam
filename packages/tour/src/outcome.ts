@@ -12,11 +12,12 @@ export interface Outcome {
 }
 
 export interface Publication {
+  url?: string;
   urls: Record<string, string>;
 }
 
-export interface OutcomePublisher {
-  publish(evidence: readonly Evidence[], context: { directory: string; namespace: string }): Promise<Publication>;
+export interface OutcomePublisher<T extends Outcome = Outcome> {
+  publish(outcome: T, context: { directory: string; namespace: string }): Promise<Publication>;
 }
 
 export interface OutcomeRenderer<T extends Outcome = Outcome> {

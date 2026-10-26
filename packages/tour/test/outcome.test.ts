@@ -29,21 +29,23 @@ test('Markdown is independent of storage and HTML is an explicit additional rend
 
 test('custom outcomes, publishers and renderers share the same interface', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'pagebeam-outcome-'));
-  const outcome: Outcome = {schemaVersion: 1, kind: 'assertions', status: 'passed', evidence: [{id: 'checks', file: 'checks.json', mediaType: 'application/json'}]};
+  type AssertionOutcome = Outcome & { assertions: number };
+  const outcome: AssertionOutcome = {schemaVersion: 1, kind: 'assertions', status: 'passed', assertions: 3, evidence: [{id: 'checks', file: 'checks.json', mediaType: 'application/json'}]};
   let published = false;
-  const publisher: OutcomePublisher = {async publish(evidence, context) {
-    assert.deepEqual(evidence, outcome.evidence);
+  const publisher: OutcomePublisher<AssertionOutcome> = {async publish(result, context) {
+    assert.deepEqual(result, outcome);
     assert.equal(context.directory, directory);
     assert.equal(context.namespace, 'review');
     published = true;
-    return {urls: {checks: 'https://results.example.test/checks.json'}};
+    return {url: 'https://results.example.test/review', urls: {checks: 'https://results.example.test/checks.json'}};
   }};
-  const renderer: OutcomeRenderer = {format: 'text', filename: 'result.txt', render(result, publication) {
-    return `${result.kind}: ${result.status}. ${publication.urls.checks}`;
+  const renderer: OutcomeRenderer<AssertionOutcome> = {format: 'text', filename: 'result.txt', render(result, publication) {
+    return `${result.kind}: ${result.status} (${result.assertions}). ${publication.urls.checks}`;
   }};
   const result = await writeOutcome(outcome, {directory, namespace: 'review', renderers: [renderer], publisher});
   assert.ok(published);
-  assert.equal(await readFile(result.outputs.text!, 'utf8'), 'assertions: passed. https://results.example.test/checks.json');
+  assert.equal(result.publication.url, 'https://results.example.test/review');
+  assert.equal(await readFile(result.outputs.text!, 'utf8'), 'assertions: passed (3). https://results.example.test/checks.json');
   assert.deepEqual(JSON.parse(await readFile(result.manifest, 'utf8')), outcome);
 });
 
