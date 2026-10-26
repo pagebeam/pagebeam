@@ -275,7 +275,7 @@ finding says so.
 
 Configure one capture environment and saved journeys, then compare its frontend against a Git
 revision. Pagebeam prepares a temporary baseline snapshot, starts each revision in turn on the same
-address, and runs the same actions and viewports against both. Your checkout and branch stay in
+address, and runs the same actions and requested viewports against both. Your checkout and branch stay in
 place. Both revisions use the configured backend and fixture contract.
 
 ```sh
@@ -284,7 +284,9 @@ pagebeam capture --environment ci --target ci --compare-base origin/main \
 ```
 
 `--compare-base` also supplies the changed-file selection base unless `--base` is given separately.
-Use `--all` or named journeys to override selection. `--plan` never prepares a baseline or executes
+Use `--all` or named journeys to override selection. Capture defaults to the `desktop` viewport.
+Request `--viewport phone`, repeat `--viewport` for named sizes, or use `--viewport all` explicitly.
+`--all` selects journeys; it does not enable mobile viewports. `--plan` never prepares a baseline or executes
 its installation command. Explicit `--compare-environment` and `--compare-target` remain available
 for independently provisioned deployments.
 

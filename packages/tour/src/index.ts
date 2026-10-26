@@ -5,3 +5,4 @@ export * from './session.js';
 export * from './compare.js';
 export { StageFailure } from './environment.js';
 export * from './gallery.js';
+export * from './viewports.js';

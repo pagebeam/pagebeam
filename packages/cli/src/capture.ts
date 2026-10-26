@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { loadConfig } from '@pagebeam/engine';
 import { ask } from '@pagebeam/model';
-import { capture, explore, changedFiles, selectJourneys, compareCaptures, writeCaptureGallery, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
+import { capture, explore, changedFiles, selectJourneys, compareCaptures, writeCaptureGallery, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
 import { z } from 'zod';
 import { prepareBaseline } from './baseline.js';
 import { parse as parseYaml } from 'yaml';
@@ -17,6 +17,7 @@ interface Asked {
   base: string | undefined;
   changedFiles: string | undefined;
   requestedJourneys: string[];
+  requestedViewports: string[];
   all: boolean;
   plan: boolean;
   out: string | undefined;
@@ -60,9 +61,11 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
     const journeys = asked.requestedJourneys.length ? asked.requestedJourneys : undefined;
     const changed = asked.changedFiles === undefined ? undefined : z.array(z.string()).parse(JSON.parse(await readFile(path.resolve(cwd, asked.changedFiles), 'utf8')));
     const selection = { journeys, changed, all: asked.all };
+    const viewports = asked.requestedViewports.length ? asked.requestedViewports : ['desktop'];
     if (asked.plan) {
       const paths = selectionBase && changed === undefined && !journeys && !asked.all ? await changedFiles(cwd, selectionBase) : changed;
-      process.stdout.write(JSON.stringify(selectJourneys(config.tours!, config.capture, { ...selection, changed: paths }), null, 2) + '\n');
+      const planned = selectJourneys(config.tours!, config.capture, { ...selection, changed: paths });
+      process.stdout.write(JSON.stringify({ ...planned, journeys: planned.journeys.map(journey => ({ ...journey, viewports: selectViewports(config.tours!.journeys[journey.name]!, viewports).map(viewport => viewport.name) })) }, null, 2) + '\n');
       return 0;
     }
     if (asked.compareBase && !config.capture?.environments[asked.environment ?? 'local']?.frontend) {
@@ -119,7 +122,7 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
       };
     }
     const result = await capture({
-      cwd, config, environment: asked.environment ?? 'local', target: asked.target ?? 'local', mode, purpose,
+      cwd, config, environment: asked.environment ?? 'local', target: asked.target ?? 'local', mode, purpose, viewports,
       out: asked.out, base: selectionBase, ...selection, signal: controller.signal,
     }, driver);
     let comparison: { directory: string; report: ReturnType<typeof compareCaptures> } | undefined;
@@ -137,7 +140,7 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
       }
       if (environment && result.report.selection.journeys.length) {
         base = await capture({ cwd, config, environment, target: asked.compareTarget ?? asked.target ?? 'local',
-          mode, purpose, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), signal: controller.signal });
+          mode, purpose, viewports, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), signal: controller.signal });
         const compared = compareCaptures(result.report, base.report);
         await writeFile(path.join(result.directory, 'comparison.json'), JSON.stringify({ ...compared, baseDirectory: base.directory }, null, 2) + '\n');
         comparison = { directory: base.directory, report: compared };

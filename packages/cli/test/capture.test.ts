@@ -296,3 +296,22 @@ test('a source baseline rejects an environment without a frontend before startin
   assert.equal(outcome.code, 2);
   assert.match(outcome.stderr, /requires a configured frontend/);
 });
+
+test('capture defaults to desktop and captures mobile only when requested', async () => {
+  const app = await notesApp();
+  try {
+    const cwd = await applicationWorkspace(app.url, { notes: {
+      account: 'reader',
+      viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }, { name: 'phone', width: 390, height: 600, scale: 1 }],
+      steps: [{ goto: '/notes' }, { shot: { name: 'notes' } }],
+    } });
+    for (const [args, expected] of [[[], ['desktop']], [['--viewport', 'phone'], ['phone']], [['--viewport', 'all'], ['desktop', 'phone']]] as [string[], string[]][]) {
+      const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--all', '--json', ...args], {
+        env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' },
+      });
+      assert.deepEqual(JSON.parse(stdout).report.results.map((result: { viewport: string }) => result.viewport), expected);
+    }
+    const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--all', '--plan']);
+    assert.deepEqual(JSON.parse(stdout).journeys[0].viewports, ['desktop']);
+  } finally { await app.stop(); }
+});

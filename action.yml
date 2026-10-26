@@ -6,6 +6,9 @@ name: pagebeam
 description: Check documentation against the product it describes, and propose the corrections.
 
 inputs:
+  retention-days:
+    description: Number of days to retain screenshot artifacts.
+    default: '14'
   checkout:
     description: Check out the application repository. Set false to use a caller-prepared checkout and explicit cwd.
     default: 'true'
@@ -44,6 +47,9 @@ inputs:
   target:
     description: Named tours target.
     default: local
+  viewports:
+    description: Viewport names, one per line. Desktop by default; use phone or all explicitly.
+    default: desktop
   journeys:
     description: Explicit capture journeys, one name per line. Overrides changed-file selection.
     default: ''
@@ -222,6 +228,7 @@ runs:
         CAPTURE_ENVIRONMENT: ${{ inputs.environment }}
         CAPTURE_CONFIG: ${{ inputs.capture-config }}
         CAPTURE_TARGET: ${{ inputs.target }}
+        CAPTURE_VIEWPORTS: ${{ inputs.viewports }}
         CAPTURE_JOURNEYS: ${{ inputs.journeys }}
         CAPTURE_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
         CAPTURE_CHANGED_FILES: ${{ inputs.changed-files }}
@@ -276,6 +283,9 @@ runs:
           while IFS= read -r journey; do
             [ -z "$journey" ] || args+=(--journey "$journey")
           done <<< "$CAPTURE_JOURNEYS"
+          while IFS= read -r viewport; do
+            [ -z "$viewport" ] || args+=(--viewport "$viewport")
+          done <<< "$CAPTURE_VIEWPORTS"
           [ -z "$CAPTURE_BASE" ] || args+=(--base "$CAPTURE_BASE")
           [ -z "$CAPTURE_CHANGED_FILES" ] || args+=(--changed-files "$CAPTURE_CHANGED_FILES")
           [ "$CAPTURE_ALL" != true ] || args+=(--all)
@@ -338,6 +348,7 @@ runs:
         name: pagebeam-${{ steps.run.outputs.run-id }}
         path: ${{ steps.run.outputs.directory }}
         if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
 
     - name: Link capture evidence
       if: always() && steps.captures.outputs.artifact-url != ''

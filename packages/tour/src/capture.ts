@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { history } from '@pagebeam/app';
 import type { PagebeamConfig } from '@pagebeam/core';
+import { selectViewports } from './viewports.js';
 import { environment, StageFailure } from './environment.js';
 import { CaptureSession, Incomplete, type StepResult } from './session.js';
 import { changedFiles, selectJourneys, type Selection, type SelectionRequest } from './selection.js';
@@ -13,6 +14,7 @@ export interface CaptureRequest extends SelectionRequest {
   config: PagebeamConfig;
   environment: string;
   target: string;
+  viewports?: string[] | undefined;
   out?: string | undefined;
   base?: string | undefined;
   mode?: 'saved' | 'caller' | 'model' | undefined;
@@ -123,6 +125,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     if (!report.selection.journeys.length) { report.status = 'empty'; }
     else {
     for (const { name } of report.selection.journeys) {
+      selectViewports(tours.journeys[name]!, request.viewports);
       if (!/^[\w.-]+$/.test(name) || name === '.' || name === '..') throw new Error('journey names must be safe directory names');
       if (report.mode !== 'saved' && !tours.journeys[name]!.explore) throw new Error(`journey ${name} needs an exploration goal and policy`);
       if (report.mode === 'saved' && !tours.journeys[name]!.steps.length) throw new Error(`journey ${name} needs saved steps`);
@@ -150,7 +153,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     await managed.start();
     for (const { name } of report.selection.journeys) {
       const journey = tours.journeys[name]!;
-      for (const viewport of journey.viewports) {
+      for (const viewport of selectViewports(journey, request.viewports)) {
         const result: JourneyResult = { journey: name, viewport: viewport.name, size: { width: viewport.width, height: viewport.height, scale: viewport.scale }, status: 'running', steps: [] };
         report.results.push(result);
         report.stage = 'journey';
