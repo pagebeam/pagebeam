@@ -1,0 +1,57 @@
+tours:
+  targets:
+    local: { url: 'http://localhost:4300' }
+  accounts:
+    reader:
+      purpose: a disposable notes account
+      fresh: true
+      seed: { command: node seed.mjs }
+      login:
+        form: { url: /, username: '#username', password: '#password', submit: '#login button' }
+      confirm: '#signout'
+  journeys:
+    notes:
+      account: reader
+      paths: ['examples/capture/**']
+      viewports:
+        - { name: desktop, width: 1440, height: 900 }
+        - { name: phone, width: 390, height: 844 }
+      explore:
+        goal: Create a note and confirm that it remains after reloading the notes page.
+        allowChanges: true
+        actions: [goto, click, fill, wait, expect, shot]
+      steps:
+        - goto: /notes
+        - expect: { selector: li.note, text: Second note }
+        - fill: { selector: '#title', value: A saved note }
+        - click: '#save'
+        - expect: { selector: li.note, text: A saved note }
+        - goto: /notes
+        - expect: { selector: li.note, text: A saved note }
+        - shot: { name: saved }
+
+capture:
+  groups: {}
+  environments:
+    source:
+      disposable: true
+      backend: { kind: directory, path: ., start: node backend.mjs, ready: 'http://localhost:4301/health' }
+      frontend: &frontend { path: ., start: node frontend.mjs, ready: 'http://localhost:4300' }
+      fixtures: &fixtures { version: notes-v1 }
+    existing:
+      disposable: true
+      backend: { kind: url, url: 'http://localhost:4301/health', revision: notes-v1 }
+      frontend: *frontend
+      fixtures: *fixtures
+    mock:
+      disposable: true
+      backend:
+        kind: mock
+        path: .
+        start: node backend.mjs
+        ready: 'http://localhost:4301/health'
+        fixtures: fixtures.json
+        version: notes-v1
+        validate: node validate.mjs
+      frontend: *frontend
+      fixtures: *fixtures

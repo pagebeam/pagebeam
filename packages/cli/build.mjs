@@ -6,7 +6,7 @@
 // They are built into the command instead. What a reader installs is one
 // package, and what they get is the same code.
 import { build } from 'esbuild';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -38,3 +38,23 @@ for (const [entry, out] of [
     logLevel: 'warning',
   });
 }
+
+const packages = path.resolve(here, '..');
+for (const name of await readdir(packages)) {
+  if (name === 'cli') continue;
+  const from = path.join(packages, name, 'dist');
+  const files = await readdir(from).catch(() => []);
+  const to = path.join(here, 'dist/types', name);
+  await mkdir(to, { recursive: true });
+  for (const file of files.filter(file => file.endsWith('.d.ts'))) {
+    const declaration = (await readFile(path.join(from, file), 'utf8'))
+      .replace(/(['"])@pagebeam\/([a-z-]+)\1/g, (_match, quote, dependency) => `${quote}../${dependency}/index.js${quote}`)
+      .replace(/^\/\/# sourceMappingURL=.*$/gm, '');
+    await writeFile(path.join(to, file), declaration);
+  }
+}
+const entryTypes = path.join(here, 'dist/index.d.ts');
+const declarations = (await readFile(entryTypes, 'utf8'))
+  .replace(/(['"])@pagebeam\/([a-z-]+)\1/g, (_match, quote, dependency) => `${quote}./types/${dependency}/index.js${quote}`)
+  .replace(/^\/\/# sourceMappingURL=.*$/gm, '');
+await writeFile(entryTypes, declarations);

@@ -19,7 +19,9 @@
   "license": "MIT",
   "dependencies": {
     "@pagebeam/app": "0.1.0",
-    "@pagebeam/core": "0.1.0"
+    "@pagebeam/core": "0.1.0",
+    "picomatch": "^4.0.7",
+    "yaml": "^2.9.1"
   },
   "optionalDependencies": {
     "playwright-core": "^1.63.0"

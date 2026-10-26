@@ -8,6 +8,30 @@ is open source and runs in the repository you already have.
 
 Full documentation: https://docs.pagebeam.dev
 
+## Application evidence
+
+`pagebeam capture` runs selected application journeys, checks visible outcomes,
+and writes screenshots, a run report, and a browsable gallery. Another tool can
+consume the result and publish its own review. Capture requires no GitHub token.
+
+```sh
+pagebeam capture --plan --base origin/main
+pagebeam capture --environment ci --target ci --base origin/main --json
+pagebeam capture --environment ci --target ci --journey checkout --journey settings
+```
+
+Configure an existing backend URL, a pinned image with Compose, a source directory,
+or a validated mock API. Prepare test data separately from starting the backend.
+Journeys can follow saved steps, accept actions from another tool over the session
+protocol, or explore a configured goal using your model provider.
+
+Changed-file selection uses declared paths and representative groups. Unmapped
+changes never trigger a full run. `--all` explicitly selects the full suite.
+
+See [the runnable capture example](examples/capture/README.md) for all backend
+sources, test data, exploratory limits, the session protocol, and optional base
+captures. Existing `pagebeam shoot` workflows remain available.
+
 ## Try it
 
 Run two commands in the repository that holds your docs:

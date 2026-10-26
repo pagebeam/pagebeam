@@ -23,9 +23,45 @@ inputs:
     required: false
     default: ''
   command:
-    description: check, to report, or fix, to propose.
+    description: check, fix, or capture. Capture produces evidence without posting to the pull request.
     required: false
     default: check
+  ref:
+    description: Frontend revision to check out. Defaults to the pull request head or current revision.
+    default: ''
+  environment:
+    description: Named capture environment.
+    default: local
+  capture-config:
+    description: Optional capture configuration file, relative to cwd.
+    default: ''
+  target:
+    description: Named tours target.
+    default: local
+  journeys:
+    description: Explicit capture journeys, one name per line. Overrides changed-file selection.
+    default: ''
+  base:
+    description: Base revision for changed-file selection. Defaults to the pull request base.
+    default: ''
+  changed-files:
+    description: JSON file containing changed paths, relative to cwd.
+    default: ''
+  all:
+    description: Explicitly capture every configured journey.
+    default: 'false'
+  mode:
+    description: Capture execution style, saved or model.
+    default: saved
+  purpose:
+    description: capture, check, or both.
+    default: both
+  compare-environment:
+    description: Optional independently prepared base environment.
+    default: ''
+  compare-target:
+    description: Base tours target, required with compare-environment.
+    default: ''
   profile:
     description: observe, enforce or enforce-all.
     required: false
@@ -69,6 +105,18 @@ inputs:
     default: OPENAI_API_KEY
 
 outputs:
+  directory:
+    description: Directory containing capture runs, suitable for another upload or review tool.
+    value: ${{ steps.run.outputs.directory }}
+  report:
+    description: Head run report file.
+    value: ${{ steps.run.outputs.report }}
+  gallery:
+    description: Head run HTML gallery file.
+    value: ${{ steps.run.outputs.gallery }}
+  artifact-url:
+    description: Download location for capture evidence.
+    value: ${{ steps.captures.outputs.artifact-url }}
   said:
     description: What the run reported.
     value: ${{ steps.run.outputs.said }}
@@ -96,6 +144,7 @@ runs:
     # History is evidence: `strings` and `moved` read each repository's own.
     - uses: actions/checkout@v4
       with:
+        ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
         path: ${{ steps.where.outputs.self }}
         fetch-depth: 0
 
@@ -144,6 +193,17 @@ runs:
         PAGEBEAM_VERSION: ${{ inputs.version }}
         MODEL_KEY: ${{ inputs.model-key }}
         MODEL_KEY_ENV: ${{ inputs.model-key-env }}
+        CAPTURE_ENVIRONMENT: ${{ inputs.environment }}
+        CAPTURE_CONFIG: ${{ inputs.capture-config }}
+        CAPTURE_TARGET: ${{ inputs.target }}
+        CAPTURE_JOURNEYS: ${{ inputs.journeys }}
+        CAPTURE_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+        CAPTURE_CHANGED_FILES: ${{ inputs.changed-files }}
+        CAPTURE_ALL: ${{ inputs.all }}
+        CAPTURE_MODE: ${{ inputs.mode }}
+        CAPTURE_PURPOSE: ${{ inputs.purpose }}
+        CAPTURE_COMPARE_ENVIRONMENT: ${{ inputs.compare-environment }}
+        CAPTURE_COMPARE_TARGET: ${{ inputs.compare-target }}
       run: |
         set -uo pipefail
 
@@ -167,17 +227,45 @@ runs:
 
         args=("$PAGEBEAM_COMMAND" --cwd "$cwd")
         # A release pinned from before --build existed would refuse the flag.
-        if [ "$PAGEBEAM_BUILD" != false ] && npx --yes "pagebeam@$version" --help 2>/dev/null | grep -q -- '--build=auto'; then
+        if [ "$PAGEBEAM_COMMAND" != capture ] && [ "$PAGEBEAM_BUILD" != false ] && npx --yes "pagebeam@$version" --help 2>/dev/null | grep -q -- '--build=auto'; then
           if [ "$PAGEBEAM_BUILD" = true ]; then args+=(--build); else args+=(--build=auto); fi
         fi
         if [ "$PAGEBEAM_COMMAND" = check ]; then
           args+=(--profile "$PAGEBEAM_PROFILE")
-        elif [ "$PAGEBEAM_PUBLISH" = true ]; then
+        elif [ "$PAGEBEAM_COMMAND" = fix ] && [ "$PAGEBEAM_PUBLISH" = true ]; then
           args+=(--publish)
+        elif [ "$PAGEBEAM_COMMAND" = capture ]; then
+          args+=(--json --environment "$CAPTURE_ENVIRONMENT" --target "$CAPTURE_TARGET" --mode "$CAPTURE_MODE" --purpose "$CAPTURE_PURPOSE" --out "$RUNNER_TEMP/pagebeam-captures")
+          [ -z "$CAPTURE_CONFIG" ] || args+=(--config "$CAPTURE_CONFIG")
+          while IFS= read -r journey; do
+            [ -z "$journey" ] || args+=(--journey "$journey")
+          done <<< "$CAPTURE_JOURNEYS"
+          [ -z "$CAPTURE_BASE" ] || args+=(--base "$CAPTURE_BASE")
+          [ -z "$CAPTURE_CHANGED_FILES" ] || args+=(--changed-files "$CAPTURE_CHANGED_FILES")
+          [ "$CAPTURE_ALL" != true ] || args+=(--all)
+          [ -z "$CAPTURE_COMPARE_ENVIRONMENT" ] || args+=(--compare-environment "$CAPTURE_COMPARE_ENVIRONMENT")
+          [ -z "$CAPTURE_COMPARE_TARGET" ] || args+=(--compare-target "$CAPTURE_COMPARE_TARGET")
         fi
 
-        npx --yes "pagebeam@$version" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
-        code=${PIPESTATUS[0]}
+        if [ "$PAGEBEAM_COMMAND" = capture ]; then
+          npx --yes "pagebeam@$version" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
+          code=${PIPESTATUS[0]}
+        else
+          npx --yes "pagebeam@$version" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
+          code=${PIPESTATUS[0]}
+        fi
+
+        if [ "$PAGEBEAM_COMMAND" = capture ]; then
+          node --input-type=module <<'NODE'
+        import fs from 'node:fs';
+        import path from 'node:path';
+        try {
+          const result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8'));
+          const directory = path.join(process.env.RUNNER_TEMP, 'pagebeam-captures');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${path.join(result.directory, 'report.json')}\ngallery=${path.join(result.directory, 'index.html')}\nrun-id=${result.report.id}\n`);
+        } catch {}
+        NODE
+        fi
 
         # A line equal to the delimiter would end the output early.
         delimiter="PAGEBEAM_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
@@ -199,3 +287,20 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
         exit "$code"
+
+    - name: Retain capture evidence
+      id: captures
+      if: always() && inputs.command == 'capture' && steps.run.outputs.directory != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: pagebeam-${{ steps.run.outputs.run-id }}
+        path: ${{ steps.run.outputs.directory }}
+        if-no-files-found: error
+
+    - name: Link capture evidence
+      if: always() && steps.captures.outputs.artifact-url != ''
+      shell: bash
+      env:
+        CAPTURE_ARTIFACT_URL: ${{ steps.captures.outputs.artifact-url }}
+      run: |
+        printf '\nCapture evidence: %s\n' "$CAPTURE_ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

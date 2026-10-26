@@ -3,6 +3,7 @@ dist/
 *.tsbuildinfo
 .pagebeam/cache/
 .pagebeam/.state/
+**/.pagebeam/runs/
 .DS_Store
 packages/*/README.md
 packages/*/LICENSE

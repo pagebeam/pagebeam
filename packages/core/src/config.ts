@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { captureSchema, explorationSchema } from './capture.js';
 
 const docsSchema = z.strictObject({
   root: z.string(),
@@ -145,9 +146,12 @@ const accountSchema = z
 // recording is written from it.
 const note = { note: z.string().min(1).optional() };
 
-const stepSchema = z.union([
+export const stepSchema = z.union([
   z.strictObject({ goto: z.string(), ...note }),
   z.strictObject({ click: z.string(), ...note }),
+  z.strictObject({ press: z.string().min(1), ...note }),
+  z.strictObject({ type: z.union([z.string(), z.strictObject({ valueEnv: z.string().min(1) })]), ...note }),
+  z.strictObject({ verify: z.string().min(1), ...note }),
   z.strictObject({
     fill: z
       .strictObject({ selector: z.string(), value: z.string().optional(), valueEnv: z.string().optional() })
@@ -197,11 +201,13 @@ const toursSchema = z
     journeys: z.record(
       z.strictObject({
         account: z.string(),
+        paths: z.array(z.string()).default([]),
+        explore: explorationSchema.optional(),
         viewports: z
           .array(viewportSchema)
           .min(1)
           .default([{ name: 'desktop', width: 1440, height: 900, scale: 2 }]),
-        steps: z.array(stepSchema).min(1),
+        steps: z.array(stepSchema).default([]),
         record: recordSchema.default(false),
       }),
     ),
@@ -209,6 +215,9 @@ const toursSchema = z
   })
   .superRefine((tours, ctx) => {
     for (const [name, journey] of Object.entries(tours.journeys)) {
+      if (journey.steps.length === 0 && journey.explore === undefined) {
+        ctx.addIssue({ code: 'custom', path: ['journeys', name, 'steps'], message: 'a journey needs steps or an exploration goal' });
+      }
       if (!(journey.account in tours.accounts)) {
         ctx.addIssue({
           code: 'custom',
@@ -237,7 +246,8 @@ export type TourStep = TourJourney['steps'][number];
 export type TourRequirement = TourAccount['requires'][number];
 
 export const configSchema = z.strictObject({
-  docs: docsSchema,
+  docs: docsSchema.default({ root: '.', include: [] }),
+  capture: captureSchema.optional(),
   apps: z.array(appSchema).default([]),
   history: z
     .strictObject({ sinceDays: z.number().int().positive().default(30) })
