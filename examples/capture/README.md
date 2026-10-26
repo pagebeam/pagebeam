@@ -7,7 +7,7 @@ node ../../packages/cli/dist/main.js capture --environment source --target local
 node ../../packages/cli/dist/main.js capture --environment mock --target local --journey notes --json
 ```
 
-The source and mock environments start their own backend and frontend, create disposable accounts, save a note through the browser, reload it, assert persistence, and capture desktop and phone views. Run them sequentially because they use the same ports. Already occupied addresses are refused.
+The source and mock environments start their own backend and frontend, create disposable accounts, save a note through the browser, reload it, assert persistence, and capture desktop views by default. Request `--viewport phone` for phone views or `--viewport all` for both. Run them sequentially because they use the same ports. Already occupied addresses are refused.
 
 For an existing backend, start `node backend.mjs` yourself, then select `--environment existing`. Pagebeam leaves that backend running.
 

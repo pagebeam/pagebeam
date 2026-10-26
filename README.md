@@ -94,14 +94,14 @@ repository at `$GITHUB_WORKSPACE/<owner>/<name>`, not at the workspace root.
 | --------------- | -------------------------------------------------------------------------------- | ---------------------- |
 | `docs`          | The docs repository, as owner/name, when it is not this one                      | this repository        |
 | `products`      | Other product repositories to check out, one owner/name per line                 | none                   |
-| `command`       | `check` to report, `fix` to propose                                              | `check`                |
+| `command`       | `check` to report, `fix` to propose, `capture` for screenshots                                              | `check`                |
 | `profile`       | `observe`, `enforce` or `enforce-all`                                            | `observe`              |
 | `publish`       | With `fix`, open or update the pull request                                      | `false`                |
 | `build`         | Build the docs site first: `auto`, `true` or `false`                             | `auto`                 |
 | `token`         | Reads the other repositories and opens the pull request                          | the job's own token    |
 | `model-key`     | Your model provider's key, as a secret                                           | none                   |
 | `model-key-env` | The variable your config's `model.apiKeyEnv` names                               | `OPENAI_API_KEY`       |
-| `version`       | The pagebeam release to run                                                      | the release you pinned |
+| `version`       | The pagebeam release to run                                                      | the pinned source      |
 
 The job's own token only reaches this repository. To read another repository
 or open a pull request in it, pass a token that can: a GitHub App installation
@@ -304,8 +304,9 @@ An unmapped change is labelled as uncovered. The JSON output includes the galler
 ### Reusable GitHub jobs
 
 The root action builds the CLI from its pinned source when `version` is omitted. Set `version`
-only when deliberately selecting a published npm release. Set up the application runtimes, isolated backend and fixtures in the calling job. The capture
-job needs read-only access; application startup and installation execute project code.
+only when deliberately selecting a published npm release. Set up the application runtimes, isolated
+backend and fixtures in the calling job. The capture job needs read-only access; application startup
+and installation execute project code.
 
 ```yaml
 jobs:
