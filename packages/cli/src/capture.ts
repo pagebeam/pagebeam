@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { loadConfig } from '@pagebeam/engine';
 import { ask } from '@pagebeam/model';
-import { capture, explore, changedFiles, selectJourneys, compareCaptures, writeCaptureOutcome, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
+import { capture, explore, planCaptures, compareCaptures, writeCaptureOutcome, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
 import { z } from 'zod';
 import { prepareBaseline } from './baseline.js';
 import { parse as parseYaml } from 'yaml';
@@ -64,10 +64,9 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
     const selection = { journeys, changed, all: asked.all };
     const viewports = asked.requestedViewports.length ? asked.requestedViewports : ['desktop'];
     if (asked.plan) {
-      const paths = selectionBase && changed === undefined && !journeys && !asked.all ? await changedFiles(cwd, selectionBase) : changed;
-      const planned = selectJourneys(config.tours!, config.capture, { ...selection, changed: paths });
+      const planned = await planCaptures({ cwd, config, base: selectionBase, ...selection });
       process.stdout.write(JSON.stringify({ ...planned, journeys: planned.journeys.map(journey => ({ ...journey, viewports: selectViewports(config.tours!.journeys[journey.name]!, viewports).map(viewport => viewport.name) })) }, null, 2) + '\n');
-      return 0;
+      return planned.coverage?.status === 'incomplete' ? 2 : 0;
     }
     if (asked.compareBase && !config.capture?.environments[asked.environment ?? 'local']?.frontend) {
       throw new Error('--compare-base requires a configured frontend');
@@ -132,16 +131,16 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
     let rendered: Awaited<ReturnType<typeof writeCaptureOutcome>>;
     try {
       let environment = asked.compareEnvironment;
-      if (asked.compareBase && result.report.selection.journeys.length) {
+      if (asked.compareBase && result.report.status === 'passed' && result.report.selection.journeys.length) {
         const configured = config.capture?.environments[asked.environment ?? 'local'];
         if (!configured) throw new Error('unknown capture environment');
         baseline = await prepareBaseline(cwd, asked.compareBase, configured, asked.baselineInstall);
         environment = `baseline-${result.report.id}`;
         config.capture!.environments[environment] = baseline.environment;
       }
-      if (environment && result.report.selection.journeys.length) {
+      if (environment && result.report.status === 'passed' && result.report.selection.journeys.length) {
         base = await capture({ cwd, config, environment, target: asked.compareTarget ?? asked.target ?? 'local',
-          mode, purpose, viewports, html: asked.html, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), signal: controller.signal });
+          mode, purpose, viewports, html: asked.html, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), captureRoutes: result.report.selection.coverage?.status === 'complete' ? result.report.selection.coverage.routes.map(route => route.route) : undefined, signal: controller.signal });
         const compared = compareCaptures(result.report, base.report);
         await writeFile(path.join(result.directory, 'comparison.json'), JSON.stringify({ ...compared, baseDirectory: base.directory }, null, 2) + '\n');
         comparison = { directory: base.directory, report: compared };

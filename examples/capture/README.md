@@ -43,7 +43,7 @@ pagebeam capture --environment source --target local --journey notes
 pagebeam capture --environment source --target local --all
 ```
 
-`--base` selects journeys from the merge-base diff to HEAD, including both sides of renames and deleted paths. Journey paths and shared group paths are relative to the Git repository root. `--changed-files` accepts a JSON array of paths supplied by another tool. Explicit journeys override mapping. An empty selection produces an empty report without starting services.
+`--base` analyzes the merge-base diff to HEAD against route dependencies in both revisions, including renames and deleted paths. `--changed-files` accepts a JSON array of paths supplied by another tool. Screenshot checkpoints declare `shot.route`, which is checked against the actual browser URL. Non-UI changes produce an empty report without starting services. Unknown impact or missing screenshot coverage returns an incomplete report. Named journeys and `--all` request manual runs without claiming affected-screen coverage. See the root README for framework detection, explicit route dependencies and capture budgets.
 
 `--plan` resolves selection without executing project code. `--purpose check` runs actions and assertions without screenshots. `--purpose capture` and the default `both` retain configured screenshots and assertion outcomes. Existing `shoot` behavior remains available.
 
@@ -96,6 +96,6 @@ The CLI does not upload files or post comments. Another tool can consume its JSO
 
 `review-adapter.py` demonstrates a review integration consuming captures and failures without posting anything. It returns revision, provenance, selection, local screenshot paths, and report/gallery paths. Its caller owns uploads and review publication.
 
-The TypeScript entrypoint exports `capture`, `CaptureSession`, `explore`, `selectJourneys`, `changedFiles`, and `compareCaptures`. External drivers receive the same session methods used by the CLI.
+The TypeScript entrypoint exports `capture`, `planCaptures`, `CaptureSession`, `explore`, `selectJourneys`, `changedFiles`, and `compareCaptures`. The synchronous `selectJourneys` helper retains explicit path mapping for integrations that manage their own selection; the CLI and `capture` use the impact-aware planner. External drivers receive the same session methods used by the CLI.
 
 The GitHub Action accepts `command: capture`, selection inputs, an environment and target, and optional comparison inputs. It uploads evidence after execution failures and exposes `report`, `gallery`, `directory`, and `artifact-url` outputs. The separate reusable reporting workflow publishes PNG release assets and embeds a before-and-after image table on a PR without executing application code with its write token. See the root README for the two-job integration. Pin the action and reporting workflow to a reviewed commit or release.

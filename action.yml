@@ -15,6 +15,12 @@ inputs:
   checkout:
     description: Check out the application repository. Set false to use a caller-prepared checkout and explicit cwd.
     default: 'true'
+  plan:
+    description: Only resolve affected screens and coverage, without installing or starting the application.
+    default: 'false'
+  prepare:
+    description: Optional command to generate capture configuration before planning, run from cwd.
+    default: ''
   install:
     description: Application dependency command, run before capture. Also used for the baseline unless baseline-install overrides it.
     default: ''
@@ -126,6 +132,15 @@ inputs:
     default: OPENAI_API_KEY
 
 outputs:
+  plan:
+    description: Structured selection and coverage plan.
+    value: ${{ steps.run.outputs.plan }}
+  coverage:
+    description: complete, incomplete, no-ui, or manual.
+    value: ${{ steps.run.outputs.coverage }}
+  capture-needed:
+    description: True when the plan has journeys to execute and coverage is not incomplete.
+    value: ${{ steps.run.outputs.capture-needed }}
   directory:
     description: Directory containing capture runs, suitable for another upload or review tool.
     value: ${{ steps.run.outputs.directory }}
@@ -233,6 +248,8 @@ runs:
         PAGEBEAM_VERSION: ${{ inputs.version }}
         MODEL_KEY: ${{ inputs.model-key }}
         MODEL_KEY_ENV: ${{ inputs.model-key-env }}
+        CAPTURE_PLAN: ${{ inputs.plan }}
+        CAPTURE_PREPARE: ${{ inputs.prepare }}
         CAPTURE_HTML: ${{ inputs.html }}
         CAPTURE_INSTALL: ${{ inputs.install }}
         CAPTURE_ENVIRONMENT: ${{ inputs.environment }}
@@ -273,8 +290,9 @@ runs:
 
         if [ "$PAGEBEAM_COMMAND" = capture ]; then
           unset GITHUB_TOKEN
-          if [ -n "$CAPTURE_INSTALL" ]; then
-            (cd "$cwd" && sh -c "$CAPTURE_INSTALL") || exit 2
+          export PAGEBEAM_CLI="$GITHUB_ACTION_PATH/packages/cli/dist/main.js"
+          if [ -n "$CAPTURE_PREPARE" ]; then
+            (cd "$cwd" && sh -c "$CAPTURE_PREPARE") || exit 2
           fi
         fi
 
@@ -301,20 +319,42 @@ runs:
           [ -z "$CAPTURE_CHANGED_FILES" ] || args+=(--changed-files "$CAPTURE_CHANGED_FILES")
           [ "$CAPTURE_ALL" != true ] || args+=(--all)
           [ -z "$CAPTURE_COMPARE_BASE" ] || args+=(--compare-base "$CAPTURE_COMPARE_BASE")
-          [ -z "$CAPTURE_BASELINE_INSTALL" ] || args+=(--baseline-install "$CAPTURE_BASELINE_INSTALL")
+          if [ -n "$CAPTURE_COMPARE_BASE" ] && [ -n "$CAPTURE_BASELINE_INSTALL" ]; then args+=(--baseline-install "$CAPTURE_BASELINE_INSTALL"); fi
           [ -z "$CAPTURE_COMPARE_ENVIRONMENT" ] || args+=(--compare-environment "$CAPTURE_COMPARE_ENVIRONMENT")
           [ -z "$CAPTURE_COMPARE_TARGET" ] || args+=(--compare-target "$CAPTURE_COMPARE_TARGET")
         fi
 
         if [ "$PAGEBEAM_COMMAND" = capture ]; then
-          "${pagebeam[@]}" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
-          code=${PIPESTATUS[0]}
+          "${pagebeam[@]}" "${args[@]}" --plan > "$RUNNER_TEMP/pagebeam-plan.json"
+          plan_code=$?
+          if [ ! -s "$RUNNER_TEMP/pagebeam-plan.json" ]; then exit "$plan_code"; fi
+          node --input-type=module <<'NODE'
+        import fs from 'node:fs';
+        import path from 'node:path';
+        const file = path.join(process.env.RUNNER_TEMP, 'pagebeam-plan.json');
+        const plan = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const coverage = plan.coverage?.status || 'manual';
+        const needed = coverage !== 'incomplete' && plan.journeys.length > 0;
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `plan=${file}\ncoverage=${coverage}\ncapture-needed=${needed}\n`);
+        NODE
+          if [ "$CAPTURE_PLAN" = true ]; then
+            cp "$RUNNER_TEMP/pagebeam-plan.json" "$RUNNER_TEMP/said.txt"
+            cat "$RUNNER_TEMP/said.txt"
+            code=$plan_code
+          else
+            needed="$(node -e 'const p=require(process.argv[1]); process.stdout.write(String(p.coverage?.status !== "incomplete" && p.journeys.length > 0))' "$RUNNER_TEMP/pagebeam-plan.json")"
+            if [ "$plan_code" = 0 ] && [ "$needed" = true ] && [ -n "$CAPTURE_INSTALL" ]; then
+              (cd "$cwd" && sh -c "$CAPTURE_INSTALL") || exit 2
+            fi
+            "${pagebeam[@]}" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
+            code=${PIPESTATUS[0]}
+          fi
         else
           "${pagebeam[@]}" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
           code=${PIPESTATUS[0]}
         fi
 
-        if [ "$PAGEBEAM_COMMAND" = capture ]; then
+        if [ "$PAGEBEAM_COMMAND" = capture ] && [ "$CAPTURE_PLAN" != true ]; then
           node --input-type=module <<'NODE'
         import fs from 'node:fs';
         import path from 'node:path';

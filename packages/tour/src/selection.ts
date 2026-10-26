@@ -12,6 +12,12 @@ export interface SelectionRequest {
 export interface Selection {
   journeys: { name: string; reasons: string[] }[];
   unmapped: string[];
+  coverage?: {
+    status: 'complete' | 'incomplete' | 'no-ui' | 'manual';
+    routes: { route: string; files: string[]; journeys: string[]; presence: 'existing' | 'added' | 'removed' }[];
+    ignored: string[];
+    reasons: string[];
+  };
 }
 
 export async function changedFiles(cwd: string, base: string): Promise<string[]> {

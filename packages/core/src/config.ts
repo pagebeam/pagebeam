@@ -167,6 +167,7 @@ export const stepSchema = z.union([
     shot: z.strictObject({
       name: z.string().regex(/^[\w.-]+$/, 'a shot name becomes part of a file name'),
       caption: z.string().optional(),
+      route: z.string().regex(/^\/(?!\/)[^?#]*$/, 'a screenshot route must be a pathname').optional(),
       focus: z.array(z.string()).default([]),
       fullPage: z.boolean().default(false),
     }),

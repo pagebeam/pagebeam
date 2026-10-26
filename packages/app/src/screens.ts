@@ -13,10 +13,12 @@ const COMPONENT = /\.(vue|svelte|astro|[jt]sx?)$/i;
 // Anything that is not part of a name may come before it: a newline in a
 // module, a closing tag in a component written on one line.
 const IMPORT = /(?:^|[^\w\$])import\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
+const REEXPORT = /export\s+(?:\*|\{[^}]*\})\s+from\s*['"]([^'"]+)['"]/g;
+const RESOURCE = /(?:@(?:import|use|forward)\s*|(?:src|href)\s*=\s*|url\(\s*)['"]([^'"]+)['"]/g;
 const LAZY = /import\(\s*['"]([^'"]+)['"]\s*\)/g;
 // `<SystemCanvas>` with no import beside it. A framework that resolves a
 // component by its name is the common case, not an exception.
-const USED = /<([A-Z][A-Za-z0-9]*)[\s/>]/g;
+const USED = /<([A-Z][A-Za-z0-9]*|[a-z][a-z0-9]*(?:-[a-z0-9]+)+)[\s/>]/g;
 // `useSoftwareSystems()` with no import either. Where the labels of a
 // catalogue live, so missing it loses controls that are genuinely on a screen.
 const CALLED = /\b(use[A-Z][A-Za-z0-9]*)\s*\(/g;
@@ -48,7 +50,7 @@ function resolve(from: string, specifier: string, have: Set<string>): string | n
   base = base.replace(/^\/+/, '');
   for (const candidate of [
     base,
-    ...['.vue', '.svelte', '.astro', '.ts', '.tsx', '.js', '.jsx', '.mjs'].flatMap((e) => [
+    ...['.vue', '.svelte', '.astro', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.css', '.scss', '.sass', '.less'].flatMap((e) => [
       base + e,
       `${base}/index${e}`,
     ]),
@@ -482,7 +484,11 @@ export function screensOf(files: { path: string; text: string }[], configs: Conf
   // carries that directory in front of it, so `lens/ClaimsView.vue` is what
   // `<LensClaimsView>` means, and which side it runs on is not part of it.
   const byName = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  const uncertain = new Set<string>();
   const remember = (name: string, at: string): void => {
+    if (name.includes('-')) name = name.split('-').map(capitalised).join('');
+    if (name !== '' && byName.has(name) && byName.get(name) !== at) ambiguous.add(name);
     if (name !== '' && !byName.has(name)) byName.set(name, at);
   };
   for (const file of files) {
@@ -497,17 +503,22 @@ export function screensOf(files: { path: string; text: string }[], configs: Conf
   const from = (file: string): string[] => {
     const source = text.get(file) ?? '';
     const found: string[] = [];
-    for (const pattern of [IMPORT, LAZY]) {
+    if (/import\s*\(\s*[^'"\s]|import\.meta\.glob|<component\b[^>]*:is=/.test(source)) uncertain.add(`Dynamic dependencies in ${file} cannot be established statically`);
+    for (const pattern of [IMPORT, LAZY, REEXPORT, RESOURCE]) {
       pattern.lastIndex = 0;
       for (const match of source.matchAll(pattern)) {
         const at = resolve(file, match[1] ?? '', have);
         if (at !== null) found.push(at);
+        else if (/^(?:\.|[~@]\/)/.test(match[1] ?? '') && pattern !== RESOURCE) uncertain.add(`Cannot resolve ${match[1]} imported by ${file}`);
       }
     }
     for (const pattern of [USED, CALLED]) {
       pattern.lastIndex = 0;
       for (const match of source.matchAll(pattern)) {
-        const at = byName.get(match[1] ?? '');
+        const raw = match[1] ?? '';
+        const name = raw.includes('-') ? raw.split('-').map(capitalised).join('') : raw;
+        if (ambiguous.has(name)) uncertain.add(`Component or composable name ${name} is ambiguous in ${file}`);
+        const at = byName.get(name);
         if (at !== undefined) found.push(at);
       }
     }
@@ -527,11 +538,12 @@ export function screensOf(files: { path: string; text: string }[], configs: Conf
     const route = model.routeOf(file.path);
     if (route === null) continue;
     const worn = (text.get(file.path) ?? '').match(WEARS)?.[1] ?? 'default';
-    const wrapping = layouts.get(worn);
+    const wrapping = /\blayout\s*:\s*false\b/.test(text.get(file.path) ?? '') ? undefined : layouts.get(worn);
     const seen = new Set<string>([
       file.path,
       ...(wrapping === undefined ? [] : [wrapping]),
       ...route.wrappers,
+      ...[...have].filter(at => /^(?:src\/)?(?:app\.vue|pages\/_(?:app|document)\.[cm]?[jt]sx?)$/.test(at)),
     ]);
     const queue = [...seen];
     while (queue.length > 0) {
@@ -551,6 +563,6 @@ export function screensOf(files: { path: string; text: string }[], configs: Conf
   return {
     reaches,
     unreached: new Set(files.map((f) => f.path).filter((f) => !reached.has(f))),
-    ...(model.reason === undefined ? {} : { incomplete: model.reason }),
+    ...(!model.reason && !uncertain.size ? {} : { incomplete: [model.reason, ...uncertain].filter(Boolean).join('; ') }),
   };
 }

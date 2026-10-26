@@ -25,8 +25,10 @@ or a validated mock API. Prepare test data separately from starting the backend.
 Journeys can follow saved steps, accept actions from another tool over the session
 protocol, or explore a configured goal using your model provider.
 
-Changed-file selection uses declared paths and representative groups. Unmapped
-changes never trigger a full run. `--all` explicitly selects the full suite.
+Changed-file selection traces affected routes through component dependencies in both revisions.
+Only journeys with matching screenshot checkpoints run. Unknown changes and missing coverage
+exit incomplete before application startup. Docs and CI changes skip capture.
+`--all` and named journeys request manual runs without claiming affected-screen coverage.
 
 See [the runnable capture example](examples/capture/README.md) for all backend
 sources, test data, exploratory limits, the session protocol, and optional base
@@ -309,11 +311,68 @@ optional report URL. The
 `writeOutcome` API accepts custom outcome kinds, renderers and publishers. Markdown and HTML
 renderers consume the same data, so a service can render saved outcomes without rerunning capture.
 
+### Affected-screen coverage
+
+Give each screenshot its expected pathname. The browser checks this pathname and the target origin
+before capturing; a redirect to login cannot become a successful screenshot of another screen.
+Keep assertions for the page's content and the state being reviewed in the saved journey.
+
+```yaml
+tours:
+  journeys:
+    wallets:
+      account: reader
+      steps:
+        - goto: /wallets
+        - expect: { selector: '[data-test=wallet-list]' }
+        - shot: { name: list, route: /wallets }
+```
+
+`--plan --base origin/main` returns the selected journeys, affected routes, source-file reasons,
+and a coverage status: `complete`, `no-ui`, or `incomplete`. It starts no services and runs no
+application commands. Missing checkpoints, unresolved source dependencies, unknown changed files,
+and a capture budget exceeded all return exit code 2. New and deleted routes are reported explicitly
+as incomplete because the same screen is unavailable in one revision. No substitute screen is selected.
+Explicit `--all` or `--journey` runs return `manual` coverage, not an automatic coverage claim.
+
+The default analyzer recognizes conventional Next.js, Nuxt, SvelteKit, Remix and pages-folder routes.
+It follows static imports, literal lazy imports, re-exports, layouts and framework component names.
+Computed imports, dynamic components and runtime route configuration cannot establish complete coverage.
+Source analysis identifies routes, not every conditional state on them. Saved journeys define the login,
+data and interactions needed for those states. Account preparation alone is not screenshot coverage.
+
+For other frameworks and server-rendered apps, declare route dependencies with project-relative globs:
+
+```yaml
+capture:
+  impact:
+    root: .
+    routes:
+      /wallets: ['templates/wallets/**', 'controllers/wallets.*']
+    ignore: ['docs/**', 'scripts/release.*']
+    global: ['themes/**']
+    maxJourneys: 6
+```
+
+Declared dependencies supplement discovered routes. `ignore` classifies otherwise unknown changes
+as non-UI; it does not hide a dependency already traced to a route. `global` marks changes that can
+affect every discovered route. Styles, public assets, application plugins and dependency manifests
+are global by default when no narrower dependency is known. Unknown source files are never silently
+ignored. Paths are relative to `impact.root`, which must be inside the capture checkout.
+The automatic budget defaults to six journeys; exceeding it lists the affected set without capturing a subset.
+Manual runs bypass that budget. Desktop remains the default, including manual full-suite runs.
+
+Only affected screenshot checkpoints are retained in an automatic run. Other steps still run to reach
+the required state. Failed-step images remain in the raw run directory for diagnosis and are excluded
+from the before-and-after table. Portable outcomes carry coverage and its reasons for other renderers.
+The SDK exposes `ImpactAnalyzer` and `planCaptures` so other route analyzers can supply the same contract.
+
 ### Reusable GitHub jobs
 
 The root action builds the CLI from its pinned source when `version` is omitted. Set `version`
 only when deliberately selecting a published npm release. Set up the application runtimes, isolated
-backend and fixtures in the calling job. The capture job needs read-only access; application startup
+backend and fixtures in the calling job. For non-UI changes, use a separate lightweight planning job
+before provisioning those services. The capture job needs read-only access; application startup
 and installation execute project code.
 
 ```yaml
@@ -366,3 +425,52 @@ run and content hash; matching assets are reused. Stale revisions do not replace
 This publisher needs contents write access as well as PR comment permission. Keep those permissions
 in the separate reporting job. Review release-triggered workflows before adopting release storage.
 Artifacts pass capture data between jobs; reviewers see the image table directly in the PR.
+
+The capture action plans before running `install`. Its optional `prepare` command runs first so it can
+write configuration without installing the application. `prepare` receives `PAGEBEAM_CLI`, pointing to
+the built command when using the pinned source action. Use `plan: 'true'` in a lightweight job to skip
+application installation, backend provisioning and browser startup. Outputs `coverage`, `capture-needed`
+and `plan` let the caller condition its more expensive job:
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.pagebeam.outputs.capture-needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pagebeam/pagebeam@main
+        id: pagebeam
+        with:
+          command: capture
+          checkout: 'false'
+          cwd: .
+          plan: 'true'
+          base: ${{ github.event.pull_request.base.sha }}
+  capture:
+    needs: plan
+    if: needs.plan.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pagebeam/pagebeam@main
+        with:
+          command: capture
+          checkout: 'false'
+          cwd: .
+          environment: ci
+          target: ci
+          compare-base: ${{ github.event.pull_request.base.sha }}
+```
+
+Planning still needs Node.js and the Pagebeam command, not application dependencies. Pin both jobs
+to the same reviewed Pagebeam revision and pass the same configuration, base and selection inputs.
+GitHub job services start before steps, so a service declared in the capture job is only skipped when
+that entire job is conditional on a separate plan. Manual selections are also available through these inputs.

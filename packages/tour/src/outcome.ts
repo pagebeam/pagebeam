@@ -1,3 +1,5 @@
+import type { Selection } from './selection.js';
+
 export interface Evidence {
   id: string;
   file: string;
@@ -33,6 +35,7 @@ export interface CaptureOutcome extends Outcome {
   compatible: boolean | null;
   reasons: string[];
   unmapped: string[];
+  coverage?: Selection['coverage'];
   captures: { journey: string; viewport: string; step: number; head: string | null; base: string | null }[];
 }
 
@@ -51,9 +54,15 @@ export const markdownRenderer: OutcomeRenderer<CaptureOutcome> = {
   format: 'markdown', filename: 'report.md',
   render(outcome, publication) {
     const lines = [`Before: ${outcome.base?.revision ?? 'unavailable'}. After: ${outcome.head.revision ?? 'unknown'}.`, ''];
+    if (outcome.coverage) {
+      lines.push(`UI coverage: **${outcome.coverage.status}**.`, '');
+      for (const reason of outcome.coverage.reasons) lines.push(`* ${markdown(reason)}`);
+      for (const route of outcome.coverage.routes) lines.push(`* ${markdown(route.route)}: ${markdown(route.files.join(', '))}`);
+      if (outcome.coverage.reasons.length || outcome.coverage.routes.length) lines.push('');
+    }
     if (outcome.compatible === false) lines.push(`Incomplete comparison: ${outcome.reasons.map(markdown).join('; ')}.`, '');
     if (!outcome.captures.length) {
-      lines.push(outcome.status === 'empty' ? 'No saved journey matches these changes.' : 'No screenshot comparison was completed.');
+      lines.push(outcome.coverage?.status === 'no-ui' ? 'No UI changes detected. Browser capture was skipped.' : outcome.status === 'empty' ? 'No saved journey matches these changes.' : 'No screenshot comparison was completed.');
       if (outcome.unmapped.length) lines.push(`Unmapped paths: ${outcome.unmapped.map(markdown).join(', ')}`);
       return lines.join('\n') + '\n';
     }
@@ -69,7 +78,8 @@ export const htmlRenderer: OutcomeRenderer<CaptureOutcome> = {
   render(outcome, publication) {
     const image = (file: string | null, label: string): string => file ? `<a href="${escapeHtml(evidenceUrl(file, publication))}"><img alt="${label}" src="${escapeHtml(evidenceUrl(file, publication))}" loading="lazy"></a>` : 'Screenshot unavailable';
     const rows = outcome.captures.map(shot => `<tr><td>${escapeHtml(`${shot.journey} / ${shot.viewport} / step ${shot.step}`)}</td><td>${image(shot.base, 'Before')}</td><td>${image(shot.head, 'After')}</td></tr>`).join('');
+    const coverage = outcome.coverage ? `<p>UI coverage: ${escapeHtml(outcome.coverage.status)}</p><ul>${outcome.coverage.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>` : '';
     const status = outcome.compatible === false ? `Incomplete comparison: ${outcome.reasons.map(escapeHtml).join('; ')}` : escapeHtml(outcome.status);
-    return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Before and after</title><style>body{font:16px system-ui;padding:1rem}table{width:100%;border-collapse:collapse}td,th{padding:.5rem;border:1px solid #aaa;vertical-align:top}img{max-width:100%}code{overflow-wrap:anywhere}</style><h1>Before and after</h1><p>${status}</p><p>Before: <code>${escapeHtml(outcome.base?.revision ?? 'unavailable')}</code><br>After: <code>${escapeHtml(outcome.head.revision ?? 'unknown')}</code></p><table><thead><tr><th>Screen</th><th>Before</th><th>After</th></tr></thead><tbody>${rows}</tbody></table></html>`;
+    return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Before and after</title><style>body{font:16px system-ui;padding:1rem}table{width:100%;border-collapse:collapse}td,th{padding:.5rem;border:1px solid #aaa;vertical-align:top}img{max-width:100%}code{overflow-wrap:anywhere}</style><h1>Before and after</h1><p>${status}</p>${coverage}<p>Before: <code>${escapeHtml(outcome.base?.revision ?? 'unavailable')}</code><br>After: <code>${escapeHtml(outcome.head.revision ?? 'unknown')}</code></p><table><thead><tr><th>Screen</th><th>Before</th><th>After</th></tr></thead><tbody>${rows}</tbody></table></html>`;
   },
 };

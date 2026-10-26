@@ -52,9 +52,9 @@ test('capture planning accepts multiple explicit journeys and overrides changed-
   assert.equal(result.journeys[0].reasons[0], 'explicit selection');
 });
 
-test('unmapped CLI changes retain a browsable empty report without starting the app', async () => {
+test('non-UI CLI changes retain an empty report without starting the app', async () => {
   const cwd = await workspace();
-  await writeFile(path.join(cwd, 'changed.json'), JSON.stringify(['unmapped.txt']));
+  await writeFile(path.join(cwd, 'changed.json'), JSON.stringify(['README.md']));
   const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--changed-files', 'changed.json', '--json']);
   const result = JSON.parse(stdout);
   assert.equal(result.report.status, 'empty');
@@ -240,7 +240,7 @@ test('a git baseline reuses one language-neutral environment and produces paired
     await exec('git', ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'After'], { cwd });
     const after = (await exec('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim();
     await writeFile(path.join(cwd, 'pagebeam.config.json'), JSON.stringify({
-      capture: { environments: { ci: {
+      capture: { impact: { routes: { '/notes': ['frontend.mjs'] } }, environments: { ci: {
         backend: { kind: 'url', url: app.url, revision: 'notes-v1' },
         frontend: { path: '.', start: `${process.execPath} frontend.mjs`, ready: `http://127.0.0.1:${address.port}/login` },
         fixtures: { version: 'notes-v1' }, timeoutMs: 15000,
@@ -250,16 +250,18 @@ test('a git baseline reuses one language-neutral environment and produces paired
         accounts: { reader: {
           purpose: 'notes reader', login: { usernameEnv: 'NOTES_USER', passwordEnv: 'NOTES_PASSWORD', form: { url: '/login', username: '#username', password: '#password', submit: '#submit' } }, confirm: '#signout',
         } },
-        journeys: { notes: { account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }], steps: [{ goto: '/notes' }, { expect: { selector: 'li.note', text: 'First note' } }, { shot: { name: 'notes' } }] } },
+        journeys: { notes: { account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }], steps: [{ goto: '/notes' }, { expect: { selector: 'li.note', text: 'First note' } }, { shot: { name: 'notes', route: '/notes' } }] } },
       },
     }));
     const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--environment', 'ci', '--target', 'ci', '--compare-base', before,
-      '--baseline-install', `${process.execPath} -e "require('node:fs').writeFileSync('installed.txt','baseline')"`, '--all', '--html', '--json'], {
+      '--baseline-install', `${process.execPath} -e "require('node:fs').writeFileSync('installed.txt','baseline')"`, '--html', '--json'], {
       env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' }, timeout: 60000,
     });
     const result = JSON.parse(stdout);
     assert.equal(result.report.status, 'passed');
     assert.equal(result.report.revision, after);
+    assert.equal(result.outcome.coverage.status, 'complete');
+    assert.deepEqual(result.outcome.coverage.routes.map((route: {route: string}) => route.route), ['/notes']);
     assert.equal(result.comparison.report.base.revision, before);
     assert.equal(result.comparison.report.compatible, true);
     const shot = result.comparison.report.captures[0];

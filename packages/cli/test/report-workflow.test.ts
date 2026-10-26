@@ -104,3 +104,18 @@ test('the publisher rejects escaping paths and unrelated releases before publish
   await assert.rejects(unrelated.report(), /belongs to another release/);
   assert.equal(unrelated.writes.length + unrelated.uploads.length, 0);
 });
+
+
+test('the reporter displays missing coverage without publishing substitute images', async () => {
+  const current = await scenario();
+  Object.assign(current.outcome, {
+    status: 'incomplete', compatible: null, captures: [], evidence: [],
+    coverage: { status: 'incomplete', routes: [{route: '/wallets', files: ['components/Wallet.vue']}], reasons: ['No screenshot checkpoint covers /wallets.'] },
+  });
+  await current.report();
+  assert.equal(current.uploads.length, 0);
+  const body = current.writes[0]!.args.body;
+  assert.match(body, /UI coverage: \*\*incomplete\*\*/);
+  assert.match(body, /No screenshot checkpoint covers \/wallets/);
+  assert.ok(!body.includes('| Screen | Before | After |'));
+});

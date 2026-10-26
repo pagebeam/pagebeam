@@ -13,7 +13,7 @@ export function captureOutcome(directory: string, head: Run, base?: Run, compari
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('evidence is outside the outcome directory');
     return relative.split(path.sep).join('/');
   };
-  const checkpoints = comparison?.captures ?? head.report.results.flatMap(result => result.steps.filter(step => step.file).map(step => ({journey: result.journey, viewport: result.viewport, step: step.step, head: `${result.journey}/${result.viewport}/${step.file!}`, base: null})));
+  const checkpoints = comparison?.captures ?? head.report.results.flatMap(result => result.steps.filter(step => step.file && step.status === 'passed' && step.action === 'shot').map(step => ({journey: result.journey, viewport: result.viewport, step: step.step, head: `${result.journey}/${result.viewport}/${step.file!}`, base: null})));
   const captures = checkpoints.map(shot => ({ ...shot, head: shot.head ? file(head, shot.head) : null, base: shot.base && base ? file(base, shot.base) : null }));
   const images = [...new Set(captures.flatMap(shot => [shot.head, shot.base]).filter((value): value is string => value !== null))];
   const reports = [head, ...(base ? [base] : [])].map(run => file(run, 'report.json'));
@@ -22,6 +22,7 @@ export function captureOutcome(directory: string, head: Run, base?: Run, compari
     head: { id: head.report.id, revision: head.report.revision, status: head.report.status },
     ...(base ? { base: { id: base.report.id, revision: base.report.revision, status: base.report.status } } : {}),
     compatible: comparison?.compatible ?? null, reasons: comparison?.reasons ?? [], unmapped: head.report.selection.unmapped,
+    ...(head.report.selection.coverage ? { coverage: head.report.selection.coverage } : {}),
     evidence: [...images.map(name => ({ id: name, file: name, mediaType: 'image/png' })), ...reports.map(name => ({ id: name, file: name, mediaType: 'application/json' }))],
     captures,
   };
