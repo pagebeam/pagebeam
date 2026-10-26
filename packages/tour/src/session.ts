@@ -141,15 +141,21 @@ export class CaptureSession {
     const script = `(() => {
       const selectors = ${JSON.stringify([...this.privateSelectors])};
       const secrets = ${JSON.stringify([...this.secrets].filter(Boolean))};
-      const mask = () => {
-        for (const selector of selectors) {
-          try { document.querySelectorAll(selector).forEach(el => el.style.setProperty('opacity','0','important')); } catch {}
+      const observed = new WeakSet();
+      const visit = root => {
+        if (!observed.has(root)) {
+          new MutationObserver(mask).observe(root, {subtree:true,childList:true,characterData:true});
+          observed.add(root);
         }
-        for (const el of document.querySelectorAll('body *')) {
+        for (const selector of selectors) {
+          try { root.querySelectorAll(selector).forEach(el => el.style.setProperty('opacity','0','important')); } catch {}
+        }
+        for (const el of root.querySelectorAll('*')) {
+          if (el.shadowRoot) visit(el.shadowRoot);
           if (!el.children.length && secrets.some(secret => el.textContent.includes(secret))) el.style.setProperty('opacity','0','important');
         }
       };
-      new MutationObserver(mask).observe(document, {subtree:true,childList:true,characterData:true});
+      const mask = () => visit(document);
       mask();
     })()`;
     await this.context!.addInitScript(script);
@@ -159,7 +165,8 @@ export class CaptureSession {
   private async markTypingTarget(page: Page): Promise<void> {
     for (const frame of page.frames()) {
       const marked = await frame.evaluate<boolean>(`(() => {
-        const element = document.activeElement;
+        let element = document.activeElement;
+        while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
         const editable = element && element !== document.body && (
           element.isContentEditable || element.tagName === 'TEXTAREA' ||
           (element.tagName === 'INPUT' && ['text','search','email','password','tel','url','number'].includes(element.type))

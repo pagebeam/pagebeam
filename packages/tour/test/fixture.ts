@@ -80,6 +80,13 @@ export async function notesApp(): Promise<NotesApp> {
       html(200, '<h2>Notes inside the frame</h2><input id="frame-title" oninput="document.getElementById(\'frame-echo\').textContent=this.value"><span id="frame-echo" style="display:inline-block;width:200px;height:24px"></span>');
       return;
     }
+    if (url.pathname === '/shadow-notes') {
+      html(200, NAV + '<h1>Notes outside the component</h1><note-host></note-host>' +
+        '<script>const outer=document.querySelector("note-host").attachShadow({mode:"open"});outer.innerHTML="<note-input></note-input>";' +
+        'outer.querySelector("note-input").attachShadow({mode:"open"}).innerHTML=`<h2>Notes inside the component</h2><input id="shadow-title" style="vertical-align:top"><span id="shadow-echo" style="display:inline-block;width:200px;height:24px;vertical-align:top"></span>`;' +
+        'const inner=outer.querySelector("note-input").shadowRoot;inner.querySelector("input").oninput=event=>inner.querySelector("span").textContent=event.target.value;</script>');
+      return;
+    }
     if (url.pathname === '/notes') {
       const list =
         user.notes.length === 0

@@ -27,7 +27,7 @@ inputs:
     required: false
     default: check
   ref:
-    description: Frontend revision to check out. Defaults to the pull request head or current revision.
+    description: Revision to check out. Capture defaults to the pull request head; other commands use the triggering revision.
     default: ''
   environment:
     description: Named capture environment.
@@ -144,7 +144,7 @@ runs:
     # History is evidence: `strings` and `moved` read each repository's own.
     - uses: actions/checkout@v4
       with:
-        ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+        ref: ${{ inputs.ref || (inputs.command == 'capture' && github.event.pull_request.head.sha) || github.sha }}
         path: ${{ steps.where.outputs.self }}
         fetch-depth: 0
 

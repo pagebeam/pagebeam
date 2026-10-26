@@ -83,6 +83,11 @@ jobs:
           cwd: ${{ runner.temp }}/product
           version: ${{ steps.release.outputs.version }}
 
+      - name: Preserve the triggering revision for documentation checks
+        env:
+          EXPECTED_REVISION: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+
       - name: It ran, said something, and said where it ran
         run: |
           set -euo pipefail

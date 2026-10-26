@@ -148,7 +148,7 @@ test('environment typing inside a frame masks the input without hiding the frame
     await writeFile(path.join(cwd, 'check.mjs'), `import assert from 'node:assert/strict';
       export default async (page, { env }) => {
         const input = page.frameLocator('#note-frame').locator('#frame-title');
-        assert.equal(await input.inputValue(), env.PAGEBEAM_RUNTIME_DATA);
+        assert.equal(await input.inputValue(), env.PAGEBEAM_RUNTIME_DATA, 'the frame input receives the typed value');
         assert.equal(await input.getAttribute('data-pagebeam-typed-private'), 'true');
         assert.equal(await page.locator('body').getAttribute('data-pagebeam-typed-private'), null);
         assert.equal(await page.locator('#note-frame').getAttribute('data-pagebeam-typed-private'), null);
@@ -160,5 +160,42 @@ test('environment typing inside a frame masks the input without hiding the frame
     assert.equal(result.report.status, 'passed');
     const directory = path.join(result.directory, 'notes', 'desktop');
     assert.ok((await readFile(path.join(directory, '002-before.png'))).equals(await readFile(path.join(directory, '005-after.png'))), 'typing must preserve the unmasked frame content');
+  } finally { await app.stop(); }
+});
+
+test('environment typing follows nested shadow focus and preserves surrounding evidence', async () => {
+  const app = await notesApp();
+  const recording = await exec('ffmpeg', ['-version']).then(() => true, () => false);
+  try {
+    const cwd = await applicationWorkspace(app.url, { notes: {
+      account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }],
+      record: recording ? { cursor: false, typeMs: 0, moveMs: 0, holdMs: 0 } : false,
+      steps: [
+        { goto: '/shadow-notes' }, { click: '#shadow-title' }, { shot: { name: 'before' } },
+        { type: { valueEnv: 'PAGEBEAM_RUNTIME_DATA' } }, { verify: './check.mjs' }, { shot: { name: 'after' } },
+      ],
+    } }, ['#shadow-title', '#shadow-echo']);
+    await writeFile(path.join(cwd, 'check.mjs'), `import assert from 'node:assert/strict';
+      export default async (page, { env }) => {
+        const input = page.locator('#shadow-title');
+        assert.equal(await input.inputValue(), env.PAGEBEAM_RUNTIME_DATA, 'the shadow input receives the typed value');
+        assert.equal(await input.getAttribute('data-pagebeam-typed-private'), 'true', 'the shadow input receives the privacy marker');
+        for (const selector of ['body', 'note-host', 'note-input']) {
+          assert.equal(await page.locator(selector).getAttribute('data-pagebeam-typed-private'), null, 'containers remain unmarked');
+        }
+        if (env.EXPECT_RECORDING_MASK === 'true') {
+          for (const selector of ['#shadow-title', '#shadow-echo']) {
+            const opacity = await page.locator(selector).evaluate(element => getComputedStyle(element).opacity);
+            assert.equal(opacity, '0', selector + ' is hidden from recordings (opacity ' + opacity + ')');
+          }
+        }
+      };`);
+    const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--all', '--json'], {
+      env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada', PAGEBEAM_RUNTIME_DATA: 'shadow-runtime-value', EXPECT_RECORDING_MASK: String(recording) },
+    });
+    const result = JSON.parse(stdout);
+    assert.equal(result.report.status, 'passed');
+    const directory = path.join(result.directory, 'notes', 'desktop');
+    assert.ok((await readFile(path.join(directory, '002-before.png'))).equals(await readFile(path.join(directory, '005-after.png'))), 'typing must preserve the unmasked component content');
   } finally { await app.stop(); }
 });
