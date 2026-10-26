@@ -1,0 +1,65 @@
+name: Report captures
+on:
+  workflow_call:
+    inputs:
+      artifact-id:
+        type: string
+        required: true
+      run-id:
+        type: string
+        default: ''
+      pull-request:
+        type: string
+        required: true
+      head-sha:
+        type: string
+        required: true
+      status:
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+jobs:
+  report:
+    if: inputs.artifact-id != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          CAPTURE_ARTIFACT_ID: ${{ inputs.artifact-id }}
+          CAPTURE_RUN_ID: ${{ inputs.run-id || github.run_id }}
+          CAPTURE_PR: ${{ inputs.pull-request }}
+          CAPTURE_SHA: ${{ inputs.head-sha }}
+          CAPTURE_STATUS: ${{ inputs.status }}
+        with:
+          script: |
+            const integer = name => {
+              const value = process.env[name];
+              if (!/^[1-9][0-9]*$/.test(value || '') || !Number.isSafeInteger(Number(value))) throw new Error(`Invalid ${name}`);
+              return Number(value);
+            };
+            const artifact_id = integer('CAPTURE_ARTIFACT_ID');
+            const run_id = integer('CAPTURE_RUN_ID');
+            const issue_number = integer('CAPTURE_PR');
+            const sha = process.env.CAPTURE_SHA;
+            if (!/^[a-f0-9]{40,64}$/.test(sha || '')) throw new Error('Invalid captured revision');
+            const status = process.env.CAPTURE_STATUS;
+            if (!['success', 'failure', 'cancelled', 'skipped'].includes(status)) throw new Error('Invalid capture status');
+            const {data: artifact} = await github.rest.actions.getArtifact({...context.repo, artifact_id});
+            if (artifact.expired || artifact.workflow_run?.id !== run_id || artifact.workflow_run?.head_sha !== sha) throw new Error('Artifact does not match the capture run and revision');
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id});
+            if (!run.pull_requests.some(pr => pr.number === issue_number)) throw new Error('Capture run does not belong to this PR');
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: issue_number});
+            if (pr.head.sha !== sha) {
+              core.notice('A newer PR revision exists; leaving its report unchanged.');
+              return;
+            }
+            const marker = '<!-- pagebeam-screenshots -->';
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${run_id}/artifacts/${artifact_id}`;
+            const body = `${marker}\nBefore-and-after screenshots for ${sha}. Capture job: **${status}**.\n\n[Download the gallery](${url}), extract it, and open index.html. Failed and incomplete comparisons are labelled in the reports.`;
+            const comments = await github.paginate(github.rest.issues.listComments, {...context.repo, issue_number});
+            const existing = comments.find(comment => comment.user.type === 'Bot' && comment.body?.startsWith(marker));
+            if (existing) await github.rest.issues.updateComment({...context.repo, comment_id: existing.id, body});
+            else await github.rest.issues.createComment({...context.repo, issue_number, body});

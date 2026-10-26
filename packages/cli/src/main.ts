@@ -17,6 +17,7 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
                    [--journey <name> ... | --base <ref> | --changed-files <json> | --all]
                    [--mode saved|model] [--purpose capture|check|both] [--plan] [--out <dir>] [--json]
                    [--config <file>] [--compare-environment <name> --compare-target <name>]
+                   [--compare-base <ref> [--baseline-install <command>]]
   pagebeam session <capture options>    caller-directed JSON lines on stdin/stdout
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
@@ -77,6 +78,8 @@ interface Args {
   plan: boolean;
   compareEnvironment: string | undefined;
   compareTarget: string | undefined;
+  compareBase: string | undefined;
+  baselineInstall: string | undefined;
   configFile: string | undefined;
 }
 
@@ -98,7 +101,7 @@ function parse(argv: string[]): Args {
     narration: undefined,
     environment: undefined, mode: undefined, purpose: undefined, base: undefined,
     changedFiles: undefined, requestedJourneys: [], all: false, plan: false,
-    compareEnvironment: undefined, compareTarget: undefined,
+    compareEnvironment: undefined, compareTarget: undefined, compareBase: undefined, baselineInstall: undefined,
     configFile: undefined,
   };
   for (let i = 1; i < argv.length; i++) {
@@ -106,13 +109,15 @@ function parse(argv: string[]): Args {
     if (a === '--json') args.json = true;
     else if (a === '--all') args.all = true;
     else if (a === '--plan') args.plan = true;
-    else if (['--environment', '--mode', '--purpose', '--base', '--changed-files', '--compare-environment', '--compare-target', '--config'].includes(a!)) {
+    else if (['--environment', '--mode', '--purpose', '--base', '--changed-files', '--compare-environment', '--compare-target', '--compare-base', '--baseline-install', '--config'].includes(a!)) {
       const value = argv[++i];
       if (value === undefined || value.startsWith('--')) throw new BadUsage(`${a} needs a value`);
       if (a === '--changed-files') args.changedFiles = value;
       else if (a === '--config') args.configFile = value;
       else if (a === '--compare-environment') args.compareEnvironment = value;
       else if (a === '--compare-target') args.compareTarget = value;
+      else if (a === '--compare-base') args.compareBase = value;
+      else if (a === '--baseline-install') args.baselineInstall = value;
       else args[a!.slice(2) as 'environment' | 'mode' | 'purpose' | 'base'] = value;
     }
     else if (a === '--publish') args.publish = true;
@@ -136,7 +141,7 @@ function parse(argv: string[]): Args {
     } else throw new BadUsage(`unknown option: ${a}`);
   }
   const capturing = args.command === 'capture' || args.command === 'session';
-  if (!capturing && (args.environment !== undefined || args.mode !== undefined || args.purpose !== undefined || args.base !== undefined || args.changedFiles !== undefined || args.compareEnvironment !== undefined || args.compareTarget !== undefined || args.configFile !== undefined || args.all || args.plan)) {
+  if (!capturing && (args.environment !== undefined || args.mode !== undefined || args.purpose !== undefined || args.base !== undefined || args.changedFiles !== undefined || args.compareEnvironment !== undefined || args.compareTarget !== undefined || args.compareBase !== undefined || args.baselineInstall !== undefined || args.configFile !== undefined || args.all || args.plan)) {
     throw new BadUsage('capture options require the capture or session command');
   }
   if (capturing && (args.build !== undefined || args.publish || args.narration !== undefined || argv.includes('--profile'))) {

@@ -199,3 +199,100 @@ test('environment typing follows nested shadow focus and preserves surrounding e
     assert.ok((await readFile(path.join(directory, '002-before.png'))).equals(await readFile(path.join(directory, '005-after.png'))), 'typing must preserve the unmasked component content');
   } finally { await app.stop(); }
 });
+
+test('a git baseline reuses one language-neutral environment and produces paired screenshots', async () => {
+  const app = await notesApp();
+  const { createServer } = await import('node:net');
+  const reservation = createServer();
+  await new Promise<void>(resolve => reservation.listen(0, '127.0.0.1', resolve));
+  const address = reservation.address() as { port: number };
+  await new Promise<void>(resolve => reservation.close(() => resolve()));
+  const cwd = await workspace();
+  const frontend = (label: string): string => `
+    import { createServer } from 'node:http';
+    import { existsSync } from 'node:fs';
+    if (${JSON.stringify(label)} === 'before' && !existsSync('installed.txt')) throw new Error('baseline dependencies missing');
+    createServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const upstream = await fetch(${JSON.stringify(app.url)} + request.url, {
+        method: request.method, headers: request.headers, redirect: 'manual',
+        ...(chunks.length ? { body: Buffer.concat(chunks) } : {})
+      });
+      const body = (await upstream.text()).replace('</body>', '<p>${label}</p></body>');
+      response.writeHead(upstream.status, {
+        'content-type': upstream.headers.get('content-type') || 'text/html',
+        ...(upstream.headers.has('location') ? { location: upstream.headers.get('location') } : {}),
+        ...(upstream.headers.has('set-cookie') ? { 'set-cookie': upstream.headers.get('set-cookie') } : {})
+      });
+      response.end(body);
+    }).listen(${address.port}, '127.0.0.1');`;
+  try {
+    await exec('git', ['init', '-q'], { cwd });
+    await exec('git', ['config', 'user.name', 'Fixture'], { cwd });
+    await exec('git', ['config', 'user.email', 'fixture@example.test'], { cwd });
+    await writeFile(path.join(cwd, 'frontend.mjs'), frontend('before'));
+    await exec('git', ['add', 'frontend.mjs'], { cwd });
+    await exec('git', ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'Before'], { cwd });
+    const before = (await exec('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim();
+    await writeFile(path.join(cwd, 'frontend.mjs'), frontend('after'));
+    await exec('git', ['add', 'frontend.mjs'], { cwd });
+    await exec('git', ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'After'], { cwd });
+    const after = (await exec('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim();
+    await writeFile(path.join(cwd, 'pagebeam.config.json'), JSON.stringify({
+      capture: { environments: { ci: {
+        backend: { kind: 'url', url: app.url, revision: 'notes-v1' },
+        frontend: { path: '.', start: `${process.execPath} frontend.mjs`, ready: `http://127.0.0.1:${address.port}/login` },
+        fixtures: { version: 'notes-v1' }, timeoutMs: 15000,
+      } } },
+      tours: {
+        timeoutMs: 10000, targets: { ci: { url: `http://127.0.0.1:${address.port}` } },
+        accounts: { reader: {
+          purpose: 'notes reader', login: { usernameEnv: 'NOTES_USER', passwordEnv: 'NOTES_PASSWORD', form: { url: '/login', username: '#username', password: '#password', submit: '#submit' } }, confirm: '#signout',
+        } },
+        journeys: { notes: { account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }], steps: [{ goto: '/notes' }, { expect: { selector: 'li.note', text: 'First note' } }, { shot: { name: 'notes' } }] } },
+      },
+    }));
+    const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--environment', 'ci', '--target', 'ci', '--compare-base', before,
+      '--baseline-install', `${process.execPath} -e "require('node:fs').writeFileSync('installed.txt','baseline')"`, '--all', '--json'], {
+      env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' }, timeout: 60000,
+    });
+    const result = JSON.parse(stdout);
+    assert.equal(result.report.status, 'passed');
+    assert.equal(result.report.revision, after);
+    assert.equal(result.comparison.report.base.revision, before);
+    assert.equal(result.comparison.report.compatible, true);
+    const shot = result.comparison.report.captures[0];
+    const head = await readFile(path.join(result.directory, shot.head));
+    const base = await readFile(path.join(result.comparison.directory, shot.base));
+    assert.ok(!head.equals(base), 'both committed frontend versions must be captured');
+    const gallery = await readFile(result.gallery, 'utf8');
+    assert.ok(gallery.includes('<figcaption>Before</figcaption>'));
+    assert.ok(gallery.includes('<figcaption>After</figcaption>'));
+    assert.ok(gallery.includes(before));
+    assert.ok(gallery.includes(after));
+    assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim(), after);
+  } finally { await app.stop(); }
+});
+
+test('baseline install hooks require a baseline and cannot run during planning', async () => {
+  const cwd = await workspace();
+  const invalid = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--baseline-install', 'exit 93', '--all', '--plan'])
+    .then(() => { throw new Error('the orphan install hook must be rejected'); }, error => error as { code: number; stderr: string });
+  assert.equal(invalid.code, 2);
+  assert.match(invalid.stderr, /requires --compare-base/);
+  const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--compare-base', 'not-a-revision', '--baseline-install', 'exit 93', '--all', '--plan']);
+  assert.equal(JSON.parse(stdout).journeys.length, 2);
+});
+
+
+test('a source baseline rejects an environment without a frontend before starting services', async () => {
+  const cwd = await workspace();
+  const config = JSON.parse(await readFile(path.join(cwd, 'pagebeam.config.json'), 'utf8'));
+  config.capture = { environments: { local: { backend: { kind: 'url', url: 'http://127.0.0.1:1', revision: 'never-started' } } } };
+  await writeFile(path.join(cwd, 'pagebeam.config.json'), JSON.stringify(config));
+  const outcome = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--compare-base', 'HEAD', '--all', '--json'])
+    .then(() => { throw new Error('the missing frontend must be rejected'); }, error => error as { code: number; stderr: string });
+  assert.equal(outcome.code, 2);
+  assert.match(outcome.stderr, /requires a configured frontend/);
+});

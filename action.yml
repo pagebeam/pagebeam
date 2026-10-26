@@ -6,6 +6,12 @@ name: pagebeam
 description: Check documentation against the product it describes, and propose the corrections.
 
 inputs:
+  checkout:
+    description: Check out the application repository. Set false to use a caller-prepared checkout and explicit cwd.
+    default: 'true'
+  install:
+    description: Application dependency command, run before capture. Also used for the baseline unless baseline-install overrides it.
+    default: ''
   docs:
     description: >-
       The repository holding the documentation, as owner/name, when it is not
@@ -56,6 +62,12 @@ inputs:
   purpose:
     description: capture, check, or both.
     default: both
+  compare-base:
+    description: Git revision to prepare automatically as the frontend baseline. Reuses the selected environment and target.
+    default: ''
+  baseline-install:
+    description: Project installation command to run in the baseline repository, in any language.
+    default: ''
   compare-environment:
     description: Optional independently prepared base environment.
     default: ''
@@ -85,7 +97,7 @@ inputs:
     required: false
     default: ''
   version:
-    description: The pagebeam release to run. Defaults to the release this action is pinned to.
+    description: Optional npm release. When omitted, builds the CLI from this action's pinned source.
     required: false
     default: ''
   token:
@@ -112,8 +124,11 @@ outputs:
     description: Head run report file.
     value: ${{ steps.run.outputs.report }}
   gallery:
-    description: Head run HTML gallery file.
+    description: HTML gallery with paired baseline images when comparison is requested.
     value: ${{ steps.run.outputs.gallery }}
+  artifact-id:
+    description: Capture artifact identifier for the separate reporting job.
+    value: ${{ steps.captures.outputs.artifact-id }}
   artifact-url:
     description: Download location for capture evidence.
     value: ${{ steps.captures.outputs.artifact-url }}
@@ -143,10 +158,12 @@ runs:
 
     # History is evidence: `strings` and `moved` read each repository's own.
     - uses: actions/checkout@v4
+      if: inputs.checkout != 'false'
       with:
         ref: ${{ inputs.ref || (inputs.command == 'capture' && github.event.pull_request.head.sha) || github.sha }}
         path: ${{ steps.where.outputs.self }}
         fetch-depth: 0
+        persist-credentials: false
 
     - name: Check out the documentation
       if: inputs.docs != ''
@@ -177,6 +194,14 @@ runs:
       with:
         node-version: '22'
 
+    - name: Build the pinned command
+      if: inputs.version == ''
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci
+        npm run build
+
     # Away from the workspace, so a package.json there cannot decide which
     # pagebeam npx runs. In this repository it resolves to the unbuilt one.
     - name: Run
@@ -193,6 +218,7 @@ runs:
         PAGEBEAM_VERSION: ${{ inputs.version }}
         MODEL_KEY: ${{ inputs.model-key }}
         MODEL_KEY_ENV: ${{ inputs.model-key-env }}
+        CAPTURE_INSTALL: ${{ inputs.install }}
         CAPTURE_ENVIRONMENT: ${{ inputs.environment }}
         CAPTURE_CONFIG: ${{ inputs.capture-config }}
         CAPTURE_TARGET: ${{ inputs.target }}
@@ -202,14 +228,17 @@ runs:
         CAPTURE_ALL: ${{ inputs.all }}
         CAPTURE_MODE: ${{ inputs.mode }}
         CAPTURE_PURPOSE: ${{ inputs.purpose }}
+        CAPTURE_COMPARE_BASE: ${{ inputs.compare-base }}
+        CAPTURE_BASELINE_INSTALL: ${{ inputs.baseline-install || inputs.install }}
         CAPTURE_COMPARE_ENVIRONMENT: ${{ inputs.compare-environment }}
         CAPTURE_COMPARE_TARGET: ${{ inputs.compare-target }}
       run: |
         set -uo pipefail
 
-        version="$PAGEBEAM_VERSION"
-        if [ -z "$version" ]; then
-          version="$(node -p "require('$GITHUB_ACTION_PATH/packages/cli/package.json').version")"
+        if [ -n "$PAGEBEAM_VERSION" ]; then
+          pagebeam=(npx --yes "pagebeam@$PAGEBEAM_VERSION")
+        else
+          pagebeam=(node "$GITHUB_ACTION_PATH/packages/cli/dist/main.js")
         fi
 
         if [ -n "$MODEL_KEY" ]; then
@@ -225,9 +254,16 @@ runs:
           *) cwd="$GITHUB_WORKSPACE/$PAGEBEAM_CWD" ;;
         esac
 
+        if [ "$PAGEBEAM_COMMAND" = capture ]; then
+          unset GITHUB_TOKEN
+          if [ -n "$CAPTURE_INSTALL" ]; then
+            (cd "$cwd" && sh -c "$CAPTURE_INSTALL") || exit 2
+          fi
+        fi
+
         args=("$PAGEBEAM_COMMAND" --cwd "$cwd")
         # A release pinned from before --build existed would refuse the flag.
-        if [ "$PAGEBEAM_COMMAND" != capture ] && [ "$PAGEBEAM_BUILD" != false ] && npx --yes "pagebeam@$version" --help 2>/dev/null | grep -q -- '--build=auto'; then
+        if [ "$PAGEBEAM_COMMAND" != capture ] && [ "$PAGEBEAM_BUILD" != false ] && "${pagebeam[@]}" --help 2>/dev/null | grep -q -- '--build=auto'; then
           if [ "$PAGEBEAM_BUILD" = true ]; then args+=(--build); else args+=(--build=auto); fi
         fi
         if [ "$PAGEBEAM_COMMAND" = check ]; then
@@ -243,15 +279,17 @@ runs:
           [ -z "$CAPTURE_BASE" ] || args+=(--base "$CAPTURE_BASE")
           [ -z "$CAPTURE_CHANGED_FILES" ] || args+=(--changed-files "$CAPTURE_CHANGED_FILES")
           [ "$CAPTURE_ALL" != true ] || args+=(--all)
+          [ -z "$CAPTURE_COMPARE_BASE" ] || args+=(--compare-base "$CAPTURE_COMPARE_BASE")
+          [ -z "$CAPTURE_BASELINE_INSTALL" ] || args+=(--baseline-install "$CAPTURE_BASELINE_INSTALL")
           [ -z "$CAPTURE_COMPARE_ENVIRONMENT" ] || args+=(--compare-environment "$CAPTURE_COMPARE_ENVIRONMENT")
           [ -z "$CAPTURE_COMPARE_TARGET" ] || args+=(--compare-target "$CAPTURE_COMPARE_TARGET")
         fi
 
         if [ "$PAGEBEAM_COMMAND" = capture ]; then
-          npx --yes "pagebeam@$version" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
+          "${pagebeam[@]}" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
           code=${PIPESTATUS[0]}
         else
-          npx --yes "pagebeam@$version" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
+          "${pagebeam[@]}" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
           code=${PIPESTATUS[0]}
         fi
 
@@ -259,11 +297,15 @@ runs:
           node --input-type=module <<'NODE'
         import fs from 'node:fs';
         import path from 'node:path';
-        try {
-          const result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8'));
-          const directory = path.join(process.env.RUNNER_TEMP, 'pagebeam-captures');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${path.join(result.directory, 'report.json')}\ngallery=${path.join(result.directory, 'index.html')}\nrun-id=${result.report.id}\n`);
-        } catch {}
+        const directory = path.join(process.env.RUNNER_TEMP, 'pagebeam-captures');
+        if (fs.existsSync(directory)) {
+          let result;
+          try { result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8')); } catch {}
+          const gallery = result?.gallery ?? path.join(directory, 'index.html');
+          const report = result ? path.join(result.directory, 'report.json') : '';
+          const id = result?.report.id ?? `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${report}\ngallery=${gallery}\nrun-id=${id}\n`);
+        }
         NODE
         fi
 

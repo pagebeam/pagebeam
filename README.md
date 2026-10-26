@@ -270,3 +270,83 @@ a page nobody opened shows nothing.
 pagebeam reads Vue, React, Svelte, Astro, HTML and server templates with each
 framework's own compiler. It searches anything else as plain text, and the
 finding says so.
+
+## Before-and-after PR screenshots
+
+Configure one capture environment and saved journeys, then compare its frontend against a Git
+revision. Pagebeam prepares a temporary baseline snapshot, starts each revision in turn on the same
+address, and runs the same actions and viewports against both. Your checkout and branch stay in
+place. Both revisions use the configured backend and fixture contract.
+
+```sh
+pagebeam capture --environment ci --target ci --compare-base origin/main \
+  --baseline-install 'npm ci' --json
+```
+
+`--compare-base` also supplies the changed-file selection base unless `--base` is given separately.
+Use `--all` or named journeys to override selection. `--plan` never prepares a baseline or executes
+its installation command. Explicit `--compare-environment` and `--compare-target` remain available
+for independently provisioned deployments.
+
+`--baseline-install` is optional and runs from the baseline repository root. Supply your project's
+own command: npm, Composer, pip, Bundler, Cargo or any other tool available in the job. Pagebeam does
+not install language runtimes, create application accounts, infer paid access, or invent fixtures.
+Its CLI runs on Node.js 22; the application can use any language. The frontend start command and
+readiness URL come from the selected capture environment. Baselines are archived tracked source;
+untracked files, local dependencies and external submodule contents are not copied.
+
+The output directory has an `index.html` gallery with paired images, revision labels, and links to
+both capture reports. Failed comparisons remain labelled as incomplete and block the capture job.
+An unmapped change is labelled as uncovered. The JSON output includes the gallery path.
+
+### Reusable GitHub jobs
+
+The root action builds the CLI from its pinned source when `version` is omitted. Set `version`
+only when deliberately selecting a published npm release. Set up the application runtimes, isolated backend and fixtures in the calling job. The capture
+job needs read-only access; application startup and installation execute project code.
+
+```yaml
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.pagebeam.outputs.artifact-id }}
+    steps:
+      - uses: pagebeam/pagebeam@main
+        id: pagebeam
+        with:
+          command: capture
+          environment: ci
+          target: ci
+          compare-base: ${{ github.event.pull_request.base.sha }}
+          install: npm ci
+
+  report:
+    needs: capture
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    uses: pagebeam/pagebeam/.github/workflows/report-capture.yml@main
+    with:
+      artifact-id: ${{ needs.capture.outputs.artifact-id }}
+      pull-request: ${{ format('{0}', github.event.pull_request.number) }}
+      head-sha: ${{ github.event.pull_request.head.sha }}
+      status: ${{ needs.capture.result }}
+```
+
+Pin both references to a reviewed commit or release in production workflows. The `install` command
+runs in the application checkout and in the baseline snapshot. Override
+`baseline-install` when the baseline needs a different command. Set `checkout: false` with an
+explicit `cwd` to preserve a caller-prepared checkout and generated configuration. Use disposable test
+data and never expose repository secrets or write
+credentials to untrusted application code. Fork PRs can upload artifacts and summaries; their
+read-only token cannot publish a PR comment. Do not use `pull_request_target` to execute PR code.
+
+The reporting job executes no application code. It checks that the artifact belongs to the expected
+workflow run, revision and PR, skips stale revisions, and updates one gallery comment. GitHub
+artifacts are downloads, so reviewers extract the archive and open `index.html`; inline PR images
+require separate hosting.

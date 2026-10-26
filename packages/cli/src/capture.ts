@@ -3,8 +3,9 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { loadConfig } from '@pagebeam/engine';
 import { ask } from '@pagebeam/model';
-import { capture, explore, changedFiles, selectJourneys, compareCaptures, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
+import { capture, explore, changedFiles, selectJourneys, compareCaptures, writeCaptureGallery, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
 import { z } from 'zod';
+import { prepareBaseline } from './baseline.js';
 import { parse as parseYaml } from 'yaml';
 import { parseConfig } from '@pagebeam/core';
 
@@ -22,6 +23,8 @@ interface Asked {
   json: boolean;
   compareEnvironment: string | undefined;
   compareTarget: string | undefined;
+  compareBase: string | undefined;
+  baselineInstall: string | undefined;
   configFile: string | undefined;
 }
 
@@ -48,16 +51,22 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
     const mode = z.enum(['saved', 'model', 'caller']).parse(caller ? 'caller' : asked.mode ?? 'saved');
     if (mode === 'caller' && !caller) throw new Error('use the session command for caller-directed exploration');
     const purpose = z.enum(['capture', 'check', 'both']).parse(asked.purpose ?? 'both');
-    if (asked.compareEnvironment && mode !== 'saved') throw new Error('base comparison requires saved journeys');
+    if (asked.compareBase && asked.compareEnvironment) throw new Error('choose --compare-base or --compare-environment');
+    if (asked.baselineInstall && !asked.compareBase) throw new Error('--baseline-install requires --compare-base');
+    if ((asked.compareBase || asked.compareEnvironment) && mode !== 'saved') throw new Error('base comparison requires saved journeys');
     if (asked.compareEnvironment === (asked.environment ?? 'local')) throw new Error('base comparison needs a separate environment');
     if (Boolean(asked.compareEnvironment) !== Boolean(asked.compareTarget)) throw new Error('comparison needs both --compare-environment and --compare-target');
+    const selectionBase = asked.base ?? asked.compareBase;
     const journeys = asked.requestedJourneys.length ? asked.requestedJourneys : undefined;
     const changed = asked.changedFiles === undefined ? undefined : z.array(z.string()).parse(JSON.parse(await readFile(path.resolve(cwd, asked.changedFiles), 'utf8')));
     const selection = { journeys, changed, all: asked.all };
     if (asked.plan) {
-      const paths = asked.base && changed === undefined && !journeys && !asked.all ? await changedFiles(cwd, asked.base) : changed;
+      const paths = selectionBase && changed === undefined && !journeys && !asked.all ? await changedFiles(cwd, selectionBase) : changed;
       process.stdout.write(JSON.stringify(selectJourneys(config.tours!, config.capture, { ...selection, changed: paths }), null, 2) + '\n');
       return 0;
+    }
+    if (asked.compareBase && !config.capture?.environments[asked.environment ?? 'local']?.frontend) {
+      throw new Error('--compare-base requires a configured frontend');
     }
     let driver: CaptureDriver | undefined;
     if (caller) {
@@ -111,17 +120,33 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
     }
     const result = await capture({
       cwd, config, environment: asked.environment ?? 'local', target: asked.target ?? 'local', mode, purpose,
-      out: asked.out, base: asked.base, ...selection, signal: controller.signal,
+      out: asked.out, base: selectionBase, ...selection, signal: controller.signal,
     }, driver);
     let comparison: { directory: string; report: ReturnType<typeof compareCaptures> } | undefined;
-    if (asked.compareEnvironment && result.report.selection.journeys.length) {
-      const base = await capture({ cwd, config, environment: asked.compareEnvironment, target: asked.compareTarget!,
-        mode, purpose, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), signal: controller.signal });
-      const compared = compareCaptures(result.report, base.report);
-      await writeFile(path.join(result.directory, 'comparison.json'), JSON.stringify({ ...compared, baseDirectory: base.directory }, null, 2) + '\n');
-      comparison = { directory: base.directory, report: compared };
+    let baseline: Awaited<ReturnType<typeof prepareBaseline>> | undefined;
+    let base: Awaited<ReturnType<typeof capture>> | undefined;
+    let gallery: string;
+    try {
+      let environment = asked.compareEnvironment;
+      if (asked.compareBase && result.report.selection.journeys.length) {
+        const configured = config.capture?.environments[asked.environment ?? 'local'];
+        if (!configured) throw new Error('unknown capture environment');
+        baseline = await prepareBaseline(cwd, asked.compareBase, configured, asked.baselineInstall);
+        environment = `baseline-${result.report.id}`;
+        config.capture!.environments[environment] = baseline.environment;
+      }
+      if (environment && result.report.selection.journeys.length) {
+        base = await capture({ cwd, config, environment, target: asked.compareTarget ?? asked.target ?? 'local',
+          mode, purpose, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), signal: controller.signal });
+        const compared = compareCaptures(result.report, base.report);
+        await writeFile(path.join(result.directory, 'comparison.json'), JSON.stringify({ ...compared, baseDirectory: base.directory }, null, 2) + '\n');
+        comparison = { directory: base.directory, report: compared };
+      }
+    } finally {
+      await baseline?.dispose();
+      gallery = await writeCaptureGallery(path.dirname(result.directory), result, base, comparison?.report);
     }
-    const value = { directory: result.directory, report: result.report, ...(comparison ? { comparison } : {}) };
+    const value = { directory: result.directory, report: result.report, gallery, ...(comparison ? { comparison } : {}) };
     if (caller || asked.json) process.stdout.write(JSON.stringify(caller ? { event: 'finished', ...value } : value) + '\n');
     else {
       process.stdout.write(`${result.report.status}: ${result.directory}\n`);
