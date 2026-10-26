@@ -169,7 +169,7 @@ runs:
         ref: ${{ inputs.ref || (inputs.command == 'capture' && github.event.pull_request.head.sha) || github.sha }}
         path: ${{ steps.where.outputs.self }}
         fetch-depth: 0
-        persist-credentials: false
+        persist-credentials: ${{ inputs.command != 'capture' }}
 
     - name: Check out the documentation
       if: inputs.docs != ''
