@@ -11,7 +11,7 @@ Full documentation: https://docs.pagebeam.dev
 ## Application evidence
 
 `pagebeam capture` runs selected application journeys, checks visible outcomes,
-and writes screenshots, a run report, and a browsable gallery. Another tool can
+and writes screenshots, a structured outcome, and a Markdown table. Another tool can
 consume the result and publish its own review. Capture requires no GitHub token.
 
 ```sh
@@ -25,8 +25,10 @@ or a validated mock API. Prepare test data separately from starting the backend.
 Journeys can follow saved steps, accept actions from another tool over the session
 protocol, or explore a configured goal using your model provider.
 
-Changed-file selection uses declared paths and representative groups. Unmapped
-changes never trigger a full run. `--all` explicitly selects the full suite.
+Changed-file selection traces affected routes through component dependencies in both revisions.
+Only journeys with matching screenshot checkpoints run. Unknown changes and missing coverage
+exit incomplete before application startup. Docs and CI changes skip capture.
+`--all` and named journeys request manual runs without claiming affected-screen coverage.
 
 See [the runnable capture example](examples/capture/README.md) for all backend
 sources, test data, exploratory limits, the session protocol, and optional base
@@ -94,14 +96,14 @@ repository at `$GITHUB_WORKSPACE/<owner>/<name>`, not at the workspace root.
 | --------------- | -------------------------------------------------------------------------------- | ---------------------- |
 | `docs`          | The docs repository, as owner/name, when it is not this one                      | this repository        |
 | `products`      | Other product repositories to check out, one owner/name per line                 | none                   |
-| `command`       | `check` to report, `fix` to propose                                              | `check`                |
+| `command`       | `check` to report, `fix` to propose, `capture` for screenshots                                              | `check`                |
 | `profile`       | `observe`, `enforce` or `enforce-all`                                            | `observe`              |
 | `publish`       | With `fix`, open or update the pull request                                      | `false`                |
 | `build`         | Build the docs site first: `auto`, `true` or `false`                             | `auto`                 |
 | `token`         | Reads the other repositories and opens the pull request                          | the job's own token    |
 | `model-key`     | Your model provider's key, as a secret                                           | none                   |
 | `model-key-env` | The variable your config's `model.apiKeyEnv` names                               | `OPENAI_API_KEY`       |
-| `version`       | The pagebeam release to run                                                      | the release you pinned |
+| `version`       | The pagebeam release to run                                                      | the pinned source      |
 
 The job's own token only reaches this repository. To read another repository
 or open a pull request in it, pass a token that can: a GitHub App installation
@@ -270,3 +272,205 @@ a page nobody opened shows nothing.
 pagebeam reads Vue, React, Svelte, Astro, HTML and server templates with each
 framework's own compiler. It searches anything else as plain text, and the
 finding says so.
+
+## Before-and-after PR screenshots
+
+Configure one capture environment and saved journeys, then compare its frontend against a Git
+revision. Pagebeam prepares a temporary baseline snapshot, starts each revision in turn on the same
+address, and runs the same actions and requested viewports against both. Your checkout and branch stay in
+place. Both revisions use the configured backend and fixture contract.
+
+```sh
+pagebeam capture --environment ci --target ci --compare-base origin/main \
+  --baseline-install 'npm ci' --json
+```
+
+`--compare-base` also supplies the changed-file selection base unless `--base` is given separately.
+Use `--all` or named journeys to override selection. Capture defaults to the `desktop` viewport.
+Request `--viewport phone`, repeat `--viewport` for named sizes, or use `--viewport all` explicitly.
+`--all` selects journeys; it does not enable mobile viewports. `--plan` never prepares a baseline or executes
+its installation command. Explicit `--compare-environment` and `--compare-target` remain available
+for independently provisioned deployments.
+
+`--baseline-install` is optional and runs from the baseline repository root. Supply your project's
+own command: npm, Composer, pip, Bundler, Cargo or any other tool available in the job. Pagebeam does
+not install language runtimes, create application accounts, infer paid access, or invent fixtures.
+Its CLI runs on Node.js 22; the application can use any language. The frontend start command and
+readiness URL come from the selected capture environment. Baselines are archived tracked source;
+untracked files, local dependencies and external submodule contents are not copied.
+
+The default output is a Markdown before-and-after table (`report.md`), portable structured metadata
+(`outcome.json`), JSON run reports, and screenshot files. JSON CLI output also includes the portable `outcome` object.
+Add `--html` to generate HTML as well.
+Unmapped changes and incomplete comparisons remain labelled in the outcome and reports.
+
+Capture outcomes, renderers and publishers are separate interfaces. `Outcome` carries status and
+file evidence; `CaptureOutcome` also carries revision and screenshot pairs. An `OutcomeRenderer`
+chooses the presentation, and an `OutcomePublisher` receives the complete outcome and returns published evidence URLs and an
+optional report URL. The
+`writeOutcome` API accepts custom outcome kinds, renderers and publishers. Markdown and HTML
+renderers consume the same data, so a service can render saved outcomes without rerunning capture.
+
+### Affected-screen coverage
+
+Give each screenshot its expected pathname. The browser checks this pathname and the target origin
+before capturing; a redirect to login cannot become a successful screenshot of another screen.
+Keep assertions for the page's content and the state being reviewed in the saved journey.
+
+```yaml
+tours:
+  journeys:
+    wallets:
+      account: reader
+      steps:
+        - goto: /wallets
+        - expect: { selector: '[data-test=wallet-list]' }
+        - shot: { name: list, route: /wallets }
+```
+
+`--plan --base origin/main` returns the selected journeys, affected routes, source-file reasons,
+and a coverage status: `complete`, `no-ui`, or `incomplete`. It starts no services and runs no
+application commands. Missing checkpoints, unresolved source dependencies, unknown changed files,
+and a capture budget exceeded all return exit code 2. New and deleted routes are reported explicitly
+as incomplete because the same screen is unavailable in one revision. No substitute screen is selected.
+Explicit `--all` or `--journey` runs return `manual` coverage, not an automatic coverage claim.
+
+The default analyzer recognizes conventional Next.js, Nuxt, SvelteKit, Remix and pages-folder routes.
+It follows static imports, literal lazy imports, re-exports, layouts and framework component names.
+Computed imports, dynamic components and runtime route configuration cannot establish complete coverage.
+Source analysis identifies routes, not every conditional state on them. Saved journeys define the login,
+data and interactions needed for those states. Account preparation alone is not screenshot coverage.
+
+For other frameworks and server-rendered apps, declare route dependencies with project-relative globs:
+
+```yaml
+capture:
+  impact:
+    root: .
+    routes:
+      /wallets: ['templates/wallets/**', 'controllers/wallets.*']
+    ignore: ['docs/**', 'scripts/release.*']
+    global: ['themes/**']
+    maxJourneys: 6
+```
+
+Declared dependencies supplement discovered routes. `ignore` classifies otherwise unknown changes
+as non-UI; it does not hide a dependency already traced to a route. `global` marks changes that can
+affect every discovered route. Styles, public assets, application plugins and dependency manifests
+are global by default when no narrower dependency is known. Unknown source files are never silently
+ignored. Paths are relative to `impact.root`, which must be inside the capture checkout.
+The automatic budget defaults to six journeys; exceeding it lists the affected set without capturing a subset.
+Manual runs bypass that budget. Desktop remains the default, including manual full-suite runs.
+
+Only affected screenshot checkpoints are retained in an automatic run. Other steps still run to reach
+the required state. Failed-step images remain in the raw run directory for diagnosis and are excluded
+from the before-and-after table. Portable outcomes carry coverage and its reasons for other renderers.
+The SDK exposes `ImpactAnalyzer` and `planCaptures` so other route analyzers can supply the same contract.
+
+### Reusable GitHub jobs
+
+The root action builds the CLI from its pinned source when `version` is omitted. Set `version`
+only when deliberately selecting a published npm release. Set up the application runtimes, isolated
+backend and fixtures in the calling job. For non-UI changes, use a separate lightweight planning job
+before provisioning those services. The capture job needs read-only access; application startup
+and installation execute project code.
+
+```yaml
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.pagebeam.outputs.artifact-id }}
+    steps:
+      - uses: pagebeam/pagebeam@main
+        id: pagebeam
+        with:
+          command: capture
+          environment: ci
+          target: ci
+          compare-base: ${{ github.event.pull_request.base.sha }}
+          install: npm ci
+
+  report:
+    needs: capture
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: write
+    uses: pagebeam/pagebeam/.github/workflows/report-capture.yml@main
+    with:
+      artifact-id: ${{ needs.capture.outputs.artifact-id }}
+      pull-request: ${{ format('{0}', github.event.pull_request.number) }}
+      head-sha: ${{ github.event.pull_request.head.sha }}
+      status: ${{ needs.capture.result }}
+```
+
+Pin both references to a reviewed commit or release in production workflows. The `install` command
+runs in the application checkout and in the baseline snapshot. Override
+`baseline-install` when the baseline needs a different command. Set `checkout: false` with an
+explicit `cwd` to preserve a caller-prepared checkout and generated configuration. Use disposable test
+data and never expose repository secrets or write
+credentials to untrusted application code. Fork PRs can upload artifacts and summaries; their
+read-only token cannot publish a PR comment. Do not use `pull_request_target` to execute PR code.
+
+The reporting job executes no application code. It validates the artifact's run, revision and PR,
+then uploads referenced PNGs to a screenshot-storage prerelease and embeds them in a Markdown
+before-and-after table. The release is named `Pagebeam screenshots`, uses the `pagebeam-captures`
+tag by default, and is never marked as the latest product release. Image names include the PR,
+run and content hash; matching assets are reused. Stale revisions do not replace newer comments.
+
+This publisher needs contents write access as well as PR comment permission. Keep those permissions
+in the separate reporting job. Review release-triggered workflows before adopting release storage.
+Artifacts pass capture data between jobs; reviewers see the image table directly in the PR.
+
+The capture action plans before running `install`. Its optional `prepare` command runs first so it can
+write configuration without installing the application. `prepare` receives `PAGEBEAM_CLI`, pointing to
+the built command when using the pinned source action. Use `plan: 'true'` in a lightweight job to skip
+application installation, backend provisioning and browser startup. Outputs `coverage`, `capture-needed`
+and `plan` let the caller condition its more expensive job:
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.pagebeam.outputs.capture-needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pagebeam/pagebeam@main
+        id: pagebeam
+        with:
+          command: capture
+          checkout: 'false'
+          cwd: .
+          plan: 'true'
+          base: ${{ github.event.pull_request.base.sha }}
+  capture:
+    needs: plan
+    if: needs.plan.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pagebeam/pagebeam@main
+        with:
+          command: capture
+          checkout: 'false'
+          cwd: .
+          environment: ci
+          target: ci
+          compare-base: ${{ github.event.pull_request.base.sha }}
+```
+
+Planning still needs Node.js and the Pagebeam command, not application dependencies. Pin both jobs
+to the same reviewed Pagebeam revision and pass the same configuration, base and selection inputs.
+GitHub job services start before steps, so a service declared in the capture job is only skipped when
+that entire job is conditional on a separate plan. Manual selections are also available through these inputs.

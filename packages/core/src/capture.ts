@@ -32,6 +32,13 @@ export const captureSchema = z.strictObject({
     disposable: z.boolean().default(false),
     timeoutMs: z.number().int().positive().default(120_000),
   })),
+  impact: z.strictObject({
+    root: z.string().default('.'),
+    ignore: z.array(z.string()).default([]),
+    global: z.array(z.string()).default([]),
+    routes: z.record(z.array(z.string()).min(1)).default({}),
+    maxJourneys: z.number().int().positive().default(6),
+  }).optional(),
   groups: z.record(z.strictObject({
     paths: z.array(z.string()).min(1), journeys: z.array(z.string()).min(1),
   })).default({}),

@@ -22,14 +22,13 @@ function config(url = 'http://127.0.0.1:1') {
   });
 }
 
-test('empty selection writes a report and gallery without touching an environment', async () => {
+test('empty selection writes JSON without HTML or touching an environment', async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-capture-'));
-  const result = await capture({ cwd, config: config(), environment: 'does-not-exist', target: 'local', changed: ['unmapped.ts'] });
+  const result = await capture({ cwd, config: config(), environment: 'does-not-exist', target: 'local', changed: ['README.md'] });
   assert.equal(result.report.status, 'empty');
   assert.equal(result.report.backend, undefined);
   assert.deepEqual(JSON.parse(await readFile(path.join(result.directory, 'report.json'), 'utf8')), result.report);
-  assert.ok((await readFile(path.join(result.directory, 'index.html'), 'utf8')).includes('empty'));
-  assert.deepEqual(await readdir(result.directory), ['index.html', 'report.json']);
+  assert.deepEqual(await readdir(result.directory), ['report.json']);
 });
 
 test('bad selection retains a failed report and never starts services', async () => {
@@ -65,9 +64,9 @@ test('short secrets cannot corrupt JSON keys, status values or run identifiers',
   const cwd = await mkdtemp(path.join(tmpdir(), 'pagebeam-capture-'));
   process.env.PAGEBEAM_TEST_SECRET = 'a';
   try {
-    const result = await capture({ cwd, config: config(), environment: 'local', target: 'local', changed: ['a'] });
+    const result = await capture({ cwd, config: config(), environment: 'local', target: 'local', changed: ['README.md', 'a'] });
     const stored = JSON.parse(await readFile(path.join(result.directory, 'report.json'), 'utf8'));
-    assert.equal(stored.status, 'empty');
+    assert.equal(stored.status, 'incomplete');
     assert.equal(stored.schemaVersion, 1);
     assert.equal(stored.id, path.basename(result.directory));
     assert.deepEqual(stored.selection.unmapped, ['<REDACTED>']);

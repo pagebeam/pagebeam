@@ -28,9 +28,13 @@ tours:
         - expect: { selector: li.note, text: A saved note }
         - goto: /notes
         - expect: { selector: li.note, text: A saved note }
-        - shot: { name: saved }
+        - shot: { name: saved, route: /notes }
 
 capture:
+  impact:
+    routes:
+      /notes: ['frontend.mjs']
+    ignore: ['backend.mjs', 'seed.mjs', 'fixtures.json', 'validate.mjs', 'caller.mjs', 'review-adapter.py']
   groups: {}
   environments:
     source:

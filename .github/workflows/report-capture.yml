@@ -1,0 +1,180 @@
+name: Report captures
+on:
+  workflow_call:
+    inputs:
+      artifact-id:
+        type: string
+        required: true
+      run-id:
+        type: string
+        default: ''
+      pull-request:
+        type: string
+        required: true
+      head-sha:
+        type: string
+        required: true
+      storage-release:
+        type: string
+        default: pagebeam-captures
+      status:
+        type: string
+        required: true
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+jobs:
+  report:
+    if: inputs.artifact-id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/github-script@v7
+        id: validate
+        env:
+          CAPTURE_ARTIFACT_ID: ${{ inputs.artifact-id }}
+          CAPTURE_RUN_ID: ${{ inputs.run-id || github.run_id }}
+          CAPTURE_PR: ${{ inputs.pull-request }}
+          CAPTURE_SHA: ${{ inputs.head-sha }}
+          CAPTURE_STATUS: ${{ inputs.status }}
+        with:
+          retries: 3
+          script: |
+            const integer = name => {
+              const value = process.env[name];
+              if (!/^[1-9][0-9]*$/.test(value || '') || !Number.isSafeInteger(Number(value))) throw new Error(`Invalid ${name}`);
+              return Number(value);
+            };
+            const artifact_id = integer('CAPTURE_ARTIFACT_ID');
+            const run_id = integer('CAPTURE_RUN_ID');
+            const issue_number = integer('CAPTURE_PR');
+            const sha = process.env.CAPTURE_SHA;
+            if (!/^[a-f0-9]{40,64}$/.test(sha || '')) throw new Error('Invalid captured revision');
+            const status = process.env.CAPTURE_STATUS;
+            if (!['success', 'failure', 'cancelled', 'skipped'].includes(status)) throw new Error('Invalid capture status');
+            const {data: artifact} = await github.rest.actions.getArtifact({...context.repo, artifact_id});
+            if (artifact.expired || artifact.workflow_run?.id !== run_id || artifact.workflow_run?.head_sha !== sha) throw new Error('Artifact does not match the capture run and revision');
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id});
+            if (!run.pull_requests.some(pr => pr.number === issue_number)) throw new Error('Capture run does not belong to this PR');
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: issue_number});
+            if (pr.head.sha !== sha) {
+              core.notice('A newer PR revision exists; leaving its report unchanged.');
+              return;
+            }
+            if (artifact.size_in_bytes > 100 * 1024 * 1024) throw new Error('Capture artifact is too large');
+            core.setOutput('current', 'true');
+      - uses: actions/download-artifact@v4
+        if: steps.validate.outputs.current == 'true'
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          run-id: ${{ inputs.run-id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/pagebeam-report
+          merge-multiple: true
+      - uses: actions/github-script@v7
+        if: steps.validate.outputs.current == 'true'
+        env:
+          CAPTURE_DIRECTORY: ${{ runner.temp }}/pagebeam-report
+          CAPTURE_RUN_ID: ${{ inputs.run-id || github.run_id }}
+          CAPTURE_PR: ${{ inputs.pull-request }}
+          CAPTURE_SHA: ${{ inputs.head-sha }}
+          CAPTURE_STATUS: ${{ inputs.status }}
+          CAPTURE_STORAGE_RELEASE: ${{ inputs.storage-release }}
+        with:
+          retries: 3
+          script: |
+            const fs = require('node:fs/promises');
+            const path = require('node:path');
+            const {createHash} = require('node:crypto');
+            const root = await fs.realpath(process.env.CAPTURE_DIRECTORY);
+            const manifest = path.join(root, 'outcome.json');
+            if ((await fs.stat(manifest)).size > 1024 * 1024) throw new Error('Outcome is too large');
+            const outcome = JSON.parse(await fs.readFile(manifest, 'utf8'));
+            const issue_number = Number(process.env.CAPTURE_PR);
+            const run_id = Number(process.env.CAPTURE_RUN_ID);
+            const sha = process.env.CAPTURE_SHA;
+            const status = process.env.CAPTURE_STATUS;
+            if (outcome.schemaVersion !== 1 || outcome.kind !== 'capture' || outcome.head?.revision !== sha && outcome.status !== 'empty') throw new Error('Outcome does not match the capture revision');
+            if (!Array.isArray(outcome.captures) || outcome.captures.length > 100 || !Array.isArray(outcome.evidence)) throw new Error('Invalid capture outcome');
+            const publisher = {
+              async publish(result, {directory, namespace}) {
+                const files = [...new Set(result.captures.flatMap(shot => [shot.base, shot.head]).filter(file => file !== null))];
+                const items = files.map(id => {
+                  const item = result.evidence.find(item => item.id === id && item.mediaType === 'image/png');
+                  if (!item) throw new Error('Screenshot evidence is missing');
+                  return item;
+                });
+                const urls = Object.create(null);
+                if (!items.length) return {urls};
+                const images = [];
+                let total = 0;
+                for (const item of items) {
+                  if (typeof item.file !== 'string' || path.isAbsolute(item.file) || item.file.includes('\\') || item.file.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Unsafe evidence path');
+                  const file = await fs.realpath(path.join(directory, item.file));
+                  if (!file.startsWith(directory + path.sep) || (await fs.stat(file)).size > 20 * 1024 * 1024) throw new Error('Screenshot is outside the artifact or too large');
+                  const data = await fs.readFile(file);
+                  if (!data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error('Screenshot is not a PNG');
+                  total += data.length;
+                  if (total > 100 * 1024 * 1024) throw new Error('Screenshot publication is too large');
+                  const hash = createHash('sha256').update(data).digest('hex');
+                  images.push({id: item.id, data, hash, name: `${namespace}-${hash}.png`});
+                }
+                const tag = process.env.CAPTURE_STORAGE_RELEASE;
+                if (!/^[a-zA-Z0-9][\w.-]*$/.test(tag || '')) throw new Error('Invalid screenshot storage tag');
+                let release;
+                try { release = (await github.rest.repos.getReleaseByTag({...context.repo, tag})).data; }
+                catch (error) {
+                  if (error.status !== 404) throw error;
+                  try {
+                    release = (await github.rest.repos.createRelease({...context.repo, tag_name: tag, name: 'Pagebeam screenshots', body: 'Screenshots used in pull request comparisons.', prerelease: true, draft: false, make_latest: 'false'})).data;
+                  } catch (error) {
+                    if (error.status !== 422) throw error;
+                    release = (await github.rest.repos.getReleaseByTag({...context.repo, tag})).data;
+                  }
+                }
+                if (!release.prerelease || release.draft || release.name !== 'Pagebeam screenshots') throw new Error('Storage tag belongs to another release');
+                const assets = await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id: release.id});
+                for (const image of images) {
+                  let asset = assets.find(asset => asset.name === image.name);
+                  if (!asset) {
+                    try {
+                      asset = (await github.rest.repos.uploadReleaseAsset({...context.repo, release_id: release.id, name: image.name, data: image.data, headers: {'content-type': 'image/png', 'content-length': image.data.length}})).data;
+                    } catch (error) {
+                      if (error.status !== 422) throw error;
+                      asset = (await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id: release.id})).find(asset => asset.name === image.name);
+                      if (!asset) throw error;
+                    }
+                    assets.push(asset);
+                  }
+                  if (asset.size !== image.data.length || asset.digest && asset.digest !== `sha256:${image.hash}`) throw new Error('Stored screenshot does not match its contents');
+                  const url = new URL(asset.browser_download_url);
+                  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid published image URL');
+                  urls[image.id] = url.href;
+                }
+                return {urls};
+              }
+            };
+            const publication = await publisher.publish(outcome, {directory: root, namespace: `pr-${issue_number}-run-${run_id}`});
+            const text = value => String(value).replace(/[&<>]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[char]).replace(/[\\`*_[\]|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
+            const image = (id, label) => id === null ? 'Screenshot unavailable' : `![${label}](<${publication.urls[id]}>)`;
+            const marker = '<!-- pagebeam-screenshots -->';
+            const lines = [marker, `Screenshots for ${sha}. Capture job: **${status}**.`, ''];
+            if (outcome.coverage) {
+              lines.push(`UI coverage: **${text(outcome.coverage.status)}**.`, '');
+              for (const reason of outcome.coverage.reasons || []) lines.push(`* ${text(reason)}`);
+              for (const route of outcome.coverage.routes || []) lines.push(`* ${text(route.route)}: ${text((route.files || []).join(', '))}`);
+              lines.push('');
+            }
+            if (outcome.compatible === false) lines.push(`Incomplete comparison: ${(outcome.reasons || []).map(text).join('; ')}.`, '');
+            if (outcome.captures.length) {
+              lines.push('| Screen | Before | After |', '| --- | --- | --- |');
+              for (const shot of outcome.captures) lines.push(`| ${text(`${shot.journey} / ${shot.viewport} / step ${shot.step}`)} | ${image(shot.base, 'Before')} | ${image(shot.head, 'After')} |`);
+            } else lines.push(outcome.coverage?.status === 'no-ui' ? 'No UI changes detected. Browser capture was skipped.' : outcome.status === 'empty' ? 'No saved journey matches these changes.' : 'No screenshot comparison was completed.');
+            const {data: current} = await github.rest.pulls.get({...context.repo, pull_number: issue_number});
+            if (current.head.sha !== sha) return;
+            const body = lines.join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {...context.repo, issue_number});
+            const existing = comments.find(comment => comment.user.type === 'Bot' && comment.body?.startsWith(marker));
+            if (existing) await github.rest.issues.updateComment({...context.repo, comment_id: existing.id, body});
+            else await github.rest.issues.createComment({...context.repo, issue_number, body});

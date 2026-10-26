@@ -7,7 +7,7 @@ node ../../packages/cli/dist/main.js capture --environment source --target local
 node ../../packages/cli/dist/main.js capture --environment mock --target local --journey notes --json
 ```
 
-The source and mock environments start their own backend and frontend, create disposable accounts, save a note through the browser, reload it, assert persistence, and capture desktop and phone views. Run them sequentially because they use the same ports. Already occupied addresses are refused.
+The source and mock environments start their own backend and frontend, create disposable accounts, save a note through the browser, reload it, assert persistence, and capture desktop views by default. Request `--viewport phone` for phone views or `--viewport all` for both. Run them sequentially because they use the same ports. Already occupied addresses are refused.
 
 For an existing backend, start `node backend.mjs` yourself, then select `--environment existing`. Pagebeam leaves that backend running.
 
@@ -43,7 +43,7 @@ pagebeam capture --environment source --target local --journey notes
 pagebeam capture --environment source --target local --all
 ```
 
-`--base` selects journeys from the merge-base diff to HEAD, including both sides of renames and deleted paths. Journey paths and shared group paths are relative to the Git repository root. `--changed-files` accepts a JSON array of paths supplied by another tool. Explicit journeys override mapping. An empty selection produces an empty report without starting services.
+`--base` analyzes the merge-base diff to HEAD against route dependencies in both revisions, including renames and deleted paths. `--changed-files` accepts a JSON array of paths supplied by another tool. Screenshot checkpoints declare `shot.route`, which is checked against the actual browser URL. Non-UI changes produce an empty report without starting services. Unknown impact or missing screenshot coverage returns an incomplete report. Named journeys and `--all` request manual runs without claiming affected-screen coverage. See the root README for framework detection, explicit route dependencies and capture budgets.
 
 `--plan` resolves selection without executing project code. `--purpose check` runs actions and assertions without screenshots. `--purpose capture` and the default `both` retain configured screenshots and assertion outcomes. Existing `shoot` behavior remains available.
 
@@ -86,9 +86,9 @@ Caller and model assessments are recorded separately from observed assertions. A
 
 ## Evidence and comparison
 
-Each run gets its own output directory containing `report.json`, `index.html`, and journey/viewport artifacts. Reports survive readiness, preparation, browser, and cleanup failures. Exit codes are 0 for passed or empty, 1 for failed, and 2 for incomplete runs or invalid invocation.
+Each run gets its own output directory containing `report.json` and journey/viewport artifacts. Reports survive readiness, preparation, browser, and cleanup failures. Exit codes are 0 for passed or empty, 1 for failed, and 2 for incomplete runs or invalid invocation.
 
-Use `--compare-environment` and `--compare-target` to run the same saved journeys against an independently prepared base frontend. The base environment must identify its frontend revision. `comparison.json` pairs capture checkpoints and marks unknown or differing fixture versions, viewport sizes, incomplete runs, or mismatched actions as incompatible. `--base` alone selects changes; it does not capture a baseline.
+Use `--compare-environment` and `--compare-target` to run the same saved journeys against an independently prepared base frontend. The base environment must identify its frontend revision. `comparison.json` pairs capture checkpoints and marks unknown or differing fixture versions, viewport sizes, incomplete runs, or mismatched actions as incompatible. `--base` alone selects changes; it does not capture a baseline. For a source frontend, use `--compare-base origin/main` to prepare its baseline automatically from tracked source. `--baseline-install` accepts the project's dependency command and runs at the baseline repository root. Both revisions reuse this configuration and fixture backend. The output root contains `outcome.json` and a Markdown image table in `report.md`. Request `--html` to also generate HTML.
 
 Configure `capture.mask` with sensitive element selectors and `capture.redactEnv` with additional secret variable names. Password and login inputs are masked automatically. Recording masks should use CSS selectors. Review application-specific sensitive data before sharing evidence.
 
@@ -96,6 +96,6 @@ The CLI does not upload files or post comments. Another tool can consume its JSO
 
 `review-adapter.py` demonstrates a review integration consuming captures and failures without posting anything. It returns revision, provenance, selection, local screenshot paths, and report/gallery paths. Its caller owns uploads and review publication.
 
-The TypeScript entrypoint exports `capture`, `CaptureSession`, `explore`, `selectJourneys`, `changedFiles`, and `compareCaptures`. External drivers receive the same session methods used by the CLI.
+The TypeScript entrypoint exports `capture`, `planCaptures`, `CaptureSession`, `explore`, `selectJourneys`, `changedFiles`, and `compareCaptures`. The synchronous `selectJourneys` helper retains explicit path mapping for integrations that manage their own selection; the CLI and `capture` use the impact-aware planner. External drivers receive the same session methods used by the CLI.
 
-The GitHub Action accepts `command: capture`, selection inputs, an environment and target, and optional comparison inputs. It uploads evidence after execution failures and exposes `report`, `gallery`, `directory`, and `artifact-url` outputs. It does not post PR comments. Use an Action release containing these inputs; earlier releases support documentation workflows only.
+The GitHub Action accepts `command: capture`, selection inputs, an environment and target, and optional comparison inputs. It uploads evidence after execution failures and exposes `report`, `gallery`, `directory`, and `artifact-url` outputs. The separate reusable reporting workflow publishes PNG release assets and embeds a before-and-after image table on a PR without executing application code with its write token. See the root README for the two-job integration. Pin the action and reporting workflow to a reviewed commit or release.

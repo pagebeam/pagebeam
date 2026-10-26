@@ -113,3 +113,36 @@ jobs:
           said=${{ toJSON(steps.pagebeam.outputs.said) }}
           printf '%s\n' "$said"
           printf '%s\n' "$said" | grep -q "pages checked against pagebeam"
+
+  capture-action:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./
+        id: captures
+        with:
+          command: capture
+          checkout: 'false'
+          cwd: ${{ github.workspace }}/examples/capture
+          environment: source
+          target: local
+          compare-base: ${{ github.event.pull_request.base.sha || github.sha }}
+          install: node --version
+          all: 'true'
+      - name: Check the comparison artifact
+        env:
+          ARTIFACT_ID: ${{ steps.captures.outputs.artifact-id }}
+          MARKDOWN: ${{ steps.captures.outputs.markdown }}
+          MANIFEST: ${{ steps.captures.outputs.manifest }}
+          GALLERY: ${{ steps.captures.outputs.gallery }}
+        run: |
+          test -n "$ARTIFACT_ID"
+          test -z "$GALLERY"
+          test -f "$MANIFEST"
+          test -f "$MARKDOWN"
+          grep -Fq '| Screen | Before | After |' "$MARKDOWN"

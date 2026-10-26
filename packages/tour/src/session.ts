@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
-import { launchBrowser, unavailable } from '@pagebeam/app';
+import { launchBrowser, unavailable, routeMatches } from '@pagebeam/app';
 import { stepSchema, type TourJourney, type Tours, type TourStep } from '@pagebeam/core';
 import { act, focusBoxes } from './shoot.js';
 import { signIn, TourFailure } from './accounts.js';
@@ -14,6 +14,8 @@ export interface StepResult {
   status: 'passed' | 'failed';
   assertion?: 'observed' | 'script';
   file?: string;
+  route?: string;
+  skipped?: string;
   error?: string;
 }
 
@@ -35,6 +37,7 @@ export interface SessionOptions {
   purpose: 'capture' | 'check' | 'both';
   disposable: boolean;
   mask: string[];
+  captureRoutes?: string[] | undefined;
   signal: AbortSignal;
   env: NodeJS.ProcessEnv;
   redact(value: string): string;
@@ -230,11 +233,26 @@ export class CaptureSession {
     const started = this.recorder?.now() ?? 0;
     try {
       if ('shot' in step) {
-        if (o.purpose !== 'check') {
-          const name = `${String(result.step).padStart(3, '0')}-${step.shot.name}.png`;
-          await focusBoxes(page, step.shot.focus, step.shot.fullPage, o.viewport.scale, o.tours.timeoutMs);
-          await this.screenshot(name, step.shot.fullPage);
-          result.file = name;
+        const relevant = !o.captureRoutes || Boolean(step.shot.route && o.captureRoutes.some(route => routeMatches(route, step.shot.route!)));
+        if (!relevant) result.skipped = 'unaffected screen';
+        else {
+          const target = new URL(o.tours.targets[o.target]!.url);
+          const checkRoute = (): void => {
+            const actual = new URL(page.url());
+            result.route = actual.pathname;
+            if (step.shot.route && (actual.origin !== target.origin || (actual.pathname.replace(/\/$/, '') || '/') !== (step.shot.route.replace(/\/$/, '') || '/'))) {
+              throw new Error(`Screenshot ${step.shot.name} expected route ${step.shot.route}, reached ${actual.pathname}`);
+            }
+          };
+          checkRoute();
+          if (o.purpose !== 'check') {
+            const name = `${String(result.step).padStart(3, '0')}-${step.shot.name}.png`;
+            await focusBoxes(page, step.shot.focus, step.shot.fullPage, o.viewport.scale, o.tours.timeoutMs);
+            checkRoute();
+            await this.screenshot(name, step.shot.fullPage);
+            checkRoute();
+            result.file = name;
+          }
         }
       } else {
         const envKey = 'fill' in step ? step.fill.valueEnv : 'type' in step && typeof step.type !== 'string' ? step.type.valueEnv : undefined;

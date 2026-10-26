@@ -19,7 +19,7 @@ export function compareCaptures(head: CaptureReport, base: CaptureReport): Compa
   const keys = (report: CaptureReport): string[] => report.results.flatMap(result => result.steps.map(step => `${result.journey}/${result.viewport}/${step.step}/${step.action}`));
   if (JSON.stringify(keys(head)) !== JSON.stringify(keys(base))) reasons.push('journeys or actions differ');
   if (JSON.stringify(head.results.map(result => result.size)) !== JSON.stringify(base.results.map(result => result.size))) reasons.push('viewport dimensions differ');
-  const shots = (report: CaptureReport): Map<string, { journey: string; viewport: string; step: number; file: string }> => new Map(report.results.flatMap(result => result.steps.filter(step => step.file).map(step => [
+  const shots = (report: CaptureReport): Map<string, { journey: string; viewport: string; step: number; file: string }> => new Map(report.results.flatMap(result => result.steps.filter(step => step.file && step.status === 'passed' && step.action === 'shot').map(step => [
     `${result.journey}/${result.viewport}/${step.step}`,
     { journey: result.journey, viewport: result.viewport, step: step.step, file: `${result.journey}/${result.viewport}/${step.file!}` },
   ])));

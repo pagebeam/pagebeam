@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { history } from '@pagebeam/app';
+import { history, routeMatches, type ImpactAnalyzer } from '@pagebeam/app';
 import type { PagebeamConfig } from '@pagebeam/core';
+import { selectViewports } from './viewports.js';
 import { environment, StageFailure } from './environment.js';
 import { CaptureSession, Incomplete, type StepResult } from './session.js';
-import { changedFiles, selectJourneys, type Selection, type SelectionRequest } from './selection.js';
+import type { Selection, SelectionRequest } from './selection.js';
+import { planCaptures } from './plan.js';
 import { missingEnv } from './accounts.js';
 
 export interface CaptureRequest extends SelectionRequest {
@@ -13,8 +15,12 @@ export interface CaptureRequest extends SelectionRequest {
   config: PagebeamConfig;
   environment: string;
   target: string;
+  viewports?: string[] | undefined;
+  html?: boolean | undefined;
   out?: string | undefined;
   base?: string | undefined;
+  captureRoutes?: string[] | undefined;
+  impactAnalyzer?: ImpactAnalyzer | undefined;
   mode?: 'saved' | 'caller' | 'model' | undefined;
   purpose?: 'capture' | 'check' | 'both' | undefined;
   signal?: AbortSignal | undefined;
@@ -100,6 +106,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
   async function save(): Promise<void> {
     const current = sanitize(report) as CaptureReport;
     await writeFile(path.join(directory, 'report.json'), JSON.stringify(current, null, 2) + '\n');
+    if (!request.html) return;
     const results = current.results.map(result => `<section><h2>${html(result.journey)} / ${html(result.viewport)}: ${result.status}</h2>${result.steps.map(step => {
       const file = `${encodeURIComponent(result.journey)}/${encodeURIComponent(result.viewport)}/${encodeURIComponent(step.file ?? '')}`;
       return `<p>${step.step}: ${step.action} ${step.status}</p>${step.file ? `<a href="${file}"><img alt="${html(result.journey)} step ${step.step}" src="${file}"></a>` : ''}`;
@@ -117,12 +124,16 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     if (!['capture', 'check', 'both'].includes(report.purpose)) throw new Error('unknown run purpose');
     if (!config.tours) throw new Error('no tours are configured');
     const tours = config.tours;
-    const changed = request.base && request.changed === undefined && !request.all && request.journeys === undefined ? await changedFiles(cwd, request.base) : request.changed;
-    report.selection = selectJourneys(tours, config.capture, { ...request, changed });
+    report.revision = await history.head(cwd);
+    report.selection = await planCaptures(request, request.impactAnalyzer);
     signal.throwIfAborted();
-    if (!report.selection.journeys.length) { report.status = 'empty'; }
+    if (report.selection.coverage?.status === 'incomplete') {
+      report.status = 'incomplete';
+      report.errors.push(...report.selection.coverage.reasons.map(message => ({ stage: 'selection', message })));
+    } else if (!report.selection.journeys.length) { report.status = 'empty'; }
     else {
     for (const { name } of report.selection.journeys) {
+      selectViewports(tours.journeys[name]!, request.viewports);
       if (!/^[\w.-]+$/.test(name) || name === '.' || name === '..') throw new Error('journey names must be safe directory names');
       if (report.mode !== 'saved' && !tours.journeys[name]!.explore) throw new Error(`journey ${name} needs an exploration goal and policy`);
       if (report.mode === 'saved' && !tours.journeys[name]!.steps.length) throw new Error(`journey ${name} needs saved steps`);
@@ -150,13 +161,14 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     await managed.start();
     for (const { name } of report.selection.journeys) {
       const journey = tours.journeys[name]!;
-      for (const viewport of journey.viewports) {
+      for (const viewport of selectViewports(journey, request.viewports)) {
         const result: JourneyResult = { journey: name, viewport: viewport.name, size: { width: viewport.width, height: viewport.height, scale: viewport.scale }, status: 'running', steps: [] };
         report.results.push(result);
         report.stage = 'journey';
         const session = new CaptureSession({
           cwd, tours, journey, name, target: request.target, viewport, out: path.join(directory, name, viewport.name),
           mode: report.mode, purpose: report.purpose, disposable: configured.disposable,
+          captureRoutes: request.captureRoutes ?? (report.selection.coverage?.status === 'complete' ? report.selection.coverage.routes.map(route => route.route) : undefined),
           mask: config.capture?.mask ?? [], signal, env: managed.env, redact, registerSecret: value => { if (value) secrets.add(value); },
           onStep: async step => { result.steps.push(step); await save(); },
         });
@@ -183,7 +195,21 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
         signal.throwIfAborted();
       }
     }
-    report.status = report.results.some(result => result.status === 'failed') ? 'failed' : report.results.some(result => result.status === 'incomplete') ? 'incomplete' : 'passed';
+    if (report.selection.coverage?.status === 'complete') {
+      for (const route of report.selection.coverage.routes) {
+        const viewports = new Set(route.journeys.flatMap(name => selectViewports(tours.journeys[name]!, request.viewports).map(viewport => viewport.name)));
+        for (const viewport of viewports) {
+          const captured = report.results.some(result => result.viewport === viewport && result.steps.some(step => step.action === 'shot' && step.status === 'passed' && step.route && routeMatches(route.route, step.route) && (request.purpose === 'check' || step.file)));
+          if (!captured) {
+            report.selection.coverage.status = 'incomplete';
+            const message = `No verified screenshot of ${route.route} at ${viewport} was captured.`;
+            report.selection.coverage.reasons.push(message);
+            report.errors.push({ stage: 'coverage', message });
+          }
+        }
+      }
+    }
+    report.status = report.results.some(result => result.status === 'failed') ? 'failed' : report.results.some(result => result.status === 'incomplete') ? 'incomplete' : report.selection.coverage?.status === 'incomplete' ? 'incomplete' : 'passed';
     }
   } catch (error) {
     report.status = signal.aborted || error instanceof Incomplete ? 'incomplete' : 'failed';
@@ -192,6 +218,10 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     report.stage = 'cleanup';
     try { await managed?.close(); }
     catch (error) { report.status = 'failed'; report.errors.push({ stage: 'cleanup', message: redact((error as Error).message) }); }
+    if (report.selection.coverage?.status === 'complete' && report.status !== 'passed') {
+      report.selection.coverage.status = 'incomplete';
+      report.selection.coverage.reasons.push('Affected-screen capture did not complete successfully.');
+    }
     report.stage = 'finished';
     report.finishedAt = new Date().toISOString();
     await save();

@@ -6,6 +6,24 @@ name: pagebeam
 description: Check documentation against the product it describes, and propose the corrections.
 
 inputs:
+  html:
+    description: Also produce an HTML gallery. Markdown tables and structured outcomes are the default.
+    default: 'false'
+  retention-days:
+    description: Number of days to retain screenshot artifacts.
+    default: '14'
+  checkout:
+    description: Check out the application repository. Set false to use a caller-prepared checkout and explicit cwd.
+    default: 'true'
+  plan:
+    description: Only resolve affected screens and coverage, without installing or starting the application.
+    default: 'false'
+  prepare:
+    description: Optional command to generate capture configuration before planning, run from cwd.
+    default: ''
+  install:
+    description: Application dependency command, run before capture. Also used for the baseline unless baseline-install overrides it.
+    default: ''
   docs:
     description: >-
       The repository holding the documentation, as owner/name, when it is not
@@ -38,6 +56,9 @@ inputs:
   target:
     description: Named tours target.
     default: local
+  viewports:
+    description: Viewport names, one per line. Desktop by default; use phone or all explicitly.
+    default: desktop
   journeys:
     description: Explicit capture journeys, one name per line. Overrides changed-file selection.
     default: ''
@@ -56,6 +77,12 @@ inputs:
   purpose:
     description: capture, check, or both.
     default: both
+  compare-base:
+    description: Git revision to prepare automatically as the frontend baseline. Reuses the selected environment and target.
+    default: ''
+  baseline-install:
+    description: Project installation command to run in the baseline repository, in any language.
+    default: ''
   compare-environment:
     description: Optional independently prepared base environment.
     default: ''
@@ -85,7 +112,7 @@ inputs:
     required: false
     default: ''
   version:
-    description: The pagebeam release to run. Defaults to the release this action is pinned to.
+    description: Optional npm release. When omitted, builds the CLI from this action's pinned source.
     required: false
     default: ''
   token:
@@ -105,15 +132,33 @@ inputs:
     default: OPENAI_API_KEY
 
 outputs:
+  plan:
+    description: Structured selection and coverage plan.
+    value: ${{ steps.run.outputs.plan }}
+  coverage:
+    description: complete, incomplete, no-ui, or manual.
+    value: ${{ steps.run.outputs.coverage }}
+  capture-needed:
+    description: True when the plan has journeys to execute and coverage is not incomplete.
+    value: ${{ steps.run.outputs.capture-needed }}
   directory:
     description: Directory containing capture runs, suitable for another upload or review tool.
     value: ${{ steps.run.outputs.directory }}
   report:
     description: Head run report file.
     value: ${{ steps.run.outputs.report }}
+  markdown:
+    description: Markdown table report.
+    value: ${{ steps.run.outputs.markdown }}
+  manifest:
+    description: Structured portable outcome for renderers and publishers.
+    value: ${{ steps.run.outputs.manifest }}
   gallery:
-    description: Head run HTML gallery file.
+    description: HTML gallery with paired baseline images when comparison is requested.
     value: ${{ steps.run.outputs.gallery }}
+  artifact-id:
+    description: Capture artifact identifier for the separate reporting job.
+    value: ${{ steps.captures.outputs.artifact-id }}
   artifact-url:
     description: Download location for capture evidence.
     value: ${{ steps.captures.outputs.artifact-url }}
@@ -143,10 +188,12 @@ runs:
 
     # History is evidence: `strings` and `moved` read each repository's own.
     - uses: actions/checkout@v4
+      if: inputs.checkout != 'false'
       with:
         ref: ${{ inputs.ref || (inputs.command == 'capture' && github.event.pull_request.head.sha) || github.sha }}
         path: ${{ steps.where.outputs.self }}
         fetch-depth: 0
+        persist-credentials: ${{ inputs.command != 'capture' }}
 
     - name: Check out the documentation
       if: inputs.docs != ''
@@ -177,6 +224,14 @@ runs:
       with:
         node-version: '22'
 
+    - name: Build the pinned command
+      if: inputs.version == ''
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci
+        npm run build
+
     # Away from the workspace, so a package.json there cannot decide which
     # pagebeam npx runs. In this repository it resolves to the unbuilt one.
     - name: Run
@@ -193,23 +248,31 @@ runs:
         PAGEBEAM_VERSION: ${{ inputs.version }}
         MODEL_KEY: ${{ inputs.model-key }}
         MODEL_KEY_ENV: ${{ inputs.model-key-env }}
+        CAPTURE_PLAN: ${{ inputs.plan }}
+        CAPTURE_PREPARE: ${{ inputs.prepare }}
+        CAPTURE_HTML: ${{ inputs.html }}
+        CAPTURE_INSTALL: ${{ inputs.install }}
         CAPTURE_ENVIRONMENT: ${{ inputs.environment }}
         CAPTURE_CONFIG: ${{ inputs.capture-config }}
         CAPTURE_TARGET: ${{ inputs.target }}
+        CAPTURE_VIEWPORTS: ${{ inputs.viewports }}
         CAPTURE_JOURNEYS: ${{ inputs.journeys }}
         CAPTURE_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
         CAPTURE_CHANGED_FILES: ${{ inputs.changed-files }}
         CAPTURE_ALL: ${{ inputs.all }}
         CAPTURE_MODE: ${{ inputs.mode }}
         CAPTURE_PURPOSE: ${{ inputs.purpose }}
+        CAPTURE_COMPARE_BASE: ${{ inputs.compare-base }}
+        CAPTURE_BASELINE_INSTALL: ${{ inputs.baseline-install || inputs.install }}
         CAPTURE_COMPARE_ENVIRONMENT: ${{ inputs.compare-environment }}
         CAPTURE_COMPARE_TARGET: ${{ inputs.compare-target }}
       run: |
         set -uo pipefail
 
-        version="$PAGEBEAM_VERSION"
-        if [ -z "$version" ]; then
-          version="$(node -p "require('$GITHUB_ACTION_PATH/packages/cli/package.json').version")"
+        if [ -n "$PAGEBEAM_VERSION" ]; then
+          pagebeam=(npx --yes "pagebeam@$PAGEBEAM_VERSION")
+        else
+          pagebeam=(node "$GITHUB_ACTION_PATH/packages/cli/dist/main.js")
         fi
 
         if [ -n "$MODEL_KEY" ]; then
@@ -225,9 +288,17 @@ runs:
           *) cwd="$GITHUB_WORKSPACE/$PAGEBEAM_CWD" ;;
         esac
 
+        if [ "$PAGEBEAM_COMMAND" = capture ]; then
+          unset GITHUB_TOKEN
+          export PAGEBEAM_CLI="$GITHUB_ACTION_PATH/packages/cli/dist/main.js"
+          if [ -n "$CAPTURE_PREPARE" ]; then
+            (cd "$cwd" && sh -c "$CAPTURE_PREPARE") || exit 2
+          fi
+        fi
+
         args=("$PAGEBEAM_COMMAND" --cwd "$cwd")
         # A release pinned from before --build existed would refuse the flag.
-        if [ "$PAGEBEAM_COMMAND" != capture ] && [ "$PAGEBEAM_BUILD" != false ] && npx --yes "pagebeam@$version" --help 2>/dev/null | grep -q -- '--build=auto'; then
+        if [ "$PAGEBEAM_COMMAND" != capture ] && [ "$PAGEBEAM_BUILD" != false ] && "${pagebeam[@]}" --help 2>/dev/null | grep -q -- '--build=auto'; then
           if [ "$PAGEBEAM_BUILD" = true ]; then args+=(--build); else args+=(--build=auto); fi
         fi
         if [ "$PAGEBEAM_COMMAND" = check ]; then
@@ -235,35 +306,69 @@ runs:
         elif [ "$PAGEBEAM_COMMAND" = fix ] && [ "$PAGEBEAM_PUBLISH" = true ]; then
           args+=(--publish)
         elif [ "$PAGEBEAM_COMMAND" = capture ]; then
+          [ "$CAPTURE_HTML" != true ] || args+=(--html)
           args+=(--json --environment "$CAPTURE_ENVIRONMENT" --target "$CAPTURE_TARGET" --mode "$CAPTURE_MODE" --purpose "$CAPTURE_PURPOSE" --out "$RUNNER_TEMP/pagebeam-captures")
           [ -z "$CAPTURE_CONFIG" ] || args+=(--config "$CAPTURE_CONFIG")
           while IFS= read -r journey; do
             [ -z "$journey" ] || args+=(--journey "$journey")
           done <<< "$CAPTURE_JOURNEYS"
+          while IFS= read -r viewport; do
+            [ -z "$viewport" ] || args+=(--viewport "$viewport")
+          done <<< "$CAPTURE_VIEWPORTS"
           [ -z "$CAPTURE_BASE" ] || args+=(--base "$CAPTURE_BASE")
           [ -z "$CAPTURE_CHANGED_FILES" ] || args+=(--changed-files "$CAPTURE_CHANGED_FILES")
           [ "$CAPTURE_ALL" != true ] || args+=(--all)
+          [ -z "$CAPTURE_COMPARE_BASE" ] || args+=(--compare-base "$CAPTURE_COMPARE_BASE")
+          if [ -n "$CAPTURE_COMPARE_BASE" ] && [ -n "$CAPTURE_BASELINE_INSTALL" ]; then args+=(--baseline-install "$CAPTURE_BASELINE_INSTALL"); fi
           [ -z "$CAPTURE_COMPARE_ENVIRONMENT" ] || args+=(--compare-environment "$CAPTURE_COMPARE_ENVIRONMENT")
           [ -z "$CAPTURE_COMPARE_TARGET" ] || args+=(--compare-target "$CAPTURE_COMPARE_TARGET")
         fi
 
         if [ "$PAGEBEAM_COMMAND" = capture ]; then
-          npx --yes "pagebeam@$version" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
-          code=${PIPESTATUS[0]}
-        else
-          npx --yes "pagebeam@$version" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
-          code=${PIPESTATUS[0]}
-        fi
-
-        if [ "$PAGEBEAM_COMMAND" = capture ]; then
+          "${pagebeam[@]}" "${args[@]}" --plan > "$RUNNER_TEMP/pagebeam-plan.json"
+          plan_code=$?
+          if [ ! -s "$RUNNER_TEMP/pagebeam-plan.json" ]; then exit "$plan_code"; fi
           node --input-type=module <<'NODE'
         import fs from 'node:fs';
         import path from 'node:path';
-        try {
-          const result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8'));
-          const directory = path.join(process.env.RUNNER_TEMP, 'pagebeam-captures');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${path.join(result.directory, 'report.json')}\ngallery=${path.join(result.directory, 'index.html')}\nrun-id=${result.report.id}\n`);
-        } catch {}
+        const file = path.join(process.env.RUNNER_TEMP, 'pagebeam-plan.json');
+        const plan = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const coverage = plan.coverage?.status || 'manual';
+        const needed = coverage !== 'incomplete' && plan.journeys.length > 0;
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `plan=${file}\ncoverage=${coverage}\ncapture-needed=${needed}\n`);
+        NODE
+          if [ "$CAPTURE_PLAN" = true ]; then
+            cp "$RUNNER_TEMP/pagebeam-plan.json" "$RUNNER_TEMP/said.txt"
+            cat "$RUNNER_TEMP/said.txt"
+            code=$plan_code
+          else
+            needed="$(node -e 'const p=require(process.argv[1]); process.stdout.write(String(p.coverage?.status !== "incomplete" && p.journeys.length > 0))' "$RUNNER_TEMP/pagebeam-plan.json")"
+            if [ "$plan_code" = 0 ] && [ "$needed" = true ] && [ -n "$CAPTURE_INSTALL" ]; then
+              (cd "$cwd" && sh -c "$CAPTURE_INSTALL") || exit 2
+            fi
+            "${pagebeam[@]}" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
+            code=${PIPESTATUS[0]}
+          fi
+        else
+          "${pagebeam[@]}" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/said.txt"
+          code=${PIPESTATUS[0]}
+        fi
+
+        if [ "$PAGEBEAM_COMMAND" = capture ] && [ "$CAPTURE_PLAN" != true ]; then
+          node --input-type=module <<'NODE'
+        import fs from 'node:fs';
+        import path from 'node:path';
+        const directory = path.join(process.env.RUNNER_TEMP, 'pagebeam-captures');
+        if (fs.existsSync(directory)) {
+          let result;
+          try { result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8')); } catch {}
+          const gallery = result?.gallery ?? '';
+          const markdown = result?.markdown ?? path.join(directory, 'report.md');
+          const manifest = result?.manifest ?? path.join(directory, 'outcome.json');
+          const report = result ? path.join(result.directory, 'report.json') : '';
+          const id = result?.report.id ?? `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${report}\ngallery=${gallery}\nmarkdown=${markdown}\nmanifest=${manifest}\nrun-id=${id}\n`);
+        }
         NODE
         fi
 
@@ -296,6 +401,7 @@ runs:
         name: pagebeam-${{ steps.run.outputs.run-id }}
         path: ${{ steps.run.outputs.directory }}
         if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
 
     - name: Link capture evidence
       if: always() && steps.captures.outputs.artifact-url != ''
