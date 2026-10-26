@@ -137,9 +137,12 @@ jobs:
       - name: Check the comparison artifact
         env:
           ARTIFACT_ID: ${{ steps.captures.outputs.artifact-id }}
+          MARKDOWN: ${{ steps.captures.outputs.markdown }}
+          MANIFEST: ${{ steps.captures.outputs.manifest }}
           GALLERY: ${{ steps.captures.outputs.gallery }}
         run: |
           test -n "$ARTIFACT_ID"
-          test -f "$GALLERY"
-          grep -q '<figcaption>Before</figcaption>' "$GALLERY"
-          grep -q '<figcaption>After</figcaption>' "$GALLERY"
+          test -z "$GALLERY"
+          test -f "$MANIFEST"
+          test -f "$MARKDOWN"
+          grep -Fq '| Screen | Before | After |' "$MARKDOWN"

@@ -15,6 +15,7 @@ export interface CaptureRequest extends SelectionRequest {
   environment: string;
   target: string;
   viewports?: string[] | undefined;
+  html?: boolean | undefined;
   out?: string | undefined;
   base?: string | undefined;
   mode?: 'saved' | 'caller' | 'model' | undefined;
@@ -102,6 +103,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
   async function save(): Promise<void> {
     const current = sanitize(report) as CaptureReport;
     await writeFile(path.join(directory, 'report.json'), JSON.stringify(current, null, 2) + '\n');
+    if (!request.html) return;
     const results = current.results.map(result => `<section><h2>${html(result.journey)} / ${html(result.viewport)}: ${result.status}</h2>${result.steps.map(step => {
       const file = `${encodeURIComponent(result.journey)}/${encodeURIComponent(result.viewport)}/${encodeURIComponent(step.file ?? '')}`;
       return `<p>${step.step}: ${step.action} ${step.status}</p>${step.file ? `<a href="${file}"><img alt="${html(result.journey)} step ${step.step}" src="${file}"></a>` : ''}`;

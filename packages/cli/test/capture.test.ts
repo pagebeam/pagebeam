@@ -254,7 +254,7 @@ test('a git baseline reuses one language-neutral environment and produces paired
       },
     }));
     const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--environment', 'ci', '--target', 'ci', '--compare-base', before,
-      '--baseline-install', `${process.execPath} -e "require('node:fs').writeFileSync('installed.txt','baseline')"`, '--all', '--json'], {
+      '--baseline-install', `${process.execPath} -e "require('node:fs').writeFileSync('installed.txt','baseline')"`, '--all', '--html', '--json'], {
       env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' }, timeout: 60000,
     });
     const result = JSON.parse(stdout);
@@ -267,8 +267,8 @@ test('a git baseline reuses one language-neutral environment and produces paired
     const base = await readFile(path.join(result.comparison.directory, shot.base));
     assert.ok(!head.equals(base), 'both committed frontend versions must be captured');
     const gallery = await readFile(result.gallery, 'utf8');
-    assert.ok(gallery.includes('<figcaption>Before</figcaption>'));
-    assert.ok(gallery.includes('<figcaption>After</figcaption>'));
+    assert.ok(gallery.includes('<th>Before</th>'));
+    assert.ok(gallery.includes('<th>After</th>'));
     assert.ok(gallery.includes(before));
     assert.ok(gallery.includes(after));
     assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim(), after);
@@ -310,6 +310,12 @@ test('capture defaults to desktop and captures mobile only when requested', asyn
         env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' },
       });
       assert.deepEqual(JSON.parse(stdout).report.results.map((result: { viewport: string }) => result.viewport), expected);
+      const result = JSON.parse(stdout);
+      assert.equal(result.gallery, undefined);
+      assert.ok((await readFile(result.markdown, 'utf8')).includes('| Screen | Before | After |'));
+      const outcome = JSON.parse(await readFile(result.manifest, 'utf8'));
+      assert.equal(outcome.captures.length, expected.length);
+      assert.equal(outcome.evidence.filter((item: {mediaType: string}) => item.mediaType === 'image/png').length, expected.length);
     }
     const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--all', '--plan']);
     assert.deepEqual(JSON.parse(stdout).journeys[0].viewports, ['desktop']);

@@ -11,7 +11,7 @@ Full documentation: https://docs.pagebeam.dev
 ## Application evidence
 
 `pagebeam capture` runs selected application journeys, checks visible outcomes,
-and writes screenshots, a run report, and a browsable gallery. Another tool can
+and writes screenshots, a structured outcome, and a Markdown table. Another tool can
 consume the result and publish its own review. Capture requires no GitHub token.
 
 ```sh
@@ -297,9 +297,15 @@ Its CLI runs on Node.js 22; the application can use any language. The frontend s
 readiness URL come from the selected capture environment. Baselines are archived tracked source;
 untracked files, local dependencies and external submodule contents are not copied.
 
-The output directory has an `index.html` gallery with paired images, revision labels, and links to
-both capture reports. Failed comparisons remain labelled as incomplete and block the capture job.
-An unmapped change is labelled as uncovered. The JSON output includes the gallery path.
+The default output is a Markdown before-and-after table (`report.md`), portable structured metadata
+(`outcome.json`), JSON run reports, and screenshot files. Add `--html` to generate HTML as well.
+Unmapped changes and incomplete comparisons remain labelled in the outcome and reports.
+
+Capture outcomes, renderers and publishers are separate interfaces. `Outcome` carries status and
+file evidence; `CaptureOutcome` also carries revision and screenshot pairs. An `OutcomeRenderer`
+chooses the presentation, and an `OutcomePublisher` returns URLs for published evidence. The
+`writeOutcome` API accepts custom outcome kinds, renderers and publishers. Markdown and HTML
+renderers consume the same data, so a service can render saved outcomes without rerunning capture.
 
 ### Reusable GitHub jobs
 
@@ -330,7 +336,7 @@ jobs:
     needs: capture
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     permissions:
-      contents: read
+      contents: write
       actions: read
       pull-requests: write
     uses: pagebeam/pagebeam/.github/workflows/report-capture.yml@main
@@ -349,7 +355,12 @@ data and never expose repository secrets or write
 credentials to untrusted application code. Fork PRs can upload artifacts and summaries; their
 read-only token cannot publish a PR comment. Do not use `pull_request_target` to execute PR code.
 
-The reporting job executes no application code. It checks that the artifact belongs to the expected
-workflow run, revision and PR, skips stale revisions, and updates one gallery comment. GitHub
-artifacts are downloads, so reviewers extract the archive and open `index.html`; inline PR images
-require separate hosting.
+The reporting job executes no application code. It validates the artifact's run, revision and PR,
+then uploads referenced PNGs to a screenshot-storage prerelease and embeds them in a Markdown
+before-and-after table. The release is named `Pagebeam screenshots`, uses the `pagebeam-captures`
+tag by default, and is never marked as the latest product release. Image names include the PR,
+run and content hash; matching assets are reused. Stale revisions do not replace newer comments.
+
+This publisher needs contents write access as well as PR comment permission. Keep those permissions
+in the separate reporting job. Review release-triggered workflows before adopting release storage.
+Artifacts pass capture data between jobs; reviewers see the image table directly in the PR.

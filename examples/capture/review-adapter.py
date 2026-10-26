@@ -46,5 +46,6 @@ print(json.dumps({'revision': report['revision'], 'status': report['status'],
                   'selection': report['selection'], 'backend': report.get('backend'),
                   'errors': report['errors'], 'captures': captures,
                   'report': str(directory / 'report.json'),
-                  'gallery': str(directory / 'index.html')}))
+                  'outcome': result.get('manifest'), 'markdown': result.get('markdown'),
+                  'gallery': result.get('gallery')}))
 raise SystemExit(completed.returncode)

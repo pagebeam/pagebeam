@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { loadConfig } from '@pagebeam/engine';
 import { ask } from '@pagebeam/model';
-import { capture, explore, changedFiles, selectJourneys, compareCaptures, writeCaptureGallery, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
+import { capture, explore, changedFiles, selectJourneys, compareCaptures, writeCaptureOutcome, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
 import { z } from 'zod';
 import { prepareBaseline } from './baseline.js';
 import { parse as parseYaml } from 'yaml';
@@ -22,6 +22,7 @@ interface Asked {
   plan: boolean;
   out: string | undefined;
   json: boolean;
+  html: boolean;
   compareEnvironment: string | undefined;
   compareTarget: string | undefined;
   compareBase: string | undefined;
@@ -122,13 +123,13 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
       };
     }
     const result = await capture({
-      cwd, config, environment: asked.environment ?? 'local', target: asked.target ?? 'local', mode, purpose, viewports,
+      cwd, config, environment: asked.environment ?? 'local', target: asked.target ?? 'local', mode, purpose, viewports, html: asked.html,
       out: asked.out, base: selectionBase, ...selection, signal: controller.signal,
     }, driver);
     let comparison: { directory: string; report: ReturnType<typeof compareCaptures> } | undefined;
     let baseline: Awaited<ReturnType<typeof prepareBaseline>> | undefined;
     let base: Awaited<ReturnType<typeof capture>> | undefined;
-    let gallery: string;
+    let rendered: Awaited<ReturnType<typeof writeCaptureOutcome>>;
     try {
       let environment = asked.compareEnvironment;
       if (asked.compareBase && result.report.selection.journeys.length) {
@@ -140,16 +141,16 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
       }
       if (environment && result.report.selection.journeys.length) {
         base = await capture({ cwd, config, environment, target: asked.compareTarget ?? asked.target ?? 'local',
-          mode, purpose, viewports, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), signal: controller.signal });
+          mode, purpose, viewports, html: asked.html, out: asked.out, journeys: result.report.selection.journeys.map(journey => journey.name), signal: controller.signal });
         const compared = compareCaptures(result.report, base.report);
         await writeFile(path.join(result.directory, 'comparison.json'), JSON.stringify({ ...compared, baseDirectory: base.directory }, null, 2) + '\n');
         comparison = { directory: base.directory, report: compared };
       }
     } finally {
       await baseline?.dispose();
-      gallery = await writeCaptureGallery(path.dirname(result.directory), result, base, comparison?.report);
+      rendered = await writeCaptureOutcome(path.dirname(result.directory), result, base, comparison?.report, { html: asked.html });
     }
-    const value = { directory: result.directory, report: result.report, gallery, ...(comparison ? { comparison } : {}) };
+    const value = { directory: result.directory, report: result.report, ...rendered, ...(comparison ? { comparison } : {}) };
     if (caller || asked.json) process.stdout.write(JSON.stringify(caller ? { event: 'finished', ...value } : value) + '\n');
     else {
       process.stdout.write(`${result.report.status}: ${result.directory}\n`);

@@ -6,6 +6,9 @@ name: pagebeam
 description: Check documentation against the product it describes, and propose the corrections.
 
 inputs:
+  html:
+    description: Also produce an HTML gallery. Markdown tables and structured outcomes are the default.
+    default: 'false'
   retention-days:
     description: Number of days to retain screenshot artifacts.
     default: '14'
@@ -129,6 +132,12 @@ outputs:
   report:
     description: Head run report file.
     value: ${{ steps.run.outputs.report }}
+  markdown:
+    description: Markdown table report.
+    value: ${{ steps.run.outputs.markdown }}
+  manifest:
+    description: Structured portable outcome for renderers and publishers.
+    value: ${{ steps.run.outputs.manifest }}
   gallery:
     description: HTML gallery with paired baseline images when comparison is requested.
     value: ${{ steps.run.outputs.gallery }}
@@ -224,6 +233,7 @@ runs:
         PAGEBEAM_VERSION: ${{ inputs.version }}
         MODEL_KEY: ${{ inputs.model-key }}
         MODEL_KEY_ENV: ${{ inputs.model-key-env }}
+        CAPTURE_HTML: ${{ inputs.html }}
         CAPTURE_INSTALL: ${{ inputs.install }}
         CAPTURE_ENVIRONMENT: ${{ inputs.environment }}
         CAPTURE_CONFIG: ${{ inputs.capture-config }}
@@ -278,6 +288,7 @@ runs:
         elif [ "$PAGEBEAM_COMMAND" = fix ] && [ "$PAGEBEAM_PUBLISH" = true ]; then
           args+=(--publish)
         elif [ "$PAGEBEAM_COMMAND" = capture ]; then
+          [ "$CAPTURE_HTML" != true ] || args+=(--html)
           args+=(--json --environment "$CAPTURE_ENVIRONMENT" --target "$CAPTURE_TARGET" --mode "$CAPTURE_MODE" --purpose "$CAPTURE_PURPOSE" --out "$RUNNER_TEMP/pagebeam-captures")
           [ -z "$CAPTURE_CONFIG" ] || args+=(--config "$CAPTURE_CONFIG")
           while IFS= read -r journey; do
@@ -311,10 +322,12 @@ runs:
         if (fs.existsSync(directory)) {
           let result;
           try { result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8')); } catch {}
-          const gallery = result?.gallery ?? path.join(directory, 'index.html');
+          const gallery = result?.gallery ?? '';
+          const markdown = result?.markdown ?? path.join(directory, 'report.md');
+          const manifest = result?.manifest ?? path.join(directory, 'outcome.json');
           const report = result ? path.join(result.directory, 'report.json') : '';
           const id = result?.report.id ?? `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${report}\ngallery=${gallery}\nrun-id=${id}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${report}\ngallery=${gallery}\nmarkdown=${markdown}\nmanifest=${manifest}\nrun-id=${id}\n`);
         }
         NODE
         fi

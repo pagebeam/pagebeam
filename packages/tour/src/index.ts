@@ -6,3 +6,5 @@ export * from './compare.js';
 export { StageFailure } from './environment.js';
 export * from './gallery.js';
 export * from './viewports.js';
+export * from './outcome.js';
+export * from './report.js';
