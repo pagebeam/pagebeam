@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
+import { notesApp } from '../../tour/test/fixture.ts';
 
 const exec = promisify(execFile);
 const cli = path.join(import.meta.dirname, '../dist/main.js');
@@ -51,4 +52,44 @@ test('CLI capture never defaults to every journey', async () => {
     assert.equal(JSON.parse(result.stdout).report.errors[0].stage, 'selection');
     return true;
   });
+});
+
+test('environment typing masks its input and echoed text and redacts failures', async () => {
+  const app = await notesApp();
+  const cwd = await workspace();
+  const value = 'capture-runtime-marker';
+  try {
+    await writeFile(path.join(cwd, 'fail.mjs'), 'export default async (_page, { env }) => { throw new Error("Runtime failure: " + env.PAGEBEAM_RUNTIME_DATA); };');
+    await writeFile(path.join(cwd, 'pagebeam.config.json'), JSON.stringify({
+      capture: { environments: { local: { backend: { kind: 'url', url: app.url, revision: 'notes-v1' }, timeoutMs: 5000 } } },
+      tours: {
+        timeoutMs: 5000,
+        targets: { local: { url: app.url } },
+        accounts: { reader: {
+          purpose: 'notes reader',
+          login: { usernameEnv: 'NOTES_USER', passwordEnv: 'NOTES_PASSWORD', form: { url: '/login', username: '#username', password: '#password', submit: '#submit' } },
+          confirm: '#signout',
+        } },
+        journeys: Object.fromEntries(['typed', 'filled'].map(name => [name, {
+          account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }], steps: [
+            { goto: '/notes' }, { click: '#new' }, { click: '#title' },
+            name === 'typed' ? { type: { valueEnv: 'PAGEBEAM_RUNTIME_DATA' } } : { fill: { selector: '#title', valueEnv: 'PAGEBEAM_RUNTIME_DATA' } },
+            { shot: { name: 'value' } }, { verify: './fail.mjs' },
+          ],
+        }])),
+      },
+    }));
+    const outcome = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--environment', 'local', '--target', 'local', '--all', '--json'], {
+      env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada', PAGEBEAM_RUNTIME_DATA: value },
+    }).then(() => { throw new Error('the failing verification must fail the run'); }, error => error as { code: number; stdout: string });
+    assert.equal(outcome.code, 1);
+    const result = JSON.parse(outcome.stdout);
+    assert.equal(result.report.results[0].steps[4].status, 'passed');
+    const typed = await readFile(path.join(result.directory, 'typed', 'desktop', '004-value.png'));
+    const filled = await readFile(path.join(result.directory, 'filled', 'desktop', '004-value.png'));
+    assert.ok(typed.equals(filled), 'typed and filled environment values must receive the same screenshot masks');
+    assert.ok(result.report.errors[0].message.includes('<REDACTED>'));
+    assert.ok(!outcome.stdout.includes(value));
+    assert.ok(!(await readFile(path.join(result.directory, 'report.json'), 'utf8')).includes(value));
+  } finally { await app.stop(); }
 });

@@ -210,10 +210,15 @@ export class CaptureSession {
           result.file = name;
         }
       } else {
-        if ('fill' in step && step.fill.valueEnv) {
-          const value = o.env[step.fill.valueEnv];
-          if (!value) throw new Error(`required variable ${step.fill.valueEnv} is not set`);
-          this.privateSelectors.add(step.fill.selector);
+        const envKey = 'fill' in step ? step.fill.valueEnv : 'type' in step && typeof step.type !== 'string' ? step.type.valueEnv : undefined;
+        if (envKey) {
+          const value = o.env[envKey];
+          if (!value) throw new Error(`required variable ${envKey} is not set`);
+          if ('fill' in step) this.privateSelectors.add(step.fill.selector);
+          else {
+            await page.evaluate("document.activeElement?.setAttribute('data-pagebeam-typed-private', 'true')");
+            this.privateSelectors.add('[data-pagebeam-typed-private]');
+          }
           this.secrets.add(value);
           o.registerSecret(value);
           if (this.recorder) await this.installRecordingMask();
