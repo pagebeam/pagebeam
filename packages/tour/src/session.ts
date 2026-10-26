@@ -153,7 +153,27 @@ export class CaptureSession {
       mask();
     })()`;
     await this.context!.addInitScript(script);
-    await this.page!.evaluate(script);
+    for (const frame of this.page!.frames()) await frame.evaluate(script);
+  }
+
+  private async markTypingTarget(page: Page): Promise<void> {
+    for (const frame of page.frames()) {
+      const marked = await frame.evaluate<boolean>(`(() => {
+        const element = document.activeElement;
+        const editable = element && element !== document.body && (
+          element.isContentEditable || element.tagName === 'TEXTAREA' ||
+          (element.tagName === 'INPUT' && ['text','search','email','password','tel','url','number'].includes(element.type))
+        );
+        if (!document.hasFocus() || !editable || element.disabled || element.readOnly) return false;
+        element.setAttribute('data-pagebeam-typed-private', 'true');
+        return true;
+      })()`);
+      if (marked) {
+        this.privateSelectors.add('[data-pagebeam-typed-private]');
+        return;
+      }
+    }
+    throw new Error('environment typing requires a focused text input or editable element');
   }
 
   async observe(): Promise<Observation> {
@@ -215,10 +235,7 @@ export class CaptureSession {
           const value = o.env[envKey];
           if (!value) throw new Error(`required variable ${envKey} is not set`);
           if ('fill' in step) this.privateSelectors.add(step.fill.selector);
-          else {
-            await page.evaluate("document.activeElement?.setAttribute('data-pagebeam-typed-private', 'true')");
-            this.privateSelectors.add('[data-pagebeam-typed-private]');
-          }
+          else await this.markTypingTarget(page);
           this.secrets.add(value);
           o.registerSecret(value);
           if (this.recorder) await this.installRecordingMask();
@@ -248,7 +265,7 @@ export class CaptureSession {
     const o = this.options;
     const page = this.page!;
     await page.screenshot({ path: path.join(o.out, name), fullPage, animations: 'disabled', caret: 'hide', style: HIDE_CURSOR,
-      mask: [...this.privateSelectors].map(selector => page.locator(selector)).concat([...this.secrets].filter(Boolean).map(secret => page.getByText(secret, { exact: true }))), timeout: o.tours.timeoutMs });
+      mask: page.frames().flatMap(frame => [...this.privateSelectors].map(selector => frame.locator(selector)).concat([...this.secrets].filter(Boolean).map(secret => frame.getByText(secret, { exact: true })))), timeout: o.tours.timeoutMs });
   }
 
   async close(): Promise<void> {

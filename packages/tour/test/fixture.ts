@@ -72,6 +72,14 @@ export async function notesApp(): Promise<NotesApp> {
       res.end();
       return;
     }
+    if (url.pathname === '/framed-notes') {
+      html(200, NAV + '<h1>Notes outside the frame</h1><iframe id="note-frame" src="/framed-input"></iframe>');
+      return;
+    }
+    if (url.pathname === '/framed-input') {
+      html(200, '<h2>Notes inside the frame</h2><input id="frame-title" oninput="document.getElementById(\'frame-echo\').textContent=this.value"><span id="frame-echo" style="display:inline-block;width:200px;height:24px"></span>');
+      return;
+    }
     if (url.pathname === '/notes') {
       const list =
         user.notes.length === 0
@@ -83,7 +91,7 @@ export async function notesApp(): Promise<NotesApp> {
           '<h1>Notes</h1>' +
           list +
           '<button id="new" style="position:absolute;left:100px;top:50px;width:200px;height:40px">New note</button>' +
-          '<div id="dialog" hidden><input id="title" oninput="document.getElementById(\'echo\').textContent=this.value"><span id="echo"></span><select id="kind"><option>plain</option><option>todo</option></select></div>' +
+          '<div id="dialog" hidden><input id="title" oninput="document.getElementById(\'echo\').textContent=this.value"><span id="echo" style="display:inline-block;width:240px"></span><select id="kind"><option>plain</option><option>todo</option></select></div>' +
           '<script>document.getElementById("new").onclick=()=>{document.getElementById("dialog").hidden=false}</script>',
       );
       return;
