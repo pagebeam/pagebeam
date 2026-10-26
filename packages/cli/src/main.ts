@@ -13,9 +13,15 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   pagebeam init  [--cwd <dir>]
   pagebeam shoot [--cwd <dir>] [--target <name>] [--journey <name>] [--out <dir>]
                  [--narration <file>] [--json]
+  pagebeam capture --environment <name> --target <name>
+                   [--journey <name> ... | --base <ref> | --changed-files <json> | --all]
+                   [--mode saved|model] [--purpose capture|check|both] [--plan] [--out <dir>] [--json]
+                   [--config <file>] [--compare-environment <name> --compare-target <name>]
+  pagebeam session <capture options>    caller-directed JSON lines on stdin/stdout
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
   --json     machine-readable output
+  --config   capture/session: explicit configuration file; paths stay relative to --cwd
   --build    build the docs site first, as its project builds it, and check
              links against the pages it publishes. Installs its dependencies
              from the lockfile when they are missing. This runs the site's
@@ -61,6 +67,17 @@ interface Args {
   journey: string | undefined;
   out: string | undefined;
   narration: string | undefined;
+  environment: string | undefined;
+  mode: string | undefined;
+  purpose: string | undefined;
+  base: string | undefined;
+  changedFiles: string | undefined;
+  requestedJourneys: string[];
+  all: boolean;
+  plan: boolean;
+  compareEnvironment: string | undefined;
+  compareTarget: string | undefined;
+  configFile: string | undefined;
 }
 
 const PROFILES = new Set(['observe', 'enforce', 'enforce-all']);
@@ -79,10 +96,25 @@ function parse(argv: string[]): Args {
     journey: undefined,
     out: undefined,
     narration: undefined,
+    environment: undefined, mode: undefined, purpose: undefined, base: undefined,
+    changedFiles: undefined, requestedJourneys: [], all: false, plan: false,
+    compareEnvironment: undefined, compareTarget: undefined,
+    configFile: undefined,
   };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '--json') args.json = true;
+    else if (a === '--all') args.all = true;
+    else if (a === '--plan') args.plan = true;
+    else if (['--environment', '--mode', '--purpose', '--base', '--changed-files', '--compare-environment', '--compare-target', '--config'].includes(a!)) {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('--')) throw new BadUsage(`${a} needs a value`);
+      if (a === '--changed-files') args.changedFiles = value;
+      else if (a === '--config') args.configFile = value;
+      else if (a === '--compare-environment') args.compareEnvironment = value;
+      else if (a === '--compare-target') args.compareTarget = value;
+      else args[a!.slice(2) as 'environment' | 'mode' | 'purpose' | 'base'] = value;
+    }
     else if (a === '--publish') args.publish = true;
     else if (a === '--build') args.build = 'always';
     else if (a === '--build=auto') args.build = 'auto';
@@ -94,6 +126,7 @@ function parse(argv: string[]): Args {
       const value = argv[++i];
       if (value === undefined) throw new BadUsage(`${a} needs a value`);
       args[a.slice(2) as 'target' | 'journey' | 'out' | 'narration'] = value;
+      if (a === '--journey') args.requestedJourneys.push(value);
     } else if (a === '--profile') {
       const value = argv[++i];
       if (value === undefined || !PROFILES.has(value)) {
@@ -101,6 +134,13 @@ function parse(argv: string[]): Args {
       }
       args.profile = value as Args['profile'];
     } else throw new BadUsage(`unknown option: ${a}`);
+  }
+  const capturing = args.command === 'capture' || args.command === 'session';
+  if (!capturing && (args.environment !== undefined || args.mode !== undefined || args.purpose !== undefined || args.base !== undefined || args.changedFiles !== undefined || args.compareEnvironment !== undefined || args.compareTarget !== undefined || args.configFile !== undefined || args.all || args.plan)) {
+    throw new BadUsage('capture options require the capture or session command');
+  }
+  if (capturing && (args.build !== undefined || args.publish || args.narration !== undefined || argv.includes('--profile'))) {
+    throw new BadUsage('capture and session do not accept documentation or narration options');
   }
   return args;
 }
@@ -153,7 +193,10 @@ if (args.command === 'init') {
   process.exit(0);
 }
 
-if (args.command === 'shoot') {
+if (args.command === 'capture' || args.command === 'session') {
+  const { captureCommand } = await import('./capture.js');
+  process.exit(await captureCommand(args.cwd, args, args.command === 'session'));
+} else if (args.command === 'shoot') {
   const { shootCommand } = await import('./shoot.js');
   const outcome = await shootCommand(args.cwd, args);
   process.stdout.write(outcome.out);

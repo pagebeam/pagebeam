@@ -20,7 +20,9 @@ export async function open(page: Page, url: string, timeout: number): Promise<vo
 
 const exec = promisify(execFile);
 
-export class TourFailure extends Error {}
+export class TourFailure extends Error {
+  constructor(message: string, readonly stage = 'sign-in') { super(message); }
+}
 
 // What was asked for cannot be run as configured, before anything was opened.
 export class TourUsage extends TourFailure {}
@@ -56,7 +58,7 @@ function seedAdvice(account: TourAccount, target: Target): string {
 
 // The seed prints the new user as JSON, {"username": "...", "password": "..."},
 // on the last line of its output. Anything printed before that is its own.
-async function seed(name: string, account: TourAccount, target: Target, cwd: string): Promise<Credentials> {
+async function seed(name: string, account: TourAccount, target: Target, cwd: string, env: NodeJS.ProcessEnv, timeout: number, safeErrors = false): Promise<Credentials> {
   const command = account.seed!.command;
   if (!seedRunsOn(account, target)) {
     throw new TourFailure(
@@ -68,10 +70,13 @@ async function seed(name: string, account: TourAccount, target: Target, cwd: str
   try {
     ({ stdout } = await exec('sh', ['-c', command], {
       cwd,
-      env: { ...process.env, PAGEBEAM_TARGET: target.name, PAGEBEAM_TARGET_URL: target.url },
+      env: { ...env, PAGEBEAM_TARGET: target.name, PAGEBEAM_TARGET_URL: target.url },
       maxBuffer: 1 << 24,
+      timeout,
+      killSignal: 'SIGKILL',
     }));
   } catch (error) {
+    if (safeErrors) throw new TourFailure(`the seed for account "${name}" failed`, 'account-preparation');
     const e = error as { stderr?: string; message: string };
     const said = (e.stderr ?? '').trim().split('\n').at(-1) || e.message.split('\n')[0];
     throw new TourFailure(`the seed for account "${name}" failed (${command}): ${said}`);
@@ -92,17 +97,17 @@ async function seed(name: string, account: TourAccount, target: Target, cwd: str
   return { username: made.username, password: made.password };
 }
 
-export function missingEnv(account: TourAccount): string[] {
+export function missingEnv(account: TourAccount, env: NodeJS.ProcessEnv = process.env): string[] {
   if (account.fresh) return [];
   return [account.login.usernameEnv, account.login.passwordEnv].filter(
-    (name): name is string => name !== undefined && (process.env[name] ?? '') === '',
+    (name): name is string => name !== undefined && (env[name] ?? '') === '',
   );
 }
 
-function fromEnv(account: TourAccount): Credentials | undefined {
+function fromEnv(account: TourAccount, env: NodeJS.ProcessEnv): Credentials | undefined {
   const { usernameEnv, passwordEnv } = account.login;
   if (usernameEnv === undefined || passwordEnv === undefined) return undefined;
-  return { username: process.env[usernameEnv] ?? '', password: process.env[passwordEnv] ?? '' };
+  return { username: env[usernameEnv] ?? '', password: env[passwordEnv] ?? '' };
 }
 
 function describe(check: TourRequirement): string {
@@ -151,11 +156,14 @@ export async function signIn(
   name: string,
   account: TourAccount,
   target: Target,
-  options: { cwd: string; timeout: number; scale: number },
+  options: { cwd: string; timeout: number; scale: number; env?: NodeJS.ProcessEnv; safeErrors?: boolean; credentials?: (value: Credentials) => void; setup?: (context: BrowserContext) => Promise<void> },
 ): Promise<SignedIn> {
   const { cwd, timeout, scale } = options;
-  const credentials = account.fresh ? await seed(name, account, target, cwd) : fromEnv(account);
+  const env = options.env ?? process.env;
+  const credentials = account.fresh ? await seed(name, account, target, cwd, env, timeout, options.safeErrors) : fromEnv(account, env);
+  if (credentials) options.credentials?.(credentials);
   const context = await browser.newContext({ deviceScaleFactor: scale });
+  await options.setup?.(context);
   const page = await context.newPage();
   try {
     const form = account.login.form;
@@ -172,7 +180,7 @@ export async function signIn(
     }
     if (account.login.script !== undefined) {
       const script = await moduleDefault(path.resolve(cwd, account.login.script));
-      await script(page, credentials);
+      await script(page, credentials, { env, target });
     }
 
     // Without this a login form that rejected the password is photographed as
@@ -194,7 +202,7 @@ export async function signIn(
       if (why === null) continue;
       throw new TourFailure(
         `account "${name}" is not ready on target "${target.name}": ` +
-          `requirement ${i + 1} (${describe(check)}) failed, ${why}. ${seedAdvice(account, target)}`,
+          `requirement ${i + 1} (${describe(check)}) failed, ${why}. ${seedAdvice(account, target)}`, 'account-readiness',
       );
     }
   } catch (error) {

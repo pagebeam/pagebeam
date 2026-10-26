@@ -1,7 +1,7 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
-import { history, launchBrowser, unavailable, type Unavailable } from '@pagebeam/app';
+import { history, launchBrowser, unavailable, moduleDefault, type Unavailable } from '@pagebeam/app';
 import type { TourJourney, TourStep, Tours } from '@pagebeam/core';
 import { missingEnv, open, settle, signIn, TourFailure, TourUsage, type Target } from './accounts.js';
 import { ffmpegFound, HIDE_CURSOR, paceOf, Recorder, type Box, type Recording } from './record.js';
@@ -132,23 +132,37 @@ function said(step: TourStep): string {
   return `${kind} ${String(value)}`;
 }
 
-async function act(
+export async function act(
   page: Page,
   step: TourStep,
   base: string,
   timeout: number,
   recorder: Recorder | null,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
 ): Promise<Box | undefined> {
   const point = (selector: string) => recorder?.pointAt(page.locator(selector).first(), timeout);
   let box: Box | undefined;
   if ('goto' in step) {
     await open(page, new URL(step.goto, base).href, timeout);
+  } else if ('verify' in step) {
+    const verify = await moduleDefault(path.resolve(cwd, step.verify));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('verification timed out')), timeout);
+      void Promise.resolve().then(() => verify(page, { env })).then(() => { clearTimeout(timer); resolve(); }, error => { clearTimeout(timer); reject(error); });
+    });
+  } else if ('press' in step) {
+    await page.keyboard.press(step.press);
+  } else if ('type' in step) {
+    const value = typeof step.type === 'string' ? step.type : env[step.type.valueEnv];
+    if (value === undefined) throw new Error('typing needs its configured environment value');
+    await page.keyboard.type(value);
   } else if ('click' in step) {
     box = await point(step.click);
     await page.locator(step.click).first().click({ timeout });
     await settle(page, timeout);
   } else if ('fill' in step) {
-    const value = step.fill.value ?? process.env[step.fill.valueEnv!] ?? '';
+    const value = step.fill.value ?? env[step.fill.valueEnv!] ?? '';
     const field = page.locator(step.fill.selector).first();
     if (recorder === null) {
       await field.fill(value, { timeout });
@@ -177,7 +191,7 @@ async function act(
   return box;
 }
 
-async function focusBoxes(
+export async function focusBoxes(
   page: Page,
   selectors: string[],
   fullPage: boolean,
@@ -189,7 +203,7 @@ async function focusBoxes(
     const located = page.locator(selector).first();
     await located.waitFor({ state: 'visible', timeout });
     if (i === 0 && !fullPage) await located.scrollIntoViewIfNeeded({ timeout });
-    const box = await located.boundingBox();
+    const box = await located.boundingBox({ timeout });
     if (box === null) throw new Error(`${selector} has no box to frame`);
     // A box is measured from the viewport; a full-page image starts at the top
     // of the document.
@@ -217,6 +231,7 @@ async function clear(dir: string): Promise<void> {
 }
 
 interface Run {
+  cwd: string;
   name: string;
   journey: TourJourney;
   viewport: Viewport;
@@ -256,7 +271,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
       try {
         if (!('shot' in step)) {
           const at = recorder?.now() ?? 0;
-          const box = await act(page, step, target.url, timeout, recorder);
+          const box = await act(page, step, target.url, timeout, recorder, process.env, run.cwd);
           if (recorder !== null) {
             await recorder.hold();
             const narrated = run.narration?.[String(i)];
@@ -333,6 +348,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
 export async function shoot(request: ShootRequest): Promise<Shoot | Unavailable> {
   const { tours, cwd } = request;
   const { target, journeys } = pick(tours, request);
+  if (journeys.some(([, journey]) => journey.steps.length === 0)) throw new TourUsage('shoot needs saved steps; use capture --mode model or session for exploration');
   checkEnv(tours, journeys);
   if (request.narration !== undefined) checkNarration(tours, request.narration);
 
@@ -384,7 +400,7 @@ export async function shoot(request: ShootRequest): Promise<Shoot | Unavailable>
       const recordings: Recording[] = [];
       for (const viewport of journey.viewports) {
         const context = await contextFor(journey.account, viewport.scale);
-        const run = { name, journey, viewport, target, dir, timeout, sha, ffmpeg, narration: request.narration?.[name] };
+        const run = { cwd, name, journey, viewport, target, dir, timeout, sha, ffmpeg, narration: request.narration?.[name] };
         const followed = await follow(context, run);
         shots.push(...followed.shots);
         if (followed.recording !== undefined) recordings.push(followed.recording);

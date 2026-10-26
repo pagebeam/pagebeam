@@ -1,0 +1,4 @@
+services:
+  api:
+    image: ${CAPTURE_IMAGE:?Set the immutable backend image digest}
+    ports: ['127.0.0.1:4301:4301']

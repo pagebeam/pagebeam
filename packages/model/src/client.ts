@@ -9,6 +9,7 @@ export interface Router {
   // token, or wants a version or project header alongside it.
   headers?: Record<string, string> | undefined;
   timeoutMs?: number | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export class Unanswered extends Error {
@@ -26,7 +27,7 @@ export async function ask(router: Router, system: string, user: string): Promise
   try {
     const response = await fetch(`${router.baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
-      signal: control.signal,
+      signal: router.signal ? AbortSignal.any([router.signal, control.signal]) : control.signal,
       headers: {
         'content-type': 'application/json',
         // Some endpoints want no key at all. Whatever the provider asks for
