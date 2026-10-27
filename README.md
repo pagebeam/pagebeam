@@ -311,9 +311,81 @@ optional report URL. The
 `writeOutcome` API accepts custom outcome kinds, renderers and publishers. Markdown and HTML
 renderers consume the same data, so a service can render saved outcomes without rerunning capture.
 
+### Declarative setup
+
+Share saved journeys between local use and CI with configuration inheritance:
+
+```yaml
+extends: pagebeam.config.yaml
+
+tours:
+  targets:
+    ci: { url: 'http://127.0.0.1:4300' }
+  accounts:
+    reader:
+      seed:
+        command: [php, artisan, demo, active-month]
+        cwd: { $env: PAGEBEAM_BACKEND_PATH }
+        targets: [ci]
+
+capture:
+  skipDelays: true
+  environments:
+    ci:
+      backend:
+        kind: directory
+        path: { $env: PAGEBEAM_BACKEND_PATH }
+        revision: '${env:PAGEBEAM_BACKEND_REVISION}'
+        start: php artisan serve --host=127.0.0.1 --port=8100
+        ready: 'http://127.0.0.1:8100/'
+      frontend:
+        start: npm run dev -- --host 127.0.0.1 --port 4300
+        ready: 'http://127.0.0.1:4300'
+      fixtures: { version: 'demo-${env:PAGEBEAM_BACKEND_REVISION}' }
+      disposable: true
+```
+
+Pass the overlay with `--config pagebeam.config.ci.yaml`, or the action's `capture-config` input.
+`extends` accepts one JSON or YAML file or an ordered list. Later files override earlier files;
+the current file overrides its parents. Objects merge recursively and arrays replace completely.
+Include paths resolve beside the file declaring them. Runtime paths, including seed `cwd`, still
+resolve from `--cwd`. Cycles and inheritance deeper than 32 files are rejected. Configuration files
+are data and never execute modules.
+
+Environment references resolve after merging, so a profile can replace a setting whose variable is
+not needed in that profile. `${env:NAME}` inserts a required string value. `${env:NAME:-fallback}`
+provides a string default. `{ $env: NAME, default: value }` references an entire value; an unset or
+empty variable uses its default, retaining the default's type. Environment values themselves are
+strings and are never recursively expanded. Shell expressions such as `${HOME}` remain literal
+configuration data for the invoked command to handle. Quote templates inside YAML flow mappings.
+Missing required variables fail before application startup, naming the variable without its value.
+Use command argument arrays for values that must be passed literally rather than interpreted by a shell.
+
+Seeds accept either an existing shell command or an argument array, with an optional working directory.
+For example, a project can call its existing PHP, Python, Ruby or other fixture command directly.
+The final stdout line must contain the generated account's JSON credentials. Target allowlists remain
+in effect, and planning never runs the seed. No adapter script is needed to change directories or
+forward arguments and credentials.
+
+A screenshot following a saved `goto` inherits that navigation's pathname. Use `shot.route` when
+an intervening interaction changes the URL. The browser checks the expected pathname before and
+after taking the screenshot; inference does not turn an unexpected redirect into coverage.
+A screenshot without a prior navigation or explicit route does not count as affected-screen coverage.
+Page-state assertions remain part of the project's journeys.
+
+`capture.skipDelays: true` skips numeric `wait` steps during capture, while preserving selector waits
+and assertions. It defaults to false. This lets a CI profile skip fixed pacing or rate-limit pauses
+when its isolated environment does not need them, without rewriting the saved journey. Guided `shoot`
+recordings retain their configured timing.
+
+Plan-only actions retain a native outcome artifact for `no-ui` and `incomplete` results. Pass that
+artifact to the same reusable reporter used for captures, so skipped runs can replace an older PR
+table. No application install, seed or server startup is performed. Plans that need browser capture
+only expose their selection outputs and leave execution to the conditional capture job.
+
 ### Affected-screen coverage
 
-Give each screenshot its expected pathname. The browser checks this pathname and the target origin
+A screenshot uses its explicit `shot.route`, or the pathname of its most recent saved `goto`. The browser checks this pathname and the target origin
 before capturing; a redirect to login cannot become a successful screenshot of another screen.
 Keep assertions for the page's content and the state being reviewed in the saved journey.
 

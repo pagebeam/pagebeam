@@ -6,8 +6,6 @@ import { ask } from '@pagebeam/model';
 import { capture, explore, planCaptures, compareCaptures, writeCaptureOutcome, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
 import { z } from 'zod';
 import { prepareBaseline } from './baseline.js';
-import { parse as parseYaml } from 'yaml';
-import { parseConfig } from '@pagebeam/core';
 
 interface Asked {
   target: string | undefined;
@@ -44,10 +42,7 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
   process.once('SIGTERM', stop);
   let lines: ReturnType<typeof createInterface> | undefined;
   try {
-    const loaded = asked.configFile === undefined ? await loadConfig(cwd) : {
-      from: asked.configFile,
-      config: parseConfig(parseYaml(await readFile(path.resolve(cwd, asked.configFile), 'utf8'))),
-    };
+    const loaded = await loadConfig(cwd, asked.configFile);
     if (!loaded.from || !loaded.config.tours) throw new Error('no capture journeys are configured');
     const config = loaded.config;
     const mode = z.enum(['saved', 'model', 'caller']).parse(caller ? 'caller' : asked.mode ?? 'saved');

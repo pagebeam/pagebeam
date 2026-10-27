@@ -99,3 +99,9 @@ The CLI does not upload files or post comments. Another tool can consume its JSO
 The TypeScript entrypoint exports `capture`, `planCaptures`, `CaptureSession`, `explore`, `selectJourneys`, `changedFiles`, and `compareCaptures`. The synchronous `selectJourneys` helper retains explicit path mapping for integrations that manage their own selection; the CLI and `capture` use the impact-aware planner. External drivers receive the same session methods used by the CLI.
 
 The GitHub Action accepts `command: capture`, selection inputs, an environment and target, and optional comparison inputs. It uploads evidence after execution failures and exposes `report`, `gallery`, `directory`, and `artifact-url` outputs. The separate reusable reporting workflow publishes PNG release assets and embeds a before-and-after image table on a PR without executing application code with its write token. See the root README for the two-job integration. Pin the action and reporting workflow to a reviewed commit or release.
+
+
+Use `--config pagebeam.config.ci.yaml` for the declarative CI overlay. It inherits journeys and
+backend settings, calls the existing seed command directly, and supplies a default for its example
+environment value. JSON and YAML overlays can share the same base. See the root README for merge
+rules, environment references, native seed working directories and skipped-plan reporting.

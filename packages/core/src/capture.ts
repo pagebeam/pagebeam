@@ -32,6 +32,7 @@ export const captureSchema = z.strictObject({
     disposable: z.boolean().default(false),
     timeoutMs: z.number().int().positive().default(120_000),
   })),
+  skipDelays: z.boolean().default(false),
   impact: z.strictObject({
     root: z.string().default('.'),
     ignore: z.array(z.string()).default([]),

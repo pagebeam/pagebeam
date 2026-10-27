@@ -1,0 +1,15 @@
+extends: pagebeam.config.yaml
+
+tours:
+  accounts:
+    reader:
+      seed:
+        command: [node, seed.mjs]
+        cwd: .
+
+capture:
+  skipDelays: true
+  environments:
+    source:
+      env:
+        EXAMPLE_LABEL: '${env:PAGEBEAM_EXAMPLE_LABEL:-CI notes}'

@@ -130,6 +130,7 @@ jobs:
           checkout: 'false'
           cwd: ${{ github.workspace }}/examples/capture
           environment: source
+          capture-config: pagebeam.config.ci.yaml
           target: local
           compare-base: ${{ github.event.pull_request.base.sha || github.sha }}
           install: node --version

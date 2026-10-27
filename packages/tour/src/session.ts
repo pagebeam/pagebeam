@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { launchBrowser, unavailable, routeMatches } from '@pagebeam/app';
 import { stepSchema, type TourJourney, type Tours, type TourStep } from '@pagebeam/core';
+import { navigationPath } from './checkpoints.js';
 import { act, focusBoxes } from './shoot.js';
 import { signIn, TourFailure } from './accounts.js';
 import { StageFailure } from './environment.js';
@@ -38,6 +39,7 @@ export interface SessionOptions {
   disposable: boolean;
   mask: string[];
   captureRoutes?: string[] | undefined;
+  skipDelays?: boolean | undefined;
   signal: AbortSignal;
   env: NodeJS.ProcessEnv;
   redact(value: string): string;
@@ -48,6 +50,7 @@ export interface SessionOptions {
 export class Incomplete extends Error {}
 
 export class CaptureSession {
+  private navigated: string | undefined;
   private browser: Browser | undefined;
   private context: BrowserContext | undefined;
   private page: Page | undefined;
@@ -232,16 +235,19 @@ export class CaptureSession {
     const result: StepResult = { step: this.actions++, action: kind, status: 'passed' };
     const started = this.recorder?.now() ?? 0;
     try {
-      if ('shot' in step) {
-        const relevant = !o.captureRoutes || Boolean(step.shot.route && o.captureRoutes.some(route => routeMatches(route, step.shot.route!)));
+      if ('wait' in step && typeof step.wait === 'number' && o.skipDelays) {
+        result.skipped = 'configured delay skip';
+      } else if ('shot' in step) {
+        const expectedRoute = step.shot.route ?? this.navigated;
+        const relevant = !o.captureRoutes || Boolean(expectedRoute && o.captureRoutes.some(route => routeMatches(route, expectedRoute)));
         if (!relevant) result.skipped = 'unaffected screen';
         else {
           const target = new URL(o.tours.targets[o.target]!.url);
           const checkRoute = (): void => {
             const actual = new URL(page.url());
             result.route = actual.pathname;
-            if (step.shot.route && (actual.origin !== target.origin || (actual.pathname.replace(/\/$/, '') || '/') !== (step.shot.route.replace(/\/$/, '') || '/'))) {
-              throw new Error(`Screenshot ${step.shot.name} expected route ${step.shot.route}, reached ${actual.pathname}`);
+            if (expectedRoute && (actual.origin !== target.origin || (actual.pathname.replace(/\/$/, '') || '/') !== (expectedRoute.replace(/\/$/, '') || '/'))) {
+              throw new Error(`Screenshot ${step.shot.name} expected route ${expectedRoute}, reached ${actual.pathname}`);
             }
           };
           checkRoute();
@@ -266,6 +272,7 @@ export class CaptureSession {
           if (this.recorder) await this.installRecordingMask();
         }
         await act(page, step, o.tours.targets[o.target]!.url, o.tours.timeoutMs, this.recorder ?? null, o.env, o.cwd);
+        if ('goto' in step) this.navigated = navigationPath(step.goto);
         if ('expect' in step) result.assertion = 'observed';
         if ('verify' in step) result.assertion = 'script';
       }

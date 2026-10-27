@@ -121,7 +121,8 @@ const accountSchema = z
     fresh: z.boolean().default(false),
     seed: z
       .strictObject({
-        command: z.string(),
+        command: z.union([z.string().min(1), z.array(z.string()).min(1)]),
+        cwd: z.string().optional(),
         // Where the seed may run. Unlisted, only a target on this machine.
         targets: z.array(z.string()).optional(),
       })

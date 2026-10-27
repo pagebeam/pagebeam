@@ -337,13 +337,13 @@ runs:
         const needed = coverage !== 'incomplete' && plan.journeys.length > 0;
         fs.appendFileSync(process.env.GITHUB_OUTPUT, `plan=${file}\ncoverage=${coverage}\ncapture-needed=${needed}\n`);
         NODE
-          if [ "$CAPTURE_PLAN" = true ]; then
+          needed="$(node -e 'const p=require(process.argv[1]); process.stdout.write(String(p.coverage?.status !== "incomplete" && p.journeys.length > 0))' "$RUNNER_TEMP/pagebeam-plan.json")"
+          if [ "$CAPTURE_PLAN" = true ] && [ "$needed" = true ]; then
             cp "$RUNNER_TEMP/pagebeam-plan.json" "$RUNNER_TEMP/said.txt"
             cat "$RUNNER_TEMP/said.txt"
             code=$plan_code
           else
-            needed="$(node -e 'const p=require(process.argv[1]); process.stdout.write(String(p.coverage?.status !== "incomplete" && p.journeys.length > 0))' "$RUNNER_TEMP/pagebeam-plan.json")"
-            if [ "$plan_code" = 0 ] && [ "$needed" = true ] && [ -n "$CAPTURE_INSTALL" ]; then
+            if [ "$CAPTURE_PLAN" != true ] && [ "$plan_code" = 0 ] && [ "$needed" = true ] && [ -n "$CAPTURE_INSTALL" ]; then
               (cd "$cwd" && sh -c "$CAPTURE_INSTALL") || exit 2
             fi
             "${pagebeam[@]}" "${args[@]}" | tee "$RUNNER_TEMP/said.txt"
@@ -354,7 +354,7 @@ runs:
           code=${PIPESTATUS[0]}
         fi
 
-        if [ "$PAGEBEAM_COMMAND" = capture ] && [ "$CAPTURE_PLAN" != true ]; then
+        if [ "$PAGEBEAM_COMMAND" = capture ]; then
           node --input-type=module <<'NODE'
         import fs from 'node:fs';
         import path from 'node:path';
@@ -362,6 +362,7 @@ runs:
         if (fs.existsSync(directory)) {
           let result;
           try { result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8')); } catch {}
+          if (!result?.report) process.exit(0);
           const gallery = result?.gallery ?? '';
           const markdown = result?.markdown ?? path.join(directory, 'report.md');
           const manifest = result?.manifest ?? path.join(directory, 'outcome.json');
