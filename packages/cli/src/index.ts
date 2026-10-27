@@ -1,4 +1,4 @@
-export { run, pretty, json } from '@pagebeam/engine';
+export { run, pretty, json, loadConfig } from '@pagebeam/engine';
 export { capture, planCaptures, CaptureSession, explore, selectJourneys, changedFiles, compareCaptures, writeCaptureGallery, writeCaptureOutcome, writeOutcome, captureOutcome, markdownRenderer, htmlRenderer } from '@pagebeam/tour';
 export type { CaptureRequest, CaptureReport, CaptureDriver, Observation, StepResult } from '@pagebeam/tour';
 export type { SessionOptions, Selection, SelectionRequest, Comparison, JourneyResult } from '@pagebeam/tour';

@@ -168,6 +168,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
         const session = new CaptureSession({
           cwd, tours, journey, name, target: request.target, viewport, out: path.join(directory, name, viewport.name),
           mode: report.mode, purpose: report.purpose, disposable: configured.disposable,
+          skipDelays: config.capture?.skipDelays,
           captureRoutes: request.captureRoutes ?? (report.selection.coverage?.status === 'complete' ? report.selection.coverage.routes.map(route => route.route) : undefined),
           mask: config.capture?.mask ?? [], signal, env: managed.env, redact, registerSecret: value => { if (value) secrets.add(value); },
           onStep: async step => { result.steps.push(step); await save(); },

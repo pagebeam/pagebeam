@@ -256,3 +256,37 @@ test('impact roots cannot escape the capture checkout', async () => {
   assert.equal(result.code, 2);
   assert.match(result.stderr, /impact root must be inside the capture checkout/);
 });
+
+
+test('planning infers checkpoint routes from saved navigation without route annotations', async () => {
+  const { cwd, config } = await workspace();
+  for (const journey of Object.values(config.tours.journeys)) for (const step of journey.steps) if ('shot' in step) delete (step.shot as {route?: string}).route;
+  await put(cwd, 'pagebeam.config.json', JSON.stringify(config));
+  const {code, value} = await run(cwd, ['components/NoteList.vue']);
+  assert.equal(code, 0);
+  assert.equal(value.coverage.status, 'complete');
+  assert.deepEqual(value.coverage.routes.map((route: {route: string}) => route.route), ['/notes']);
+});
+
+test('plan-only actions retain native no-UI outcomes for the reusable reporter', async () => {
+  const { cwd } = await workspace();
+  const result = await action(cwd, ['.github/workflows/capture.yml'], true);
+  assert.equal(result.code, 0, result.stderr);
+  const manifest = /^manifest=(.+)$/m.exec(result.outputs)?.[1];
+  assert.ok(manifest);
+  const outcome = JSON.parse(await readFile(manifest, 'utf8'));
+  assert.equal(outcome.coverage.status, 'no-ui');
+  assert.deepEqual(outcome.captures, []);
+});
+
+
+test('plan-only actions retain incomplete outcomes without running application installation', async () => {
+  const { cwd } = await workspace();
+  const result = await action(cwd, ['components/Unknown.vue'], true);
+  assert.equal(result.code, 2, result.stderr);
+  const manifest = /^manifest=(.+)$/m.exec(result.outputs)?.[1];
+  assert.ok(manifest);
+  const outcome = JSON.parse(await readFile(manifest, 'utf8'));
+  assert.equal(outcome.coverage.status, 'incomplete');
+  assert.deepEqual(outcome.captures, []);
+});

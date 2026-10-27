@@ -68,8 +68,10 @@ async function seed(name: string, account: TourAccount, target: Target, cwd: str
   }
   let stdout: string;
   try {
-    ({ stdout } = await exec('sh', ['-c', command], {
-      cwd,
+    const executable = typeof command === 'string' ? 'sh' : command[0]!;
+    const args = typeof command === 'string' ? ['-c', command] : command.slice(1);
+    ({ stdout } = await exec(executable, args, {
+      cwd: path.resolve(cwd, account.seed!.cwd ?? '.'),
       env: { ...env, PAGEBEAM_TARGET: target.name, PAGEBEAM_TARGET_URL: target.url },
       maxBuffer: 1 << 24,
       timeout,
