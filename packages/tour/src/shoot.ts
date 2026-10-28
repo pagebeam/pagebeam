@@ -178,15 +178,59 @@ export async function act(
   } else if ('select' in step) {
     box = await point(step.select.selector);
     await page.locator(step.select.selector).first().selectOption(step.select.value, { timeout });
+  } else if ('scroll' in step) {
+    const rectangle=step.scroll.selector?await page.locator(step.scroll.selector).first().boundingBox():null;
+    const viewport=page.viewportSize();
+    await page.mouse.move(rectangle?rectangle.x+rectangle.width/2:(viewport?.width??800)/2,rectangle?rectangle.y+rectangle.height/2:(viewport?.height??600)/2);
+    await page.mouse.wheel(step.scroll.x,step.scroll.y);
   } else if ('wait' in step) {
     if (typeof step.wait === 'number') await page.waitForTimeout(step.wait);
     else await page.locator(step.wait).first().waitFor({ state: 'visible', timeout });
   } else if ('expect' in step) {
     const { selector, text } = step.expect;
     const located = page.locator(selector);
-    await (text === undefined ? located : located.filter({ hasText: text }))
-      .first()
-      .waitFor({ state: 'visible', timeout });
+    const target=(text===undefined?located:located.filter({hasText:text})).first();
+    try{await target.waitFor({state:'visible',timeout});}
+    catch(error){
+      const content=await located.filter({visible:true}).evaluateAll(elements=>elements.slice(0,5).map(element=>String(element.innerText??element.textContent??'').slice(0,160)));
+      if(text!==undefined&&content.length)throw new Error(`Expected text is absent: ${text}. Visible matches contain: ${JSON.stringify(content)}`);
+      throw error;
+    }
+    if(step.expect.inViewport){
+      const end=Date.now()+timeout;
+      for(;;){
+        const geometry=await target.evaluate(element=>{
+          const view=element.ownerDocument.defaultView!;
+          const bounds=element.getBoundingClientRect();
+          let left=Math.max(0,bounds.left),right=Math.min(view.innerWidth,bounds.right),top=Math.max(0,bounds.top),bottom=Math.min(view.innerHeight,bounds.bottom);
+          for(let parent=element.parentElement;parent;parent=parent.parentElement){
+            const style=view.getComputedStyle(parent),clip=parent.getBoundingClientRect();
+            if(/hidden|clip|scroll|auto/.test(style.overflowX)){left=Math.max(left,clip.left);right=Math.min(right,clip.right);}
+            if(/hidden|clip|scroll|auto/.test(style.overflowY)){top=Math.max(top,clip.top);bottom=Math.min(bottom,clip.bottom);}
+          }
+          return {visible:bounds.width*bounds.height>0&&Math.max(0,right-left)*Math.max(0,bottom-top)/(bounds.width*bounds.height)>=0.99,target:{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height},frame:{left,right,top,bottom},scroll:{x:view.scrollX,y:view.scrollY}};
+        });
+        if(geometry.visible)break;
+        if(Date.now()>=end)throw new Error('Expected element is outside the screenshot frame or clipped by a scroll container: '+JSON.stringify(geometry));
+        await page.waitForTimeout(50);
+      }
+    }
+    if(step.expect.value!==undefined){
+      const end=Date.now()+timeout;
+      while(await target.inputValue()!==step.expect.value){
+        if(Date.now()>=end)throw new Error('Expected form control value is absent');
+        await page.waitForTimeout(50);
+      }
+    }
+    if(step.expect.visibleText&&text!==undefined){
+      const end=Date.now()+timeout;
+      for(;;){
+        const visible=await target.evaluate(element=>String(element.innerText??element.textContent??''));
+        if(visible.includes(text))break;
+        if(Date.now()>=end)throw new Error(`Expected text is not visibly rendered: ${text}`);
+        await page.waitForTimeout(50);
+      }
+    }
   }
   return box;
 }
@@ -267,6 +311,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
           (error.message.split('\n')[0] ?? 'no reason given'),
       );
     });
+    await recorder?.ready(timeout);
     for (const [i, step] of journey.steps.entries()) {
       try {
         if (!('shot' in step)) {

@@ -15,7 +15,7 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
                  [--narration <file>] [--json]
   pagebeam capture --environment <name> --target <name>
                    [--journey <name> ... | --base <ref> | --changed-files <json> | --all]
-                   [--mode saved|model] [--purpose capture|check|both] [--plan] [--out <dir>] [--json]
+                   [--mode auto|saved|model] [--purpose capture|check|both] [--plan] [--out <dir>] [--json]
                    [--config <file>] [--compare-environment <name> --compare-target <name>]
                    [--compare-base <ref> [--baseline-install <command>]] [--viewport <name|all> ...] [--html]
   pagebeam session <capture options>    caller-directed JSON lines on stdin/stdout

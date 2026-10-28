@@ -11,3 +11,5 @@ export * from './catalogue.js';
 export * from './screens.js';
 export * from './env.js';
 export * from './impact.js';
+
+export {componentMarkup} from './markup.js';

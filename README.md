@@ -10,7 +10,7 @@ Full documentation: https://docs.pagebeam.dev
 
 ## Application evidence
 
-`pagebeam capture` runs selected application journeys, checks visible outcomes,
+`pagebeam capture` discovers review states or runs saved application journeys, checks visible outcomes,
 and writes screenshots, a structured outcome, and a Markdown table. Another tool can
 consume the result and publish its own review. Capture requires no GitHub token.
 
@@ -26,8 +26,9 @@ Journeys can follow saved steps, accept actions from another tool over the sessi
 protocol, or explore a configured goal using your model provider.
 
 Changed-file selection traces affected routes through component dependencies in both revisions.
-Only journeys with matching screenshot checkpoints run. Unknown changes and missing coverage
-exit incomplete before application startup. Docs and CI changes skip capture.
+With discovery and a model enabled, automatic review identifies visible changes and learns browser
+actions without saved journeys. Static mode runs matching screenshot checkpoints and exits incomplete
+before startup when their coverage is unknown. Docs and CI changes skip capture.
 `--all` and named journeys request manual runs without claiming affected-screen coverage.
 
 See [the runnable capture example](examples/capture/README.md) for all backend
@@ -407,11 +408,92 @@ and a capture budget exceeded all return exit code 2. New and deleted routes are
 as incomplete because the same screen is unavailable in one revision. No substitute screen is selected.
 Explicit `--all` or `--journey` runs return `manual` coverage, not an automatic coverage claim.
 
-The default analyzer recognizes conventional Next.js, Nuxt, SvelteKit, Remix and pages-folder routes.
+The default analyzer recognizes conventional Next.js, Nuxt, SvelteKit, Remix, Vue Router and pages-folder routes.
 It follows static imports, literal lazy imports, re-exports, layouts and framework component names.
 Computed imports, dynamic components and runtime route configuration cannot establish complete coverage.
 Source analysis identifies routes, not every conditional state on them. Saved journeys define the login,
 data and interactions needed for those states. Account preparation alone is not screenshot coverage.
+
+### Automatic screen captures
+
+Enable discovery for an application to review changes without maintaining screenshot journeys.
+With a source-enabled model configured, `capture --mode auto --base ...` reads the actual diff, identifies distinct
+visible changes and chooses comparable states. Changes inside menus require an expanded-menu state;
+a screenshot of the default page does not cover them. Responsive default views include their initial
+state at both representative widths, before optional selections or nested menus. Recognized responsive
+CSS requires representative wide and narrow views; selected responsive error states include both widths to review their message
+and recovery controls. Coverage is reported as model assessment.
+
+```yaml
+model:
+  baseUrl: https://your-provider.example/v1
+  name: your-model
+  apiKeyEnv: PAGEBEAM_MODEL_KEY
+  sendSource: true
+capture:
+  discovery:
+    context: .pagebeam/fixture-context.json
+    maxCalls: 40
+    maxDecisions: 8
+    timeoutMs: 180000
+  impact:
+    root: apps/editor
+```
+
+Keep targets, account login and disposable fixture setup in the capture configuration. Fixture data
+and generated values must be deterministic across replays. Configure `fixtures.restore` to restore the
+same complete starting data before each discovered state and each saved review replay; this prevents
+action-driven data changes from contaminating later screenshots. Fixture context
+is JSON describing available records, workspace memberships and permissions, without credentials or
+screenshot instructions. A public frontend can use `login: { anonymous: true }`; a frontend without a
+backend uses `backend: { kind: none }`. No saved journeys are required. Each application needs its own
+target and impact root when multiple applications share route paths.
+
+Automatic screenshot review chooses representative changed UI states. It does not establish every
+business workflow or decide the correct business outcome. Keep explicit saved journeys and assertions
+for critical functional tests. Each discovery run saves a recipe that can inform those tests after
+its expected outcome has been reviewed; an exhaustive handwritten journey catalogue is unnecessary.
+
+Pagebeam discovers Git changes, traces imports and routes, starts configured environments and observes
+the running browser. The model judges which visible changes matter and how to reach them using bounded
+browser actions. It cannot execute scripts, read environment credentials or issue screenshots. Provider
+options can be passed through `model.parameters` and overridden for `changes`, `plan` or `navigate`
+under `model.reviewParameters`; authentication remains in environment variables.
+Pagebeam selects changed source excerpts and component-to-route relationships itself. Navigation also
+receives successful paths already learned on the same revision. Source sharing requires
+`sendSource: true`; sensitive-looking excerpts are withheld. If missing evidence concerns omitted or
+shortened source, Pagebeam retrieves one focused source batch and asks for classification again.
+
+Navigation reads the corresponding revision’s component source when the diff omits unchanged prerequisites.
+Visible assertions must fit inside the screenshot frame and clipping containers. Learned actions and
+assertions are frozen in a recipe. Clicks on nested labels bind to their observed controls. A failed
+saved recipe can trigger one bounded rediscovery pass when disposable fixtures can be restored;
+failed attempts remain in the report artifacts. Screenshot capture, baseline replay,
+independent head replay and pixel comparison then run without model calls. Baseline navigation can
+differ when a redesign moved a control; the recipe records both action sequences and the comparison
+is explicitly model assessed. Unreachable states, missing fixture data, exhausted budgets and unstable
+screenshots produce an incomplete report rather than a coverage claim. Completed states remain in
+the report if later discovery fails.
+
+Public cacheable assets are frozen in memory within each revision, including external JSON assets.
+Authenticated responses, private/no-store responses, navigation documents and same-origin JSON data
+are excluded. Snapshots respect response variants and have bounded memory; artifacts record resource
+hashes rather than response bodies.
+
+Still reviews disable transitions before navigation and wait for fonts and layout. Calibration retries
+up to three times while a page settles; persistent instability remains a failure.
+
+Screenshots include a difference image. Repeated calibration frames identify a bounded volatile-pixel
+mask, which must pass a held-out frame and an independent fresh-context replay. Larger instability is
+reported instead of being hidden. Recipes, decisions, stability measurements and native before/after
+reports are written beneath the ignored `.pagebeam/runs/` directory. The reusable action publishes
+the same native report and image table.
+
+Without a source-enabled model, discovery uses static route tracing and optional disclosure-control exploration.
+It resolves application-scoped TypeScript, Vite and Nuxt aliases, workspace exports and literal Vue
+Router routes. Named imports follow their exported dependencies. In disposable environments it opens
+up to `maxControls` semantic disclosure controls; this limited mode does not claim arbitrary interaction
+coverage. Use `--mode saved` for explicit journeys and check-only runs.
 
 For other frameworks and server-rendered apps, declare route dependencies with project-relative globs:
 

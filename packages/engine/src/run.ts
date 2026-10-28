@@ -614,6 +614,7 @@ async function mend(
     model: settings.name,
     timeoutMs: settings.timeoutMs,
     headers: settings.headers,
+    parameters:settings.parameters,
     ...(settings.apiKeyEnv ? { apiKey: process.env[settings.apiKeyEnv] } : {}),
   };
   const sourceOf = new Map(pages.map((page) => [page.path, page.raw]));

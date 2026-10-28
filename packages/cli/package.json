@@ -31,6 +31,8 @@
     "parse5": "^8.0.1",
     "picocolors": "^1.1.1",
     "picomatch": "^4.0.7",
+    "pixelmatch": "8.0.0",
+    "pngjs": "7.0.0",
     "tinyglobby": "^0.2.17",
     "unist-util-visit": "^5.1.0",
     "yaml": "^2.9.1",

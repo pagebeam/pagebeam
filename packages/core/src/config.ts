@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { captureSchema, explorationSchema } from './capture.js';
 
+const modelParameters=z.record(z.unknown()).refine(value=>!['model','messages','stream','temperature'].some(key=>Object.hasOwn(value,key)),{message:'Model parameters cannot override model, messages, stream or temperature'});
+
 const docsSchema = z.strictObject({
   root: z.string(),
   include: z.array(z.string()).default(['**/*.{md,mdx,markdown,astro}']),
@@ -102,6 +104,7 @@ const accountSchema = z
       .strictObject({
         // A module whose default export is given the page and the credentials.
         script: z.string().optional(),
+        anonymous: z.literal(true).optional(),
         usernameEnv: z.string().optional(),
         passwordEnv: z.string().optional(),
         form: z
@@ -113,8 +116,8 @@ const accountSchema = z
           })
           .optional(),
       })
-      .refine((login) => login.script !== undefined || login.form !== undefined, {
-        message: 'login needs a script or a form',
+      .refine((login) => login.anonymous === true || login.script !== undefined || login.form !== undefined, {
+        message: 'login needs a script, a form or an explicit anonymous session',
       }),
     confirm: z.string(),
     // A new user for every run, made by the seed, for screens only a new user sees.
@@ -161,9 +164,10 @@ export const stepSchema = z.union([
       }),
     ...note,
   }),
+  z.strictObject({scroll:z.strictObject({selector:z.string().optional(),x:z.number().int().min(-5000).max(5000).default(0),y:z.number().int().min(-5000).max(5000)}),...note}),
   z.strictObject({ select: z.strictObject({ selector: z.string(), value: z.string() }), ...note }),
   z.strictObject({ wait: z.union([z.string(), z.number().int().nonnegative()]), ...note }),
-  z.strictObject({ expect: z.strictObject({ selector: z.string(), text: z.string().optional() }), ...note }),
+  z.strictObject({ expect: z.strictObject({ selector: z.string(), text: z.string().optional(), value:z.string().optional(), visibleText:z.boolean().optional(), inViewport:z.boolean().optional() }).refine(value=>value.text===undefined||value.value===undefined,{message:'Use text or value, not both'}), ...note }),
   z.strictObject({
     shot: z.strictObject({
       name: z.string().regex(/^[\w.-]+$/, 'a shot name becomes part of a file name'),
@@ -212,7 +216,7 @@ const toursSchema = z
         steps: z.array(stepSchema).default([]),
         record: recordSchema.default(false),
       }),
-    ),
+    ).default({}),
     timeoutMs: z.number().int().positive().default(15_000),
   })
   .superRefine((tours, ctx) => {
@@ -290,6 +294,8 @@ export const configSchema = z.strictObject({
       apiKeyEnv: z.string().optional(),
       // For a provider that wants something besides a bearer token.
       headers: z.record(z.string()).default({}),
+      parameters:modelParameters.default({}),
+      reviewParameters:z.strictObject({changes:modelParameters.optional(),plan:modelParameters.optional(),navigate:modelParameters.optional()}).default({}),
       // On once a provider is named. Set false to keep the provider configured
       // and stop asking it.
       enrich: z.boolean().default(true),

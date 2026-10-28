@@ -57,8 +57,8 @@ inputs:
     description: Named tours target.
     default: local
   viewports:
-    description: Viewport names, one per line. Desktop by default; use phone or all explicitly.
-    default: desktop
+    description: Viewport names, one per line. Auto uses the review plan; saved defaults to desktop.
+    default: ''
   journeys:
     description: Explicit capture journeys, one name per line. Overrides changed-file selection.
     default: ''
@@ -72,8 +72,8 @@ inputs:
     description: Explicitly capture every configured journey.
     default: 'false'
   mode:
-    description: Capture execution style, saved or model.
-    default: saved
+    description: Capture execution style. Auto judges review states when discovery is configured; saved replays declared journeys.
+    default: auto
   purpose:
     description: capture, check, or both.
     default: both
@@ -139,7 +139,7 @@ outputs:
     description: complete, incomplete, no-ui, or manual.
     value: ${{ steps.run.outputs.coverage }}
   capture-needed:
-    description: True when the plan has journeys to execute and coverage is not incomplete.
+    description: True when saved journeys or automatic state judgment need application startup.
     value: ${{ steps.run.outputs.capture-needed }}
   directory:
     description: Directory containing capture runs, suitable for another upload or review tool.
@@ -334,10 +334,10 @@ runs:
         const file = path.join(process.env.RUNNER_TEMP, 'pagebeam-plan.json');
         const plan = JSON.parse(fs.readFileSync(file, 'utf8'));
         const coverage = plan.coverage?.status || 'manual';
-        const needed = coverage !== 'incomplete' && plan.journeys.length > 0;
+        const needed = Boolean(plan.review?.required) || coverage !== 'incomplete' && plan.journeys.length > 0;
         fs.appendFileSync(process.env.GITHUB_OUTPUT, `plan=${file}\ncoverage=${coverage}\ncapture-needed=${needed}\n`);
         NODE
-          needed="$(node -e 'const p=require(process.argv[1]); process.stdout.write(String(p.coverage?.status !== "incomplete" && p.journeys.length > 0))' "$RUNNER_TEMP/pagebeam-plan.json")"
+          needed="$(node -e 'const p=require(process.argv[1]); process.stdout.write(String(Boolean(p.review?.required) || p.coverage?.status !== "incomplete" && p.journeys.length > 0))' "$RUNNER_TEMP/pagebeam-plan.json")"
           if [ "$CAPTURE_PLAN" = true ] && [ "$needed" = true ]; then
             cp "$RUNNER_TEMP/pagebeam-plan.json" "$RUNNER_TEMP/said.txt"
             cat "$RUNNER_TEMP/said.txt"
@@ -358,11 +358,14 @@ runs:
           node --input-type=module <<'NODE'
         import fs from 'node:fs';
         import path from 'node:path';
-        const directory = path.join(process.env.RUNNER_TEMP, 'pagebeam-captures');
-        if (fs.existsSync(directory)) {
+        const artifactRoot = path.join(process.env.RUNNER_TEMP, 'pagebeam-captures');
+        if (fs.existsSync(artifactRoot)) {
           let result;
           try { result = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'said.txt'), 'utf8')); } catch {}
           if (!result?.report) process.exit(0);
+          const directory = result.manifest ? path.dirname(path.resolve(result.manifest)) : artifactRoot;
+          const relative = path.relative(artifactRoot, directory);
+          if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Capture manifest is outside the artifact directory');
           const gallery = result?.gallery ?? '';
           const markdown = result?.markdown ?? path.join(directory, 'report.md');
           const manifest = result?.manifest ?? path.join(directory, 'outcome.json');

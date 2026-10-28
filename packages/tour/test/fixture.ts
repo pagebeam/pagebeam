@@ -87,6 +87,10 @@ export async function notesApp(): Promise<NotesApp> {
         'const inner=outer.querySelector("note-input").shadowRoot;inner.querySelector("input").oninput=event=>inner.querySelector("span").textContent=event.target.value;</script>');
       return;
     }
+    if (url.pathname === '/disclosure-notes') {
+      html(200, NAV + '<h1>Notes</h1><details><summary id="formatting">Formatting</summary><ul><li>Heading 1</li><li>Heading 2</li></ul></details>');
+      return;
+    }
     if (url.pathname === '/notes') {
       const list =
         user.notes.length === 0

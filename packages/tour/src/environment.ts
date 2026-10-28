@@ -14,6 +14,7 @@ export interface ManagedEnvironment {
   env: NodeJS.ProcessEnv;
   metadata: { kind: string; revision: string | null; fixtureVersion: string | null; mocked: boolean };
   start(): Promise<void>;
+  restoreFixtures?(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -30,8 +31,8 @@ export function environment(
   let ownedCompose = false;
   const metadata = {
     kind: backend.kind,
-    revision: backend.kind === 'url' ? backend.revision : backend.kind === 'image' ? backend.image : null as string | null,
-    fixtureVersion: config.fixtures?.version ?? (backend.kind === 'mock' ? backend.version : null),
+    revision: backend.kind === 'none' ? 'not-applicable' : backend.kind === 'url' ? backend.revision : backend.kind === 'image' ? backend.image : null as string | null,
+    fixtureVersion: config.fixtures?.version ?? (backend.kind === 'mock' ? backend.version : backend.kind === 'none' ? 'frontend-only' : null),
     mocked: backend.kind === 'mock',
   };
 
@@ -94,6 +95,9 @@ export function environment(
   return {
     env,
     metadata,
+    async restoreFixtures() {
+      if(config.fixtures?.restore)await command('sh',['-c',config.fixtures.restore],cwd,'fixtures');
+    },
     async start() {
       for (const name of config.requiredEnv) if (!env[name as keyof typeof env]) throw new StageFailure('environment', `required variable ${name} is not set`);
       if (backend.kind === 'url') await ready(backend.url);
@@ -122,7 +126,7 @@ export function environment(
         ownedCompose = true;
         await command('docker', [...compose, 'up', '-d', '--no-build'], root, 'startup');
         await ready(backend.ready);
-      } else {
+      } else if (backend.kind !== 'none') {
         if (backend.kind === 'mock') {
           await stat(path.resolve(cwd, backend.fixtures));
           env.PAGEBEAM_FIXTURES = path.resolve(cwd, backend.fixtures);

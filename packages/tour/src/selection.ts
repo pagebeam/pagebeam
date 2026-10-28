@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import picomatch from 'picomatch';
-import type { CaptureConfig, Tours } from '@pagebeam/core';
+import type { CaptureConfig, Tours, TourJourney } from '@pagebeam/core';
 
 export interface SelectionRequest {
   journeys?: string[] | undefined;
@@ -12,8 +12,10 @@ export interface SelectionRequest {
 export interface Selection {
   journeys: { name: string; reasons: string[] }[];
   unmapped: string[];
+  generated?: Record<string, TourJourney>;
   coverage?: {
     status: 'complete' | 'incomplete' | 'no-ui' | 'manual';
+    basis?: 'static' | 'model';
     routes: { route: string; files: string[]; journeys: string[]; presence: 'existing' | 'added' | 'removed' }[];
     ignored: string[];
     reasons: string[];

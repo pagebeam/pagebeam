@@ -8,6 +8,7 @@ export interface Router {
   // For a provider that authenticates with something other than a bearer
   // token, or wants a version or project header alongside it.
   headers?: Record<string, string> | undefined;
+  parameters?: Record<string,unknown> | undefined;
   timeoutMs?: number | undefined;
   signal?: AbortSignal | undefined;
 }
@@ -36,7 +37,9 @@ export async function ask(router: Router, system: string, user: string): Promise
         ...(router.headers ?? {}),
       },
       body: JSON.stringify({
+        ...router.parameters,
         model: router.model,
+        stream:false,
         temperature: 0,
         messages: [
           { role: 'system', content: system },
@@ -48,9 +51,9 @@ export async function ask(router: Router, system: string, user: string): Promise
     if (!response.ok) {
       throw new Unanswered(`${response.status} ${(await response.text()).slice(0, 200)}`);
     }
-    const body = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
+    const body = (await response.json()) as { choices?: { finish_reason?:unknown;message?: { content?: unknown } }[] };
     const said = body.choices?.[0]?.message?.content;
-    if (typeof said !== 'string' || said.trim() === '') throw new Unanswered('it said nothing');
+    if (typeof said !== 'string' || said.trim() === '') throw new Unanswered('it said nothing'+(typeof body.choices?.[0]?.finish_reason==='string'?` (finish reason: ${body.choices[0].finish_reason})`:''));
     return said;
   } catch (error) {
     if (error instanceof Unanswered) throw error;
