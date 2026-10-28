@@ -492,16 +492,16 @@ test('a missed discovery state reuses a successful sibling without another model
 test('public resource snapshots exclude credentialed requests and responses',async()=>{
   const {cwd,head,base}=await project();
   for(const mode of ['request','response']){
-    let assets=0;
+    let assets=0;const assetCookies:string[]=[];
     const server=createServer((request,response)=>{
-      if(request.url==='/asset.js'){assets++;response.setHeader('content-type','application/javascript');response.setHeader('cache-control','public, max-age=3600');if(mode==='response')response.setHeader('set-cookie','auth_fixture=present; Path=/; SameSite=Lax');response.end('window.loaded=true');return;}
-      response.setHeader('content-type','text/html');response.end(`<h1>Private asset</h1>${mode==='request'?`<script>document.cookie='auth_fixture=present; path=/'</script>`:''}<script src="/asset.js"></script>`);
+      if(request.url==='/asset.js'){assetCookies.push(request.headers.cookie??'');assets++;response.setHeader('content-type','application/javascript');response.setHeader('cache-control','public, max-age=3600');if(mode==='response')response.setHeader('set-cookie','auth_fixture=present; Path=/; SameSite=Lax');response.end('window.loaded=true');return;}
+      response.setHeader('content-type','text/html');if(mode==='request')response.setHeader('set-cookie','auth_fixture=present; Path=/; SameSite=Lax');response.end('<h1>Private asset</h1><script src="/asset.js"></script>');
     });
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();if(!address||typeof address==='string')throw new Error('No fixture address');const url=`http://127.0.0.1:${address.port}`,store=new PublicResources(),original=settings(head,base,url);
     const config=parseConfig({...original,tours:{...original.tours,journeys:{asset:{account:'visitor',record:false,steps:[{goto:'/'},{shot:{name:'asset',route:'/',fullPage:false}}]}}}});
     try{
       for(let index=0;index<2;index++){const result=await capture({cwd,config,environment:'head',target:'head',all:true,mode:'saved',resources:{store,scope:'head'}});assert.equal(result.report.status,'passed',JSON.stringify(result.report.errors));}
-      assert.ok(assets>1);assert.equal(store.manifest().length,0);
+      assert.ok(assets>1);if(mode==='request')assert.ok(assetCookies.every(cookie=>cookie.includes('auth_fixture=present')),JSON.stringify(assetCookies));assert.equal(store.manifest().length,0,mode);
     }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
   }
 });
