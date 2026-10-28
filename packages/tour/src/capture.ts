@@ -1,10 +1,11 @@
+import type {PublicResources} from './resources.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { history, routeMatches, type ImpactAnalyzer } from '@pagebeam/app';
 import type { PagebeamConfig } from '@pagebeam/core';
 import { selectViewports } from './viewports.js';
-import { environment, StageFailure } from './environment.js';
+import { environment, StageFailure, type ManagedEnvironment } from './environment.js';
 import { CaptureSession, Incomplete, type StepResult } from './session.js';
 import type { Selection, SelectionRequest } from './selection.js';
 import { planCaptures } from './plan.js';
@@ -24,6 +25,12 @@ export interface CaptureRequest extends SelectionRequest {
   mode?: 'saved' | 'caller' | 'model' | undefined;
   purpose?: 'capture' | 'check' | 'both' | undefined;
   signal?: AbortSignal | undefined;
+  runtime?: ManagedEnvironment | undefined;
+  restoreFixtures?: boolean | undefined;
+  deferNavigation?: boolean | undefined;
+  resources?:{store:PublicResources;scope:string}|undefined;
+  calibrate?: boolean | undefined;
+  clock?: string | undefined;
 }
 
 export interface JourneyResult {
@@ -52,6 +59,7 @@ export interface CaptureReport {
   selection: Selection;
   results: JourneyResult[];
   errors: { stage: string; message: string }[];
+  recipe?: {digest:string;side:'head' | 'base'};
 }
 
 export type CaptureDriver = (session: CaptureSession) => Promise<void>;
@@ -123,9 +131,10 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     if (!['saved', 'caller', 'model'].includes(report.mode)) throw new Error('unknown execution style');
     if (!['capture', 'check', 'both'].includes(report.purpose)) throw new Error('unknown run purpose');
     if (!config.tours) throw new Error('no tours are configured');
-    const tours = config.tours;
+    const tours = { ...config.tours, journeys: { ...config.tours.journeys } };
     report.revision = await history.head(cwd);
     report.selection = await planCaptures(request, request.impactAnalyzer);
+    Object.assign(tours.journeys, report.selection.generated);
     signal.throwIfAborted();
     if (report.selection.coverage?.status === 'incomplete') {
       report.status = 'incomplete';
@@ -146,7 +155,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
       throw new Error('data-changing exploration requires disposable test data');
     }
     for (const [key, value] of Object.entries(configured.env)) if (value && /secret|token|password|api.?key/i.test(key)) secrets.add(value);
-    managed = environment(configured, cwd, id, directory, signal);
+    managed = request.runtime ?? environment(configured, cwd, id, directory, signal);
     for (const { name } of report.selection.journeys) {
       const journey = tours.journeys[name]!;
       for (const key of missingEnv(tours.accounts[journey.account]!, managed.env)) throw new StageFailure('environment', `required variable ${key} is not set`);
@@ -162,6 +171,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     for (const { name } of report.selection.journeys) {
       const journey = tours.journeys[name]!;
       for (const viewport of selectViewports(journey, request.viewports)) {
+        if(request.restoreFixtures)await managed.restoreFixtures?.();
         const result: JourneyResult = { journey: name, viewport: viewport.name, size: { width: viewport.width, height: viewport.height, scale: viewport.scale }, status: 'running', steps: [] };
         report.results.push(result);
         report.stage = 'journey';
@@ -169,6 +179,10 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
           cwd, tours, journey, name, target: request.target, viewport, out: path.join(directory, name, viewport.name),
           mode: report.mode, purpose: report.purpose, disposable: configured.disposable,
           skipDelays: config.capture?.skipDelays,
+          deferNavigation:request.deferNavigation,
+          resources:request.resources,
+          calibrate:request.calibrate,
+          clock:request.clock,
           captureRoutes: request.captureRoutes ?? (report.selection.coverage?.status === 'complete' ? report.selection.coverage.routes.map(route => route.route) : undefined),
           mask: config.capture?.mask ?? [], signal, env: managed.env, redact, registerSecret: value => { if (value) secrets.add(value); },
           onStep: async step => { result.steps.push(step); await save(); },
@@ -178,6 +192,19 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
           if (report.mode === 'saved') {
             if (!journey.steps.length) throw new Error('saved execution needs declared steps');
             for (const step of journey.steps) await session.step(step);
+            const discovery = config.capture?.discovery;
+            if (report.selection.generated?.[name] && discovery?.controls && configured.disposable) {
+              const navigation = journey.steps.find(step => 'goto' in step);
+              if (navigation && 'goto' in navigation) {
+                const additional: typeof journey.steps = [];
+                for (const control of await session.disclosures(discovery.maxControls)) {
+                  const steps: typeof journey.steps = [navigation, ...(discovery.ready ? [{wait:discovery.ready}] : []), {click:control.selector}, {shot:{name:control.name,route:navigation.goto,fullPage:false,focus:[]}}];
+                  for (const step of steps) await session.step(step);
+                  additional.push(...steps);
+                }
+                journey.steps.push(...additional);
+              }
+            }
           } else {
             if (!driver) throw new Error('exploration needs a driver');
             await driver(session);

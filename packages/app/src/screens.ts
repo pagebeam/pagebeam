@@ -1,5 +1,8 @@
 import path from 'node:path';
 import { parse } from '@babel/parser';
+import { resolver } from './resolution.js';
+import { vueRoutes } from './router.js';
+import { dependencies } from './dependencies.js';
 
 // A screen is somewhere a reader can go, which is a route. A directory is not
 // a screen: grouping by one invents "components" and "utils" as places nobody
@@ -38,28 +41,6 @@ function withoutExtension(file: string): string {
   return file.replace(/\.[^./]+$/, '');
 }
 
-// Where a specifier points, tried against what is actually there rather than
-// assumed from its shape.
-function resolve(from: string, specifier: string, have: Set<string>): string | null {
-  let base: string;
-  if (specifier.startsWith('.')) base = path.posix.join(path.posix.dirname(from), specifier);
-  else if (/^[~@]\//.test(specifier)) base = specifier.slice(2);
-  else if (specifier.startsWith('~') || specifier.startsWith('@/')) base = specifier.replace(/^[~@]\/?/, '');
-  else return null;
-
-  base = base.replace(/^\/+/, '');
-  for (const candidate of [
-    base,
-    ...['.vue', '.svelte', '.astro', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.css', '.scss', '.sass', '.less'].flatMap((e) => [
-      base + e,
-      `${base}/index${e}`,
-    ]),
-  ]) {
-    if (have.has(candidate)) return candidate;
-  }
-  return null;
-}
-
 // Each framework decides which files are routes, what their addresses are and
 // what wraps them, with its own rules for a path segment. The conventions in
 // use are worked out once per application from its file list and its
@@ -69,6 +50,7 @@ export interface ScreenRoute {
   addresses: string[];
   // Files rendered around this route: layouts, templates, parent routes.
   wrappers: string[];
+  sources?: string[];
 }
 
 export interface RouteModel {
@@ -80,6 +62,7 @@ export interface RouteModel {
   // False where routes depend on configuration pagebeam cannot evaluate.
   complete: boolean;
   reason?: string;
+  reasonsFor?(file: string): string[];
 }
 
 export interface ConfigFile {
@@ -392,9 +375,15 @@ export function routeModel(
   const remixConfigured = allConfigs.find(
     (c) => /(^|\/)(remix|vite|react-router)\.config\./.test(c.path) && /\broutes\s*[(:]|flatRoutes|defineRoutes/.test(c.text),
   );
+  const resolution = resolver(list.map(file => ({ path: file.path, text: file.text ?? '' })));
+  const explicit = vueRoutes(list.map(file => ({ path: file.path, text: file.text ?? '' })), resolution.resolve);
+  const routerScopes = new Set(explicit.routers.map(file => resolution.scope(file)));
   const frameworks = new Set<string>();
 
   const classify = (file: string): ScreenRoute | null => {
+    const configured = explicit.routes.get(file);
+    if (configured) { frameworks.add('vue-router'); return configured; }
+    if (routerScopes.has(resolution.scope(file))) return null;
     const nextHere = nextFor(file);
     const next = nextHere.settings;
     const appPage = file.match(nextHere.appPage);
@@ -448,6 +437,7 @@ export function routeModel(
   };
 
   const reasons = [
+    ...explicit.reasons,
     ...(remixConfigured === undefined ? [] : [`routes are configured in ${remixConfigured.path}, which pagebeam does not evaluate`]),
     ...[...settingsOf.values()].flatMap((n) => (n.unread === null ? [] : [n.unread])),
   ];
@@ -458,7 +448,13 @@ export function routeModel(
       return known.get(file)!;
     },
     frameworks,
-    read: allConfigs.filter((c) => !c.path.endsWith('package.json') || nextManifests.includes(c)).map((c) => c.path),
+    reasonsFor(file) {
+      return reasons.filter(reason => {
+        const sources = [...allConfigs.map(config => config.path), ...explicit.routers].filter(at => reason.includes(at));
+        return !sources.length || sources.some(at => resolution.scope(at) === resolution.scope(file));
+      });
+    },
+    read: allConfigs.filter((c) => !c.path.endsWith('package.json') || nextManifests.includes(c)).map((c) => c.path).concat(explicit.routers),
     complete: reasons.length === 0,
     ...(reasons.length === 0 ? {} : { reason: reasons.join('; ') }),
   };
@@ -472,12 +468,15 @@ export interface Screens {
   unreached: Set<string>;
   // Why the routes above may not be all of them, where that is known.
   incomplete?: string;
+  routeIssues?: Map<string, string[]>;
+  applications?: Map<string,Map<string,Set<string>>>;
 }
 
-export function screensOf(files: { path: string; text: string }[], configs: ConfigFile[] = []): Screens {
+export function screensOf(files: { path: string; text: string }[], configs: ConfigFile[] = [], options:{root?:string} = {}): Screens {
   const have = new Set(files.map((f) => f.path));
   const text = new Map(files.map((f) => [f.path, f.text]));
   const model = routeModel(files, configs);
+  const resolution = resolver(files);
 
   // A component resolved by its name, wherever a framework keeps them. The
   // name is built the way frameworks build it: a component in a directory
@@ -488,8 +487,9 @@ export function screensOf(files: { path: string; text: string }[], configs: Conf
   const uncertain = new Set<string>();
   const remember = (name: string, at: string): void => {
     if (name.includes('-')) name = name.split('-').map(capitalised).join('');
-    if (name !== '' && byName.has(name) && byName.get(name) !== at) ambiguous.add(name);
-    if (name !== '' && !byName.has(name)) byName.set(name, at);
+    const key = resolution.scope(at) + ':' + name;
+    if (name !== '' && byName.has(key) && byName.get(key) !== at) ambiguous.add(key);
+    if (name !== '' && !byName.has(key)) byName.set(key, at);
   };
   for (const file of files) {
     if (!COMPONENT.test(file.path) || model.routeOf(file.path) !== null) continue;
@@ -500,16 +500,27 @@ export function screensOf(files: { path: string; text: string }[], configs: Conf
     remember(parts.slice(2).map(capitalised).join(''), file.path);
   }
 
-  const from = (file: string): string[] => {
+  const dependencyCache=new Map<string,{found:{file:string;names?:string[]}[];issues:string[]}>();
+  const from = (file: string, names?: string[]): {file: string; names?: string[]}[] => {
+    const cacheKey=file+'#'+(names?[...names].sort().join(','):'*');
+    const cached=dependencyCache.get(cacheKey);
+    if(cached){for(const issue of cached.issues)uncertain.add(issue);return cached.found;}
+    const localIssues=new Set<string>();
     const source = text.get(file) ?? '';
-    const found: string[] = [];
-    if (/import\s*\(\s*[^'"\s]|import\.meta\.glob|<component\b[^>]*:is=/.test(source)) uncertain.add(`Dynamic dependencies in ${file} cannot be established statically`);
-    for (const pattern of [IMPORT, LAZY, REEXPORT, RESOURCE]) {
+    const found: {file: string; names?: string[]}[] = [];
+    if (/import\s*\(\s*[^'"\s]|import\.meta\.glob|<component\b[^>]*:is=/.test(source)) localIssues.add(`Dynamic dependencies in ${file} cannot be established statically`);
+    const links = dependencies(file, source, names);
+    for (const link of links ?? []) {
+      const at = resolution.resolve(file, link.specifier);
+      if (at) found.push({file:at, ...(link.names ? {names:link.names} : {})});
+      else if (resolution.local(file, link.specifier)) localIssues.add(`Cannot resolve ${link.specifier} imported by ${file}`);
+    }
+    for (const pattern of links === null ? [IMPORT, LAZY, REEXPORT, RESOURCE] : [RESOURCE]) {
       pattern.lastIndex = 0;
       for (const match of source.matchAll(pattern)) {
-        const at = resolve(file, match[1] ?? '', have);
-        if (at !== null) found.push(at);
-        else if (/^(?:\.|[~@]\/)/.test(match[1] ?? '') && pattern !== RESOURCE) uncertain.add(`Cannot resolve ${match[1]} imported by ${file}`);
+        const at = resolution.resolve(file, match[1] ?? '');
+        if (at !== null) found.push({file:at});
+        else if (resolution.local(file, match[1] ?? '') && pattern !== RESOURCE) localIssues.add(`Cannot resolve ${match[1]} imported by ${file}`);
       }
     }
     for (const pattern of [USED, CALLED]) {
@@ -517,52 +528,73 @@ export function screensOf(files: { path: string; text: string }[], configs: Conf
       for (const match of source.matchAll(pattern)) {
         const raw = match[1] ?? '';
         const name = raw.includes('-') ? raw.split('-').map(capitalised).join('') : raw;
-        if (ambiguous.has(name)) uncertain.add(`Component or composable name ${name} is ambiguous in ${file}`);
-        const at = byName.get(name);
-        if (at !== undefined) found.push(at);
+        const key = resolution.scope(file) + ':' + name;
+        if (ambiguous.has(key)) localIssues.add(`Component or composable name ${name} is ambiguous in ${file}`);
+        const at = byName.get(key);
+        if (at !== undefined) found.push({file:at});
       }
     }
+    for(const issue of localIssues)uncertain.add(issue);
+    dependencyCache.set(cacheKey,{found,issues:[...localIssues]});
     return found;
   };
 
   const layouts = new Map<string, string>();
   for (const file of files) {
     if (!LAYOUTS.test(file.path)) continue;
-    layouts.set(path.posix.basename(withoutExtension(file.path)), file.path);
+    layouts.set(resolution.scope(file.path) + ':' + path.posix.basename(withoutExtension(file.path)), file.path);
   }
 
   const reaches = new Map<string, Set<string>>();
+  const routeIssues = new Map<string, string[]>();
+  const applications = new Map<string,Map<string,Set<string>>>();
   const reached = new Set<string>();
 
   for (const file of files) {
     const route = model.routeOf(file.path);
-    if (route === null) continue;
+    if(route===null)continue;
+    if(options.root&&options.root!=='.'&&!file.path.startsWith(options.root+'/')){
+      const application=resolution.scope(file.path);
+      if(!applications.has(application))applications.set(application,new Map());
+      continue;
+    }
+    uncertain.clear();
     const worn = (text.get(file.path) ?? '').match(WEARS)?.[1] ?? 'default';
-    const wrapping = /\blayout\s*:\s*false\b/.test(text.get(file.path) ?? '') ? undefined : layouts.get(worn);
+    const wrapping = /\blayout\s*:\s*false\b/.test(text.get(file.path) ?? '') ? undefined : layouts.get(resolution.scope(file.path) + ':' + worn);
     const seen = new Set<string>([
       file.path,
       ...(wrapping === undefined ? [] : [wrapping]),
       ...route.wrappers,
-      ...[...have].filter(at => /^(?:src\/)?(?:app\.vue|pages\/_(?:app|document)\.[cm]?[jt]sx?)$/.test(at)),
+      ...[...have].filter(at => resolution.scope(at) === resolution.scope(file.path) && /^(?:src\/|app\/)?(?:app\.vue|pages\/_(?:app|document)\.[cm]?[jt]sx?)$/.test(path.posix.relative(resolution.scope(at), at))),
     ]);
-    const queue = [...seen];
+    const queue: {file: string; names?: string[]}[] = [...seen].map(file => ({file}));
+    const visited = new Set<string>();
     while (queue.length > 0) {
       const at = queue.pop()!;
-      for (const next of from(at)) {
-        if (seen.has(next)) continue;
-        seen.add(next);
+      const key = at.file + '#' + (at.names ? [...at.names].sort().join(',') : '*');
+      if (visited.has(key)) continue;
+      visited.add(key);
+      for (const next of from(at.file, at.names)) {
+        seen.add(next.file);
         queue.push(next);
       }
     }
+    for (const source of route.sources ?? []) seen.add(source);
+    const application=resolution.scope(file.path), local=applications.get(application)??new Map<string,Set<string>>();
+    applications.set(application,local);
     for (const address of route.addresses) {
+      local.set(address,new Set([...(local.get(address)??[]),...seen]));
       reaches.set(address, new Set([...(reaches.get(address) ?? []), ...seen]));
+      routeIssues.set(address, [...new Set([...(routeIssues.get(address) ?? []), ...(model.reasonsFor?.(file.path) ?? []), ...uncertain])]);
     }
     for (const one of seen) reached.add(one);
   }
 
   return {
     reaches,
+    routeIssues,
+    applications,
     unreached: new Set(files.map((f) => f.path).filter((f) => !reached.has(f))),
-    ...(!model.reason && !uncertain.size ? {} : { incomplete: [model.reason, ...uncertain].filter(Boolean).join('; ') }),
+    ...(!model.reason && ![...routeIssues.values()].some(issues => issues.length) ? {} : { incomplete: [model.reason, ...new Set([...routeIssues.values()].flat())].filter(Boolean).join('; ') }),
   };
 }

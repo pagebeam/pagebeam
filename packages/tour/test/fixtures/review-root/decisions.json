@@ -1,0 +1,391 @@
+[
+  {
+    "purpose": "changes",
+    "input": {},
+    "output": {
+      "changes": [
+        {
+          "id": "filter-trigger-label",
+          "description": "The filter trigger button now displays \"Refine results\" instead of \"Filter categories\".",
+          "surface": "default",
+          "files": [
+            "index.html"
+          ],
+          "labels": [
+            "Refine results"
+          ]
+        },
+        {
+          "id": "filter-panel-heading",
+          "description": "The expanded filter panel heading now displays \"Refine catalogue\" instead of \"Categories\".",
+          "surface": "interaction",
+          "files": [
+            "index.html"
+          ],
+          "labels": [
+            "Refine catalogue"
+          ]
+        },
+        {
+          "id": "include-unavailable-checkbox",
+          "description": "The expanded filter panel now includes a checkbox labeled \"Include unavailable items\".",
+          "surface": "interaction",
+          "files": [
+            "index.html"
+          ],
+          "labels": [
+            "Include unavailable items"
+          ]
+        },
+        {
+          "id": "basket-dialog-heading",
+          "description": "The basket dialog heading now displays \"Review your basket\" instead of \"Your basket\".",
+          "surface": "interaction",
+          "files": [
+            "index.html"
+          ],
+          "labels": [
+            "Review your basket"
+          ]
+        },
+        {
+          "id": "basket-delivery-note",
+          "description": "The basket dialog now includes the text \"Delivery calculated at checkout\".",
+          "surface": "interaction",
+          "files": [
+            "index.html"
+          ],
+          "labels": [
+            "Delivery calculated at checkout"
+          ]
+        },
+        {
+          "id": "phone-layout",
+          "description": "At phone widths, the catalogue grid becomes a two-column grid with an 8px gap and the page margin shrinks to 12px.",
+          "surface": "responsive",
+          "files": [
+            "index.html"
+          ],
+          "labels": []
+        }
+      ],
+      "ignored": [],
+      "unresolved": []
+    }
+  },
+  {
+    "purpose": "plan",
+    "input": {},
+    "output": {
+      "states": [
+        {
+          "name": "catalogue-default-trigger",
+          "goal": "Catalogue landing page shows the filter trigger button labelled \"Refine results\"",
+          "intents": [
+            "filter-trigger-label"
+          ],
+          "kind": "default",
+          "route": "/",
+          "account": "visitor",
+          "viewports": [
+            "desktop"
+          ],
+          "files": [
+            "index.html"
+          ]
+        },
+        {
+          "name": "catalogue-phone-layout",
+          "goal": "At phone width the catalogue grid is two columns with an 8px gap and the page margin is 12px",
+          "intents": [
+            "phone-layout",
+            "filter-trigger-label"
+          ],
+          "kind": "default",
+          "route": "/",
+          "account": "visitor",
+          "viewports": [
+            "phone"
+          ],
+          "files": [
+            "index.html"
+          ]
+        },
+        {
+          "name": "filter-panel-expanded",
+          "goal": "Expanded filter panel shows the heading \"Refine catalogue\" and an \"Include unavailable items\" checkbox",
+          "intents": [
+            "filter-panel-heading",
+            "include-unavailable-checkbox"
+          ],
+          "kind": "interaction",
+          "route": "/",
+          "account": "visitor",
+          "viewports": [
+            "desktop"
+          ],
+          "files": [
+            "index.html"
+          ]
+        },
+        {
+          "name": "basket-dialog-open",
+          "goal": "Open basket dialog shows the heading \"Review your basket\" and the text \"Delivery calculated at checkout\"",
+          "intents": [
+            "basket-dialog-heading",
+            "basket-delivery-note"
+          ],
+          "kind": "interaction",
+          "route": "/",
+          "account": "visitor",
+          "viewports": [
+            "desktop"
+          ],
+          "files": [
+            "index.html"
+          ]
+        }
+      ],
+      "ignored": [],
+      "unresolved": []
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Catalogue landing page shows the filter trigger button labelled \"Refine results\"",
+      "side": "head",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [],
+      "done": true,
+      "assertions": [
+        {
+          "selector": "#filters",
+          "text": "Refine results"
+        }
+      ]
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "At phone width the catalogue grid is two columns with an 8px gap and the page margin is 12px",
+      "side": "head",
+      "viewport": "phone"
+    },
+    "output": {
+      "actions": [
+        {
+          "wait": ".grid"
+        }
+      ],
+      "done": true,
+      "assertions": [
+        {
+          "selector": ".grid",
+          "text": "Field notebook"
+        },
+        {
+          "selector": ".grid article:nth-child(2)",
+          "text": "Trail guide"
+        }
+      ]
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Expanded filter panel shows the heading \"Refine catalogue\" and an \"Include unavailable items\" checkbox",
+      "side": "head",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [
+        {
+          "click": "#filters"
+        },
+        {
+          "wait": "[role=\"dialog\"]"
+        }
+      ],
+      "done": true,
+      "assertions": [
+        {
+          "selector": "[role=\"dialog\"]",
+          "text": "Refine catalogue"
+        },
+        {
+          "selector": "[role=\"dialog\"] input[type=\"checkbox\"]",
+          "text": "Include unavailable items"
+        }
+      ]
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Expanded filter panel shows the heading \"Refine catalogue\" and an \"Include unavailable items\" checkbox",
+      "side": "head",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [
+        {
+          "click": "[data-pagebeam-control=\"0\"]"
+        },
+        {
+          "wait": "#filter-panel"
+        },
+        {
+          "expect": {
+            "selector": "#filter-panel h2",
+            "text": "Refine catalogue"
+          }
+        },
+        {
+          "expect": {
+            "selector": "#include-unavailable",
+            "text": ""
+          }
+        }
+      ],
+      "done": true,
+      "assertions": [
+        {
+          "selector": "#filter-panel h2",
+          "text": "Refine catalogue"
+        },
+        {
+          "selector": "#include-unavailable"
+        }
+      ]
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Open basket dialog shows the heading \"Review your basket\" and the text \"Delivery calculated at checkout\"",
+      "side": "head",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [
+        {
+          "click": "[data-pagebeam-control=\"1\"]"
+        },
+        {
+          "wait": "[role=\"dialog\"]"
+        },
+        {
+          "expect": {
+            "selector": "[role=\"dialog\"]",
+            "text": "Review your basket"
+          }
+        },
+        {
+          "expect": {
+            "selector": "[role=\"dialog\"]",
+            "text": "Delivery calculated at checkout"
+          }
+        }
+      ],
+      "done": false,
+      "assertions": []
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Open basket dialog shows the heading \"Review your basket\" and the text \"Delivery calculated at checkout\"",
+      "side": "head",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [],
+      "done": true,
+      "assertions": [
+        {
+          "selector": "#basket-dialog h2",
+          "text": "Review your basket"
+        },
+        {
+          "selector": "#basket-dialog p",
+          "text": "Delivery calculated at checkout"
+        }
+      ]
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Catalogue landing page shows the filter trigger button labelled \"Refine results\"",
+      "side": "base",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [],
+      "done": true,
+      "assertions": [
+        {
+          "selector": "#filters",
+          "text": "Filter categories"
+        }
+      ]
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Expanded filter panel shows the heading \"Refine catalogue\" and an \"Include unavailable items\" checkbox",
+      "side": "base",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [
+        {
+          "click": "[data-pagebeam-control=\"0\"]"
+        },
+        {
+          "wait": "#filter-panel"
+        },
+        {
+          "expect": {
+            "selector": "#filter-panel",
+            "text": "Categories"
+          }
+        }
+      ],
+      "done": true,
+      "assertions": [
+        {
+          "selector": "#filter-panel",
+          "text": "Categories"
+        }
+      ]
+    }
+  },
+  {
+    "purpose": "navigate",
+    "input": {
+      "goal": "Open basket dialog shows the heading \"Review your basket\" and the text \"Delivery calculated at checkout\"",
+      "side": "base",
+      "viewport": "desktop"
+    },
+    "output": {
+      "actions": [],
+      "done": true,
+      "assertions": [
+        {
+          "selector": "#basket-dialog",
+          "text": "Your basket"
+        },
+        {
+          "selector": "#basket-dialog h2",
+          "text": "Your basket"
+        }
+      ]
+    }
+  }
+]

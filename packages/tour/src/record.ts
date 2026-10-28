@@ -171,6 +171,9 @@ export class Recorder {
   private dir = '';
   private writes: Promise<void>[] = [];
   private pointer: [number, number] = [24, 24];
+  private acceptingFrames=false;
+  private resolveFirstFrame:()=>void=()=>{};
+  private firstFrame=new Promise<void>(resolve=>{this.resolveFirstFrame=resolve;});
 
   private readonly size: Size;
 
@@ -184,7 +187,9 @@ export class Recorder {
     if (this.pace.cursor) await this.page.addInitScript(CURSOR_SCRIPT);
     this.dir = await mkdtemp(path.join(tmpdir(), 'pagebeam-frames-'));
     this.session = await this.page.context().newCDPSession(this.page);
+    this.acceptingFrames=true;
     this.session.on('Page.screencastFrame', (frame) => {
+      if(!this.acceptingFrames){this.session?.send('Page.screencastFrameAck',{sessionId:frame.sessionId}).catch(()=>undefined);return;}
       const image = Buffer.from(frame.data, 'base64');
       const found = jpegSize(image);
       // While a viewport is applied Chrome can send frames at the old size, and
@@ -193,10 +198,17 @@ export class Recorder {
         const file = path.join(this.dir, `${String(this.frames.length).padStart(6, '0')}.jpg`);
         this.frames.push({ file, at: Date.now() });
         this.writes.push(writeFile(file, image));
+        this.resolveFirstFrame();
       }
       this.session?.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => undefined);
     });
     await this.session.send('Page.startScreencast', { format: 'jpeg', quality: 92, everyNthFrame: 1 });
+  }
+
+  async ready(timeout:number):Promise<void>{
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try{await Promise.race([this.firstFrame,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(new Error('the browser sent no correctly sized recording frame')),timeout);})]);}
+    finally{clearTimeout(timer);}
   }
 
   // Times in the timeline count from the first frame, which is where the video starts.
@@ -237,6 +249,7 @@ export class Recorder {
   }
 
   async discard(): Promise<void> {
+    this.acceptingFrames=false;
     await this.session?.send('Page.stopScreencast').catch(() => undefined);
     await Promise.allSettled(this.writes);
     if (this.dir !== '') await rm(this.dir, { recursive: true, force: true });
@@ -244,6 +257,7 @@ export class Recorder {
 
   async stop(out: string, ffmpeg: string): Promise<number> {
     const end = Date.now();
+    this.acceptingFrames=false;
     try {
       await this.session?.send('Page.stopScreencast').catch(() => undefined);
       await Promise.all(this.writes);

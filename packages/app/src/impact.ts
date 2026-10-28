@@ -2,7 +2,10 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { glob } from 'tinyglobby';
 import picomatch from 'picomatch';
-import { filesAt, readAt } from './git.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { isRepository, filesAt, readAt } from './git.js';
+import { resolver } from './resolution.js';
 import { screensOf, ROUTE_CONFIG } from './screens.js';
 
 export interface ImpactSource { path: string; text: string }
@@ -12,19 +15,22 @@ export interface ImpactOptions { ignore?: string[]; global?: string[]; routes?: 
 export interface ImpactRequest extends ImpactOptions { head: ImpactSource[]; base?: ImpactSource[]; changed: string[] }
 export interface ImpactAnalyzer { analyze(request: ImpactRequest): ImpactAnalysis | Promise<ImpactAnalysis> }
 
-const IGNORED = ['docs/**', '**/.github/**', '**/.pagebeam/**', '**/pagebeam.config.*', '**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/README*', '**/LICENSE*', '**/CHANGELOG*', '**/CONTRIBUTING*'];
+const IGNORED = ['docs/**', '**/.github/**', '**/.pagebeam/**', '**/pagebeam.config.*', '**/*.test.*', '**/*.spec.*', '**/*_test.*', '**/e2e/**', '**/test/**', '**/tests/**', '**/__tests__/**', '**/README*', '**/LICENSE*', '**/CHANGELOG*', '**/CONTRIBUTING*'];
 const GLOBAL = ['app.vue', 'src/app.vue', '**/styles/**', '**/assets/**', '**/public/**', '**/static/**', '**/plugins/**', '**/middleware/**', '**/*.{css,scss,sass,less}', 'package.json', '*lock*', '*.{config,config.*}', 'tsconfig*.json'];
 const TEXT = /\.(vue|svelte|astro|[cm]?[jt]sx?|css|scss|sass|less|html|mdx?|json)$/i;
-const EXCLUDE = ['**/node_modules/**', '**/.git/**', '**/.nuxt/**', '**/.output/**', '**/.next/**', '**/dist/**', '**/build/**', '**/coverage/**', '**/.pagebeam/**'];
+const EXCLUDE = ['**/node_modules/**', '**/.cache/**', '**/e2e/**', '**/test/**', '**/tests/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*', '**/.git/**', '**/.nuxt/**', '**/.output/**', '**/.next/**', '**/dist/**', '**/build/**', '**/coverage/**', '**/.pagebeam/**'];
 
 export async function impactSources(root: string, revision?: string): Promise<ImpactSource[]> {
-  const names = revision ? await filesAt(root, revision) : await glob(['**/*'], { cwd: root, dot: true, ignore: EXCLUDE });
+  const names = revision ? await filesAt(root, revision)
+    : await isRepository(root)
+      ? (await promisify(execFile)('git', ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], { maxBuffer: 16 << 20 })).stdout.split('\0').filter(Boolean)
+      : await glob(['**/*'], { cwd: root, dot: true, ignore: EXCLUDE });
   const files = names.filter(file => !picomatch.isMatch(file, EXCLUDE, { dot: true }));
   const result: ImpactSource[] = [];
   for (let start = 0; start < files.length; start += 32) {
     const batch = await Promise.all(files.slice(start, start + 32).map(async file => ({
       path: file,
-      text: !TEXT.test(file) ? '' : revision ? await readAt(root, revision, file) : await readFile(path.join(root, file), 'utf8'),
+      text: !TEXT.test(file) ? '' : revision ? await readAt(root, revision, file) : await readFile(path.join(root, file), 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; }),
     })));
     for (const file of batch) if (file.text !== null) result.push({ path: file.path, text: file.text });
   }
@@ -45,7 +51,16 @@ export const staticImpactAnalyzer: ImpactAnalyzer = {
         const sources = files.filter(file => picomatch.isMatch(file.path, patterns, { dot: true })).map(file => file.path);
         if (sources.length) result.reaches.set(route, new Set([...(result.reaches.get(route) ?? []), ...sources]));
       }
-      const unresolved = files.filter(file => /(^|\/)nuxt\.config\./.test(file.path) && /\b(?:extends|srcDir|alias|hooks|router)\s*:|pages:extend|extendRoutes/.test(file.text));
+      const unresolved = files.filter(file => /(^|\/)nuxt\.config\./.test(file.path) && /\b(?:extends|hooks|router)\s*:|pages:extend|extendRoutes/.test(file.text));
+      const resolution = resolver(files);
+      for (const config of unresolved) {
+        const message = `Runtime routes or source resolution in ${config.path} cannot be established statically`;
+        for (const [route, sources] of result.reaches) {
+          if ([...sources].some(file => resolution.scope(file) === resolution.scope(config.path))) {
+            result.routeIssues?.set(route, [...(result.routeIssues.get(route) ?? []), message]);
+          }
+        }
+      }
       if (unresolved.length) result.incomplete = [result.incomplete, ...unresolved.map(file => `Runtime routes or source resolution in ${file.path} cannot be established statically`)].filter(Boolean).join('; ');
       return result;
     };
@@ -63,7 +78,10 @@ export const staticImpactAnalyzer: ImpactAnalyzer = {
       else unknown.push(file);
     }
     if (affected.size || unknown.length) {
-      for (const message of [head.incomplete, base.incomplete]) if (message && !reasons.includes(message)) reasons.push(message);
+      for (const graph of [head, base]) {
+        const messages = unknown.length ? [graph.incomplete] : [...affected.keys()].flatMap(route => graph.routeIssues?.get(route) ?? []);
+        for (const message of messages) if (message && !reasons.includes(message)) reasons.push(message);
+      }
     }
     return {
       routes: [...affected].sort(([a], [b]) => a.localeCompare(b)).map(([route, files]) => ({

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { parse } from 'yaml';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 
 const here = import.meta.dirname;
 const require = createRequire(import.meta.url);
@@ -118,4 +120,35 @@ test('the reporter displays missing coverage without publishing substitute image
   assert.match(body, /UI coverage: \*\*incomplete\*\*/);
   assert.match(body, /No screenshot checkpoint covers \/wallets/);
   assert.ok(!body.includes('| Screen | Before | After |'));
+});
+
+
+test('the reusable reporter publishes native difference images in the same review table',async()=>{
+  const current=await scenario();
+  Object.assign(current.outcome.captures[0]!,{diff:'screenshot'});
+  await current.report();
+  assert.equal(current.writes.length,1);
+  assert.ok(current.writes[0]!.args.body.includes('| Screen | Before | After | Difference |'));
+  assert.ok(current.writes[0]!.args.body.includes('![Difference]'));
+});
+
+
+test('capture action uploads the manifest directory for nested automatic review runs',async()=>{
+  const action=parse(await readFile(`${here}/../../../action.yml`,'utf8'));
+  const run=action.runs.steps.find((step:any)=>step.id==='run').run as string;
+  const scripts=[...run.matchAll(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/g)].map(match=>match[1]!);
+  const script=scripts.find(script=>script.includes('const artifactRoot'))!;
+  assert.ok(script);
+  const directory=await mkdtemp(path.join(tmpdir(),'pagebeam-action-review-'));
+  const review=path.join(directory,'pagebeam-captures','review-run');
+  await mkdir(review,{recursive:true});
+  const manifest=path.join(review,'outcome.json');
+  const output=path.join(directory,'outputs');
+  await writeFile(path.join(directory,'said.txt'),JSON.stringify({manifest,directory:path.join(review,'head-run'),report:{id:'head-run'}}));
+  await promisify(execFile)(process.execPath,['--input-type=module','-e',script],{env:{...process.env,RUNNER_TEMP:directory,GITHUB_OUTPUT:output}});
+  const result=await readFile(output,'utf8');
+  assert.ok(result.includes(`directory=${review}\n`));
+  assert.ok(result.includes(`manifest=${manifest}\n`));
+  await writeFile(path.join(directory,'said.txt'),JSON.stringify({manifest:path.join(directory,'outside','outcome.json'),report:{id:'head-run'}}));
+  await assert.rejects(promisify(execFile)(process.execPath,['--input-type=module','-e',script],{env:{...process.env,RUNNER_TEMP:directory,GITHUB_OUTPUT:output}}),/outside the artifact directory/);
 });

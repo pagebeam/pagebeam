@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, access, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -289,4 +289,134 @@ test('plan-only actions retain incomplete outcomes without running application i
   const outcome = JSON.parse(await readFile(manifest, 'utf8'));
   assert.equal(outcome.coverage.status, 'incomplete');
   assert.deepEqual(outcome.captures, []);
+});
+
+
+test('automatic discovery creates capture journeys without saved screen lists', async () => {
+  const {cwd, config} = await workspace();
+  await put(cwd, 'pagebeam.config.json', JSON.stringify({...config, tours:{...config.tours, journeys:{}}, capture:{...config.capture, discovery:{}}}));
+  const {code,value} = await run(cwd, ['components/NoteList.vue']);
+  assert.equal(code,0);
+  assert.equal(value.coverage.status,'complete');
+  assert.equal(value.journeys.length,1);
+  assert.deepEqual(value.generated[value.journeys[0].name].steps.map((step: any) => step.goto ?? step.shot?.route), ['/notes','/notes']);
+});
+
+test('automatic discovery reports missing dynamic parameters and ambiguous accounts', async () => {
+  const {cwd,config} = await workspace();
+  await put(cwd,'pages/document/[id].vue','<template>Document</template>');
+  const settings = {...config,tours:{...config.tours,journeys:{}},capture:{...config.capture,discovery:{}}};
+  await put(cwd,'pagebeam.config.json',JSON.stringify(settings));
+  const missing = await run(cwd,['pages/document/[id].vue']);
+  assert.equal(missing.code,2);
+  assert.match(missing.value.coverage.reasons.join(' '),/concrete discovery parameters/);
+  await put(cwd,'pagebeam.config.json',JSON.stringify({...settings,capture:{...settings.capture,discovery:{parameters:{id:'fixture/one'}}}}));
+  const bound = await run(cwd,['pages/document/[id].vue']);
+  assert.equal(bound.code,0);
+  assert.equal(Object.values(bound.value.generated).map((journey: any) => journey.steps[0].goto)[0],'/document/fixture%2Fone');
+  await put(cwd,'pagebeam.config.json',JSON.stringify({...settings,tours:{...settings.tours,accounts:{...settings.tours.accounts,other:settings.tours.accounts.reader}}}));
+  const ambiguous = await run(cwd,['components/NoteList.vue']);
+  assert.equal(ambiguous.code,2);
+  assert.match(ambiguous.value.coverage.reasons.join(' '),/discovery account/);
+});
+
+test('ignored duplicate checkouts and deleted files do not pollute automatic discovery', async () => {
+  const {cwd,config} = await workspace();
+  await put(cwd,'.gitignore','.cache/\nignored-copy/\n');
+  await unlink(path.join(cwd,'pages/wallets.vue'));
+  await put(cwd,'.cache/base/pages/phantom.vue','<template>Phantom</template>');
+  await put(cwd,'ignored-copy/pages/phantom.vue',`<script>import Missing from './absent.vue'</script>`);
+  await put(cwd,'pagebeam.config.json',JSON.stringify({...config,capture:{...config.capture,discovery:{}}}));
+  const {code,value} = await run(cwd,['components/NoteList.vue']);
+  assert.equal(code,0);
+  assert.deepEqual(value.coverage.routes.map((route: any) => route.route),['/notes']);
+  assert.deepEqual(value.coverage.reasons,[]);
+});
+
+test('generated journeys capture authenticated screens and compare real before and after images', async () => {
+  const app = await notesApp();
+  const {cwd,config} = await workspace();
+  try {
+    await put(cwd,'pagebeam.config.json',JSON.stringify({
+      ...config,
+      tours:{...config.tours,targets:{local:{url:app.url}},journeys:{},accounts:{reader:{purpose:'notes reader',login:{usernameEnv:'NOTES_USER',passwordEnv:'NOTES_PASSWORD',form:{url:'/login',username:'#username',password:'#password',submit:'#submit'}},confirm:'#signout'}}},
+      capture:{discovery:{ready:'li.note'},environments:{local:{backend:{kind:'url',url:app.url,revision:'notes-v1'},frontendRevision:'notes-ui-v1',fixtures:{version:'notes-fixture-v1'}},base:{backend:{kind:'url',url:app.url,revision:'notes-v1'},frontendRevision:'notes-ui-v1',fixtures:{version:'notes-fixture-v1'}}}},
+    }));
+    await put(cwd,'changed.json',JSON.stringify(['components/NoteList.vue']));
+    const {stdout} = await exec(process.execPath,[cli,'capture','--cwd',cwd,'--changed-files','changed.json','--compare-environment','base','--compare-target','local','--json'],{env:{...process.env,NOTES_USER:'ada',NOTES_PASSWORD:'pw-ada'}});
+    const value = JSON.parse(stdout);
+    assert.equal(value.report.status,'passed');
+    assert.equal(value.report.selection.coverage.status,'complete');
+    assert.equal(value.comparison.report.compatible,true);
+    assert.equal(value.outcome.captures.length,1);
+    assert.equal(value.report.results[0].steps.at(-1).route,'/notes');
+    assert.ok(value.outcome.captures[0].base);
+    assert.ok(value.outcome.captures[0].head);
+  } finally { await app.stop(); }
+});
+
+
+test('discovery opens expandable controls automatically and replays the same actions on the baseline', async () => {
+  const app = await notesApp();
+  const {cwd,config} = await workspace();
+  try {
+    await put(cwd,'pages/disclosure-notes.vue','<template><h1>Notes</h1><details><summary>Formatting</summary></details></template>');
+    await put(cwd,'pagebeam.config.json',JSON.stringify({
+      ...config,
+      tours:{...config.tours,targets:{local:{url:app.url}},journeys:{},accounts:{reader:{purpose:'notes reader',login:{usernameEnv:'NOTES_USER',passwordEnv:'NOTES_PASSWORD',form:{url:'/login',username:'#username',password:'#password',submit:'#submit'}},confirm:'#signout'}}},
+      capture:{discovery:{ready:'h1'},environments:Object.fromEntries(['local','base'].map(name => [name,{backend:{kind:'url',url:app.url,revision:'notes-v1'},frontendRevision:'notes-ui-v1',fixtures:{version:'notes-fixture-v1'},disposable:true}]))},
+    }));
+    await put(cwd,'changed.json',JSON.stringify(['pages/disclosure-notes.vue']));
+    const {stdout} = await exec(process.execPath,[cli,'capture','--cwd',cwd,'--changed-files','changed.json','--compare-environment','base','--compare-target','local','--json'],{env:{...process.env,NOTES_USER:'ada',NOTES_PASSWORD:'pw-ada'}});
+    const value = JSON.parse(stdout);
+    assert.equal(value.report.status,'passed');
+    assert.equal(value.comparison.report.compatible,true);
+    assert.equal(value.outcome.captures.length,2);
+    const artifact = path.dirname(value.manifest);
+    assert.notDeepEqual(await readFile(path.join(artifact,value.outcome.captures[0].head)),await readFile(path.join(artifact,value.outcome.captures[1].head)));
+    const generated: any = Object.values(value.report.selection.generated)[0];
+    assert.ok(generated.steps.some((step: any) => step.click === '#formatting'));
+    assert.deepEqual(value.report.results[0].steps.map((step: any) => step.action), ['goto','wait','shot','goto','wait','click','shot']);
+    const before = JSON.parse(await readFile(path.join(value.comparison.directory,'report.json'),'utf8'));
+    assert.deepEqual(before.results[0].steps.map((step: any) => step.action),value.report.results[0].steps.map((step: any) => step.action));
+    const protectedSettings = JSON.parse(await readFile(path.join(cwd,'pagebeam.config.json'),'utf8'));
+    for (const environment of Object.values(protectedSettings.capture.environments) as any[]) environment.disposable = false;
+    await put(cwd,'pagebeam.config.json',JSON.stringify(protectedSettings));
+    const initialOnly = await exec(process.execPath,[cli,'capture','--cwd',cwd,'--changed-files','changed.json','--compare-environment','base','--compare-target','local','--json'],{env:{...process.env,NOTES_USER:'ada',NOTES_PASSWORD:'pw-ada'}});
+    const protectedResult = JSON.parse(initialOnly.stdout);
+    assert.equal(protectedResult.outcome.captures.length,1);
+    assert.ok(!protectedResult.report.results[0].steps.some((step: any) => step.action === 'click'));
+
+  } finally { await app.stop(); }
+});
+
+
+test('automatic review preflight requests judgment without starting the app for uncovered states',async()=>{
+  const {cwd,config}=await workspace();
+  await put(cwd,'pagebeam.config.json',JSON.stringify({...config,model:{baseUrl:'https://example.test/v1',name:'unused',sendSource:true},tours:{...config.tours,journeys:{}},capture:{...config.capture,discovery:{}}}));
+  const {code,value}=await run(cwd,['components/NoteList.vue'],['--mode','auto']);
+  assert.equal(code,0);assert.equal(value.review.required,true);
+  const quiet=await run(cwd,['.github/workflows/ci.yml'],['--mode','auto']);
+  assert.equal(quiet.code,0);assert.equal(quiet.value.review.required,false);assert.equal(quiet.value.coverage.status,'no-ui');
+});
+
+
+test('automatic mode retains static discovery without a source-enabled model',async()=>{
+  const {cwd,config}=await workspace();
+  await put(cwd,'pagebeam.config.json',JSON.stringify({...config,tours:{...config.tours,journeys:{}},capture:{...config.capture,discovery:{}}}));
+  const {code,value}=await run(cwd,['components/NoteList.vue'],['--mode','auto']);
+  assert.equal(code,0);assert.equal(value.coverage.status,'complete');
+  assert.equal(value.review,undefined);assert.equal(value.journeys.length,1);
+  await put(cwd,'pagebeam.config.json',JSON.stringify({...config,model:{baseUrl:'https://example.test/v1',name:'unused',sendSource:false},tours:{...config.tours,journeys:{}},capture:{...config.capture,discovery:{}}}));
+  const privateSource=await run(cwd,['components/NoteList.vue'],['--mode','auto']);
+  assert.equal(privateSource.code,0);assert.equal(privateSource.value.review,undefined);assert.equal(privateSource.value.coverage.status,'complete');
+});
+
+
+test('explicit journeys retain manual coverage when automatic review is configured',async()=>{
+  const {cwd,config}=await workspace();
+  await put(cwd,'pagebeam.config.json',JSON.stringify({...config,model:{baseUrl:'https://example.test/v1',name:'unused'},capture:{...config.capture,discovery:{}}}));
+  const {code,value}=await run(cwd,['components/NoteList.vue'],['--mode','auto','--journey','notes']);
+  assert.equal(code,0);assert.equal(value.coverage.status,'manual');
+  assert.equal(value.review,undefined);assert.deepEqual(value.journeys.map((journey:any)=>journey.name),['notes']);
 });

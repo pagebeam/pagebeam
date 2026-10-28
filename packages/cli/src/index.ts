@@ -8,3 +8,5 @@ export type { Outcome, CaptureOutcome, Evidence, Publication, OutcomeRenderer, O
 export { staticImpactAnalyzer, routeMatches } from '@pagebeam/app';
 export type { ImpactAnalyzer, ImpactRequest, ImpactAnalysis, ImpactOptions, ImpactSource, RouteImpact } from '@pagebeam/app';
 export type { PlanRequest } from '@pagebeam/tour';
+
+export { reviewCaptures, compareReviewRuns, reviewContext, type ReviewRecipe, type ReviewJudge } from '@pagebeam/tour';
