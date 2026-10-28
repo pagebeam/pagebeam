@@ -7,7 +7,8 @@
     "declarationMap": false,
     "allowImportingTsExtensions": true,
     "rootDir": ".",
-    "types": ["node"]
+    "types": ["node"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"]
 }

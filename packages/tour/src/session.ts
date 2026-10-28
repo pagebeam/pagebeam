@@ -278,7 +278,7 @@ export class CaptureSession {
     const target=page.locator(selector).filter({visible:true}).first();
     await target.waitFor({state:'visible',timeout:this.options.tours.timeoutMs});
     const alternatives = await target.evaluate((element,click) => {
-      if(click)element=element.closest('button,a,summary,input,select,textarea,[role=button],[role=option],[role=menuitem],[data-u-command],[contenteditable=true]')??element;
+      if(click)element=element.closest<HTMLElement|SVGElement>('button,a,summary,input,select,textarea,[role=button],[role=option],[role=menuitem],[data-u-command],[contenteditable=true]')??element;
       const tag = element.tagName.toLowerCase();
       const candidates: string[] = [];
       for (const name of ['data-u-command','data-testid','aria-label','placeholder','name','title','id','aria-controls']) {
@@ -303,7 +303,7 @@ export class CaptureSession {
         for(const label of labels.slice(0,3))for(const target of own)candidates.push(scope+':has-text('+JSON.stringify(label)+') '+target);
       }
       const parts:string[]=[];
-      for(let node=element;node&&node!==element.ownerDocument.body;node=node.parentElement){
+      for(let node:Element|null=element;node&&node!==element.ownerDocument.body;node=node.parentElement){
         const siblings=[...node.parentElement!.children].filter(sibling=>sibling.tagName===node!.tagName);
         parts.unshift(node.tagName.toLowerCase()+':nth-of-type('+(siblings.indexOf(node)+1)+')');
       }

@@ -542,3 +542,12 @@ test('fractional text layout produces identical pixels in fresh browser contexts
     }
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
+
+
+test('browser source builds ignore minimal DOM declarations from a host project',async()=>{
+  const types=await mkdtemp(path.join(tmpdir(),'pagebeam-host-types-'));
+  await mkdir(path.join(types,'host'));
+  await writeFile(path.join(types,'host/index.d.ts'),'interface Element {}\ninterface HTMLElement extends Element {}\ninterface SVGElement extends Element {}\n');
+  const require=createRequire(import.meta.url),compiler=require.resolve('typescript/bin/tsc'),nodeTypes=path.dirname(path.dirname(require.resolve('@types/node/package.json')));
+  await exec(process.execPath,[compiler,'--project',path.resolve(import.meta.dirname,'../tsconfig.json'),'--typeRoots',`${types},${nodeTypes}`,'--noEmit','--composite','false','--incremental','false']);
+});

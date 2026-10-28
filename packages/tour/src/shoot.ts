@@ -192,7 +192,7 @@ export async function act(
     const target=(text===undefined?located:located.filter({hasText:text})).first();
     try{await target.waitFor({state:'visible',timeout});}
     catch(error){
-      const content=await located.filter({visible:true}).evaluateAll(elements=>elements.slice(0,5).map(element=>String(element.innerText??element.textContent??'').slice(0,160)));
+      const content=await located.filter({visible:true}).evaluateAll(elements=>elements.slice(0,5).map(element=>String((element instanceof HTMLElement?element.innerText:element.textContent)??'').slice(0,160)));
       if(text!==undefined&&content.length)throw new Error(`Expected text is absent: ${text}. Visible matches contain: ${JSON.stringify(content)}`);
       throw error;
     }
@@ -225,7 +225,7 @@ export async function act(
     if(step.expect.visibleText&&text!==undefined){
       const end=Date.now()+timeout;
       for(;;){
-        const visible=await target.evaluate(element=>String(element.innerText??element.textContent??''));
+        const visible=await target.evaluate(element=>String((element instanceof HTMLElement?element.innerText:element.textContent)??''));
         if(visible.includes(text))break;
         if(Date.now()>=end)throw new Error(`Expected text is not visibly rendered: ${text}`);
         await page.waitForTimeout(50);
