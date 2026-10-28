@@ -81,7 +81,7 @@ export async function launchBrowser(executablePath?: string): Promise<Browser | 
   if (found === undefined) {
     return { reason: 'no browser was found to drive' };
   }
-  return chromium.launch({ executablePath: found, headless: true });
+  return chromium.launch({ executablePath: found, headless: true, args: ['--disable-font-subpixel-positioning'] });
 }
 
 export async function isShown(page: Page, selector: string, timeout: number): Promise<boolean> {

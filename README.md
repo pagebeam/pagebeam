@@ -480,6 +480,7 @@ Authenticated responses, private/no-store responses, navigation documents and sa
 are excluded. Snapshots respect response variants and have bounded memory; artifacts record resource
 hashes rather than response bodies.
 
+Browser rendering disables subpixel font positioning for repeatable text placement.
 Still reviews disable transitions before navigation and wait for fonts and layout. Calibration retries
 up to three times while a page settles; persistent instability remains a failure.
 

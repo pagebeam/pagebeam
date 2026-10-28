@@ -523,3 +523,22 @@ test('public resource snapshots respect actual response variants',async(t)=>{
     assert.equal(assets,2);assert.equal(store.manifest().length,2);
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
+
+test('fractional text layout produces identical pixels in fresh browser contexts',async()=>{
+  const {cwd,head,base}=await project();
+  const paragraph='Your settings are available in your personal account. Choose a different account, or ask an administrator to update your access.';
+  const server=createServer((_request,response)=>{
+    response.setHeader('content-type','text/html');
+    response.end(`<style>*{box-sizing:border-box;margin:0}body{display:grid;place-items:center;min-height:100vh;font:16px/1.5 system-ui;-webkit-font-smoothing:antialiased}.panel{display:grid;align-content:center;justify-items:center;width:512px;gap:8px;padding:32px 24px;border:1px solid #ddd}.icon{width:56px;height:56px;margin-bottom:8px}h1{font-size:16px;font-weight:600}p{max-width:42ch;margin-bottom:8px;color:#556070;font-size:14px}.actions{height:40px;margin-top:8px}</style><div class="panel"><span class="icon"></span><h1>Account settings</h1><p>${paragraph}</p><div class="actions">Choose account</div></div>`);
+  });
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();if(!address||typeof address==='string')throw new Error('No fixture address');const url=`http://127.0.0.1:${address.port}`,original=settings(head,base,url);
+  const config=parseConfig({...original,tours:{...original.tours,journeys:{paragraph:{account:'visitor',record:false,viewports:[{name:'desktop',width:1440,height:900,scale:2}],steps:[{goto:'/'},{expect:{selector:'p',text:paragraph}},{shot:{name:'text',route:'/',fullPage:false,focus:[]}}]}}}});
+  let reference:string|undefined;
+  try{
+    for(let index=0;index<8;index++){
+      const result=await capture({cwd,config,environment:'head',target:'head',all:true,mode:'saved'});assert.equal(result.report.status,'passed',JSON.stringify(result.report.errors));
+      const shot=result.report.results[0]!.steps.find(step=>step.action==='shot')!;const image=path.join(result.directory,'paragraph','desktop',shot.file!);
+      if(reference)assert.equal((await comparePixels(reference,image)).pixels,0);else reference=image;
+    }
+  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
