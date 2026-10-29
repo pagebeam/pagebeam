@@ -30,7 +30,7 @@ export interface ReviewRecipe {
 type Run = {directory:string;report:CaptureReport};
 export interface ReviewRequest {
   cwd:string;config:PagebeamConfig;environment:string;target:string;base?:string | undefined;changed?:string[] | undefined;
-  compareEnvironment?:string | undefined;compareTarget?:string | undefined;out?:string | undefined;html?:boolean | undefined;
+  compareEnvironment?:string | undefined;compareTarget?:string | undefined;out?:string | undefined;html?:boolean | undefined;diffImages?:boolean | undefined;
   viewports?:string[] | undefined;signal?:AbortSignal | undefined;judge?:ReviewJudge | undefined;
 }
 
@@ -86,7 +86,8 @@ export async function reviewCaptures(request:ReviewRequest) {
   for(const name of request.viewports??[])if(name!=='all'&&!policy.viewports.some(viewport=>viewport.name===name))throw new Error(`Unknown review viewport: ${name}`);
   if(!config.tours.targets[request.target])throw new Error('Unknown review target');
   if(request.compareEnvironment&&!config.tours.targets[request.compareTarget??request.target])throw new Error('Unknown comparison target');
-  const signal=request.signal??new AbortController().signal;
+  const deadline=AbortSignal.timeout(policy.reviewTimeoutMs);
+  const signal=request.signal?AbortSignal.any([request.signal,deadline]):deadline;
   const directory=path.resolve(cwd,request.out??'.pagebeam/runs/reviews',randomUUID());
   await mkdir(directory,{recursive:true});
   const context=await reviewContext(request);
@@ -109,7 +110,15 @@ export async function reviewCaptures(request:ReviewRequest) {
       const supplied=correction?{input,correction}:input;
       await writeFile(path.join(directory,`request-${requestsMade+1}.json`),JSON.stringify({purpose,input:supplied},null,2)+'\n');
       if(++requestsMade>policy.maxCalls)throw new Unanswered('Review model request budget exhausted');
-      const raw=await judge(purpose,system,supplied);
+      signal.throwIfAborted();
+      let interrupt:()=>void=()=>{};
+      const interrupted=new Promise<never>((_resolve,reject)=>{
+        interrupt=()=>reject(signal.reason);
+        signal.addEventListener('abort',interrupt,{once:true});
+      });
+      let raw:string;
+      try { raw=await Promise.race([judge(purpose,system,supplied),interrupted]); }
+      finally { signal.removeEventListener('abort',interrupt); }
       try {
         const value=parse(parsed(raw));trace.push({purpose,input:supplied,output:value});
         await writeFile(path.join(directory,'decisions.json'),JSON.stringify(trace,null,2)+'\n');
@@ -219,6 +228,7 @@ export async function reviewCaptures(request:ReviewRequest) {
   let discoveryUnavailable:string|undefined;
   const learn=async(side:'head'|'base',runtime:ManagedEnvironment,target:string,disposable:boolean,retry?:ReadonlyMap<string,string>):Promise<void>=>{
     for (const state of recipe.states) {
+      signal.throwIfAborted();
       if(retry&&!retry.has(state.name))continue;
       const previousRecipe=retry?(side==='head'?state.head:state.base):undefined;
       if(retry){if(side==='head')state.head=[];else state.base=[];}
@@ -325,7 +335,7 @@ export async function reviewCaptures(request:ReviewRequest) {
     await writeFile(path.join(directory,'recipe.json'),JSON.stringify(recipe,null,2)+'\n');
     if(comparison)await writeFile(path.join(directory,'comparison.json'),JSON.stringify(comparison,null,2)+'\n');
     const stability: {state:string;volatilePixels:number;controlPixels:number;valid:boolean}[]=[];
-    const differences: {state:string;pixels:number;percent:number;diff:string}[]=[];
+    const differences: {state:string;pixels:number;percent:number;diff?:string}[]=[];
     for(const state of recipe.states){
       const shot=head.report.results.find(result=>result.journey===state.name)?.steps.find(step=>step.action==='shot'&&step.file);
       const repeated=control?.report.results.find(result=>result.journey===state.name)?.steps.find(step=>step.action==='shot'&&step.file);
@@ -344,9 +354,9 @@ export async function reviewCaptures(request:ReviewRequest) {
       if(!valid&&comparison){comparison.compatible=false;comparison.reasons.push(`Unstable screenshot state ${state.name}`);}
       const pair=comparison?.captures.find(item=>item.journey===state.name);
       if(pair?.base&&pair.head&&base){
-        const filename=state.name+'-diff.png';
-        const difference=await comparePixels(path.join(base.directory,pair.base),path.join(head.directory,pair.head),path.join(directory,filename),volatility.mask);
-        differences.push({state:state.name,pixels:difference.pixels,percent:difference.percent,diff:filename});
+        const filename=(request.diffImages??config.capture.diffImages)?state.name+'-diff.png':undefined;
+        const difference=await comparePixels(path.join(base.directory,pair.base),path.join(head.directory,pair.head),filename?path.join(directory,filename):undefined,volatility.mask);
+        differences.push({state:state.name,pixels:difference.pixels,percent:difference.percent,...(filename?{diff:filename}:{})});
       }
     }
     if(comparison)await writeFile(path.join(directory,'comparison.json'),JSON.stringify(comparison,null,2)+'\n');
@@ -355,11 +365,12 @@ export async function reviewCaptures(request:ReviewRequest) {
     const rendered=await writeCaptureOutcome(directory,head,base,comparison,{html:request.html??false});
     for(const shot of rendered.outcome.captures){
       const difference=differences.find(item=>item.state===shot.journey);
-      if(difference){shot.diff=difference.diff;shot.pixels=difference.pixels;shot.percent=difference.percent;rendered.outcome.evidence.push({id:difference.diff,file:difference.diff,mediaType:'image/png'});}
+      if(difference){shot.pixels=difference.pixels;shot.percent=difference.percent;if(difference.diff){shot.diff=difference.diff;rendered.outcome.evidence.push({id:difference.diff,file:difference.diff,mediaType:'image/png'});}}
     }
     rendered.outcome.evidence.push({id:'public-resources',file:'public-resources.json',mediaType:'application/json'});
     if(recipe.repairs?.length)rendered.outcome.evidence.push({id:'replay-repairs',file:'replay-repairs.json',mediaType:'application/json'});
     rendered.outcome.stability=stability;
+    rendered.outcome.diffImages=request.diffImages??config.capture.diffImages;
     if(stability.some(item=>!item.valid)||recipe.plan.unresolved.length||discoveryFailures.length){
       rendered.outcome.status='incomplete';
       rendered.outcome.coverage!.status='incomplete';

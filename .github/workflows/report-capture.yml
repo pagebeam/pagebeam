@@ -89,8 +89,14 @@ jobs:
             const {createHash} = require('node:crypto');
             const root = await fs.realpath(process.env.CAPTURE_DIRECTORY);
             const manifest = path.join(root, 'outcome.json');
-            if ((await fs.stat(manifest)).size > 1024 * 1024) throw new Error('Outcome is too large');
-            const outcome = JSON.parse(await fs.readFile(manifest, 'utf8'));
+            let outcome;
+            try {
+              if ((await fs.stat(manifest)).size > 1024 * 1024) throw new Error('Outcome is too large');
+              outcome = JSON.parse(await fs.readFile(manifest, 'utf8'));
+            } catch (error) {
+              if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+              outcome = {schemaVersion: 1, kind: 'capture', status: 'incomplete', head: {revision: process.env.CAPTURE_SHA}, compatible: false, captures: [], evidence: [], reasons: ['Capture stopped before writing a complete outcome. Download the retained evidence for discovery and replay details']};
+            }
             const issue_number = Number(process.env.CAPTURE_PR);
             const run_id = Number(process.env.CAPTURE_RUN_ID);
             const sha = process.env.CAPTURE_SHA;
@@ -99,7 +105,7 @@ jobs:
             if (!Array.isArray(outcome.captures) || outcome.captures.length > 100 || !Array.isArray(outcome.evidence)) throw new Error('Invalid capture outcome');
             const publisher = {
               async publish(result, {directory, namespace}) {
-                const files = [...new Set(result.captures.flatMap(shot => [shot.base, shot.head, shot.diff]).filter(file => typeof file === 'string'))];
+                const files = [...new Set(result.captures.flatMap(shot => [shot.base, shot.head, ...(result.diffImages === true ? [shot.diff] : [])]).filter(file => typeof file === 'string'))];
                 const items = files.map(id => {
                   const item = result.evidence.find(item => item.id === id && item.mediaType === 'image/png');
                   if (!item) throw new Error('Screenshot evidence is missing');
@@ -159,7 +165,7 @@ jobs:
             const text = value => String(value).replace(/[&<>]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[char]).replace(/[\\`*_[\]|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
             const image = (id, label) => id === null ? 'Screenshot unavailable' : `![${label}](<${publication.urls[id]}>)`;
             const marker = '<!-- pagebeam-screenshots -->';
-            const lines = [marker, `Screenshots for ${sha}. Capture job: **${status}**.`, ''];
+            const lines = [marker, `Screenshots for ${sha}. Capture job: **${status}**.`, '', `[Retained evidence](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${run_id}/artifacts/${process.env.CAPTURE_ARTIFACT_ID})`, ''];
             if (outcome.coverage) {
               lines.push(`UI coverage: **${text(outcome.coverage.status)}**${outcome.coverage.basis === 'model' ? ' (model assessment)' : ''}.`, '');
               for (const reason of outcome.coverage.reasons || []) lines.push(`* ${text(reason)}`);
@@ -168,7 +174,7 @@ jobs:
             }
             if (outcome.compatible === false) lines.push(`Incomplete comparison: ${(outcome.reasons || []).map(text).join('; ')}.`, '');
             if (outcome.captures.length) {
-              const differences = outcome.captures.some(shot => shot.diff);
+              const differences = outcome.diffImages === true && outcome.captures.some(shot => shot.diff);
               lines.push(differences ? '| Screen | Before | After | Difference |' : '| Screen | Before | After |', differences ? '| --- | --- | --- | --- |' : '| --- | --- | --- |');
               for (const shot of outcome.captures) lines.push(`| ${text(`${shot.journey} / ${shot.viewport} / step ${shot.step}`)} | ${image(shot.base, 'Before')} | ${image(shot.head, 'After')} |${differences ? ` ${shot.diff ? image(shot.diff, 'Difference') : 'Unavailable'} |` : ''}`);
             } else lines.push(outcome.coverage?.status === 'no-ui' ? 'No UI changes detected. Browser capture was skipped.' : outcome.status === 'empty' ? 'No saved journey matches these changes.' : 'No screenshot comparison was completed.');

@@ -37,11 +37,13 @@ export const captureSchema = z.strictObject({
     timeoutMs: z.number().int().positive().default(120_000),
   })),
   skipDelays: z.boolean().default(false),
+  diffImages: z.boolean().default(false),
   discovery: z.strictObject({
     account: z.string().optional(),
     context: z.string().optional(),
     viewports:z.array(captureViewportSchema).min(1).default([{name:'desktop',width:1440,height:900,scale:2},{name:'phone',width:390,height:844,scale:2}]),
     maxCalls:z.number().int().positive().default(40),
+    reviewTimeoutMs: z.number().int().positive().default(600_000),
     maxDecisions: z.number().int().positive().max(30).default(8),
     timeoutMs: z.number().int().positive().default(180_000),
     parameters: z.record(z.string().min(1)).default({}),

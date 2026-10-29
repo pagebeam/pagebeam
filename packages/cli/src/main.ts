@@ -17,7 +17,7 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
                    [--journey <name> ... | --base <ref> | --changed-files <json> | --all]
                    [--mode auto|saved|model] [--purpose capture|check|both] [--plan] [--out <dir>] [--json]
                    [--config <file>] [--compare-environment <name> --compare-target <name>]
-                   [--compare-base <ref> [--baseline-install <command>]] [--viewport <name|all> ...] [--html]
+                   [--compare-base <ref> [--baseline-install <command>]] [--viewport <name|all> ...] [--html] [--diff-images]
   pagebeam session <capture options>    caller-directed JSON lines on stdin/stdout
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
@@ -62,6 +62,7 @@ interface Args {
   cwd: string;
   json: boolean;
   html: boolean;
+  diffImages?: boolean;
   publish: boolean;
   build: 'always' | 'auto' | undefined;
   profile: 'observe' | 'enforce' | 'enforce-all';
@@ -111,6 +112,7 @@ function parse(argv: string[]): Args {
     const a = argv[i] as string;
     if (a === '--json') args.json = true;
     else if (a === '--html') args.html = true;
+    else if (a === '--diff-images') args.diffImages = true;
     else if (a === '--all') args.all = true;
     else if (a === '--plan') args.plan = true;
     else if (['--environment', '--mode', '--purpose', '--base', '--changed-files', '--compare-environment', '--compare-target', '--compare-base', '--baseline-install', '--config'].includes(a!)) {

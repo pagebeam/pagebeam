@@ -59,3 +59,16 @@ test('renderers reject credential URLs and escape untrusted table labels', async
   const directory = await mkdtemp(path.join(tmpdir(), 'pagebeam-outcome-'));
   await assert.rejects(writeOutcome(outcome, {directory, renderers: [{format: 'text', filename: '../outside', render: () => ''}]}), /inside the outcome directory/);
 });
+
+
+test('difference previews require an explicit opt-in in both report formats',async()=>{
+  const outcome=structuredClone(capture);
+  outcome.captures[0]!.diff='difference.png';
+  for(const enabled of [undefined,false,true]){
+    if(enabled!==undefined)outcome.diffImages=enabled;
+    for(const renderer of [markdownRenderer,htmlRenderer]){
+      const rendered=await renderer.render(outcome,{urls:{}});
+      assert.equal(rendered.includes('Difference'),enabled===true);
+    }
+  }
+});

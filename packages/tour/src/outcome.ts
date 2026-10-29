@@ -37,6 +37,7 @@ export interface CaptureOutcome extends Outcome {
   unmapped: string[];
   coverage?: Selection['coverage'];
   captures: { journey: string; viewport: string; step: number; head: string | null; base: string | null;diff?:string;pixels?:number;percent?:number }[];
+  diffImages?: boolean;
   stability?: {state:string;volatilePixels:number;controlPixels:number;valid:boolean}[];
 }
 
@@ -67,7 +68,7 @@ export const markdownRenderer: OutcomeRenderer<CaptureOutcome> = {
       if (outcome.unmapped.length) lines.push(`Unmapped paths: ${outcome.unmapped.map(markdown).join(', ')}`);
       return lines.join('\n') + '\n';
     }
-    const differences=outcome.captures.some(shot=>shot.diff);
+    const differences=outcome.diffImages===true&&outcome.captures.some(shot=>shot.diff);
     lines.push(differences?'| Screen | Before | After | Difference |':'| Screen | Before | After |',differences?'| --- | --- | --- | --- |':'| --- | --- | --- |');
     const image = (file: string | null, label: string): string => file ? `![${label}](<${evidenceUrl(file, publication)}>)` : 'Screenshot unavailable';
     for (const shot of outcome.captures) lines.push(`| ${markdown(`${shot.journey} / ${shot.viewport} / step ${shot.step}`)} | ${image(shot.base, 'Before')} | ${image(shot.head, 'After')} |${differences?` ${shot.diff?image(shot.diff,'Difference')+(typeof shot.percent==='number'?' '+shot.percent.toFixed(3)+'%':''):'Unavailable'} |`:''}`);
@@ -79,7 +80,7 @@ export const htmlRenderer: OutcomeRenderer<CaptureOutcome> = {
   format: 'html', filename: 'index.html',
   render(outcome, publication) {
     const image = (file: string | null, label: string): string => file ? `<a href="${escapeHtml(evidenceUrl(file, publication))}"><img alt="${label}" src="${escapeHtml(evidenceUrl(file, publication))}" loading="lazy"></a>` : 'Screenshot unavailable';
-    const differences=outcome.captures.some(shot=>shot.diff);
+    const differences=outcome.diffImages===true&&outcome.captures.some(shot=>shot.diff);
     const rows = outcome.captures.map(shot => `<tr><td>${escapeHtml(`${shot.journey} / ${shot.viewport} / step ${shot.step}`)}</td><td>${image(shot.base, 'Before')}</td><td>${image(shot.head, 'After')}</td>${differences?`<td>${shot.diff?image(shot.diff,'Difference'):'Unavailable'}</td>`:''}</tr>`).join('');
     const coverage = outcome.coverage ? `<p>UI coverage: ${escapeHtml(outcome.coverage.status)}</p><ul>${outcome.coverage.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>` : '';
     const status = outcome.compatible === false ? `Incomplete comparison: ${outcome.reasons.map(escapeHtml).join('; ')}` : escapeHtml(outcome.status);

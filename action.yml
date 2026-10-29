@@ -50,6 +50,9 @@ inputs:
   environment:
     description: Named capture environment.
     default: local
+  diff-images:
+    description: Include pixel difference image previews alongside before and after screenshots.
+    default: 'false'
   capture-config:
     description: Optional capture configuration file, relative to cwd.
     default: ''
@@ -250,6 +253,7 @@ runs:
         MODEL_KEY_ENV: ${{ inputs.model-key-env }}
         CAPTURE_PLAN: ${{ inputs.plan }}
         CAPTURE_PREPARE: ${{ inputs.prepare }}
+        CAPTURE_DIFF_IMAGES: ${{ inputs.diff-images }}
         CAPTURE_HTML: ${{ inputs.html }}
         CAPTURE_INSTALL: ${{ inputs.install }}
         CAPTURE_ENVIRONMENT: ${{ inputs.environment }}
@@ -307,6 +311,7 @@ runs:
           args+=(--publish)
         elif [ "$PAGEBEAM_COMMAND" = capture ]; then
           [ "$CAPTURE_HTML" != true ] || args+=(--html)
+          [ "$CAPTURE_DIFF_IMAGES" != true ] || args+=(--diff-images)
           args+=(--json --environment "$CAPTURE_ENVIRONMENT" --target "$CAPTURE_TARGET" --mode "$CAPTURE_MODE" --purpose "$CAPTURE_PURPOSE" --out "$RUNNER_TEMP/pagebeam-captures")
           [ -z "$CAPTURE_CONFIG" ] || args+=(--config "$CAPTURE_CONFIG")
           while IFS= read -r journey; do

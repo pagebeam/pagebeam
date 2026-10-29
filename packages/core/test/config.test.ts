@@ -213,3 +213,14 @@ test('any step can carry a note, and there is no say step', () => {
   assert.throws(() => steps([{ say: 'Here are your notes' }]));
   assert.throws(() => steps([{ note: 'Only a note' }]));
 });
+
+
+test('difference previews default off and the complete review has a bounded deadline',()=>{
+  const defaults=parseConfig({...base,capture:{environments:{},discovery:{}}}).capture!;
+  assert.equal(defaults.diffImages,false);
+  assert.equal(defaults.discovery!.reviewTimeoutMs,600000);
+  const configured=parseConfig({...base,capture:{environments:{},diffImages:true,discovery:{reviewTimeoutMs:120000}}}).capture!;
+  assert.equal(configured.diffImages,true);
+  assert.equal(configured.discovery!.reviewTimeoutMs,120000);
+  assert.throws(()=>parseConfig({...base,capture:{environments:{},discovery:{reviewTimeoutMs:0}}}));
+});
