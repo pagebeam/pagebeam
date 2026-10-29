@@ -44,11 +44,11 @@ async function scenario() {
   const context = { repo: { owner: pull.base.repo.owner.login, repo: pull.base.repo.name }, serverUrl: new URL(run.html_url).origin };
   const env = { CAPTURE_ARTIFACT_ID: String(artifact.id), CAPTURE_RUN_ID: String(run.id), CAPTURE_PR: String(pull.number), CAPTURE_SHA: artifact.workflow_run.head_sha, CAPTURE_STATUS: 'failure', CAPTURE_DIRECTORY: directory, CAPTURE_STORAGE_RELEASE: 'pagebeam-captures' };
   pull.head.sha = env.CAPTURE_SHA;
-  return { artifact, run, pull, comments, release, asset, writes, uploads, outcome, env, async report(writeManifest=true) {
+  return { artifact, run, pull, comments, release, asset, writes, uploads, outcome, env, async report(writeManifest:boolean|string=true) {
     let current = false;
     await validate(github, context, {env}, {notice() {}, setOutput(name: string, value: string) { if (name === 'current') current = value === 'true'; }});
     if (!current) return;
-    if(writeManifest)await writeFile(path.join(directory, 'outcome.json'), JSON.stringify(outcome));
+    if(writeManifest)await writeFile(path.join(directory, 'outcome.json'), typeof writeManifest==='string'?writeManifest:JSON.stringify(outcome));
     await publish(github, context, {env}, {}, require);
   } };
 }
@@ -167,6 +167,15 @@ test('an interrupted capture without a manifest still posts a useful failure rep
   const current=await scenario();
   await current.report(false);
   assert.equal(current.uploads.length,0);
-  assert.match(current.writes[0]!.args.body,/Capture stopped before writing an outcome/);
+  assert.match(current.writes[0]!.args.body,/Capture stopped before writing a complete outcome/);
+  assert.match(current.writes[0]!.args.body,/Retained evidence/);
+});
+
+
+test('an interrupted outcome write still posts a useful failure report',async()=>{
+  const current=await scenario();
+  await current.report(JSON.stringify(current.outcome).slice(0,-8));
+  assert.equal(current.uploads.length,0);
+  assert.match(current.writes[0]!.args.body,/Capture stopped before writing a complete outcome/);
   assert.match(current.writes[0]!.args.body,/Retained evidence/);
 });

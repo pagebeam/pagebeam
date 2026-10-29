@@ -94,8 +94,8 @@ jobs:
               if ((await fs.stat(manifest)).size > 1024 * 1024) throw new Error('Outcome is too large');
               outcome = JSON.parse(await fs.readFile(manifest, 'utf8'));
             } catch (error) {
-              if (error.code !== 'ENOENT') throw error;
-              outcome = {schemaVersion: 1, kind: 'capture', status: 'incomplete', head: {revision: process.env.CAPTURE_SHA}, compatible: false, captures: [], evidence: [], reasons: ['Capture stopped before writing an outcome. Download the retained evidence for discovery and replay details']};
+              if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+              outcome = {schemaVersion: 1, kind: 'capture', status: 'incomplete', head: {revision: process.env.CAPTURE_SHA}, compatible: false, captures: [], evidence: [], reasons: ['Capture stopped before writing a complete outcome. Download the retained evidence for discovery and replay details']};
             }
             const issue_number = Number(process.env.CAPTURE_PR);
             const run_id = Number(process.env.CAPTURE_RUN_ID);
