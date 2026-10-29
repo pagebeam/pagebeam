@@ -302,7 +302,9 @@ untracked files, local dependencies and external submodule contents are not copi
 
 The default output is a Markdown before-and-after table (`report.md`), portable structured metadata
 (`outcome.json`), JSON run reports, and screenshot files. JSON CLI output also includes the portable `outcome` object.
-Add `--html` to generate HTML as well.
+Add `--html` to generate HTML as well. Automatic reviews show before and after screenshots by default.
+Add `--diff-images`, set `capture.diffImages: true`, or use the action input `diff-images: true`
+to include pixel difference previews. Pixel metrics and stability checks run with either setting.
 Unmapped changes and incomplete comparisons remain labelled in the outcome and reports.
 
 Capture outcomes, renderers and publishers are separate interfaces. `Outcome` carries status and
@@ -434,6 +436,7 @@ capture:
   discovery:
     context: .pagebeam/fixture-context.json
     maxCalls: 40
+    reviewTimeoutMs: 600000
     maxDecisions: 8
     timeoutMs: 180000
   impact:
@@ -448,6 +451,10 @@ is JSON describing available records, workspace memberships and permissions, wit
 screenshot instructions. A public frontend can use `login: { anonymous: true }`; a frontend without a
 backend uses `backend: { kind: none }`. No saved journeys are required. Each application needs its own
 target and impact root when multiple applications share route paths.
+
+The whole automatic review has a ten minute deadline by default (`reviewTimeoutMs`);
+`timeoutMs` limits each discovery state. An expired review writes an incomplete outcome
+and retains its evidence instead of waiting for the caller to kill the process.
 
 Automatic screenshot review chooses representative changed UI states. It does not establish every
 business workflow or decide the correct business outcome. Keep explicit saved journeys and assertions

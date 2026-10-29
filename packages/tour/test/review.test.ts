@@ -40,7 +40,7 @@ function settings(head:string,base:string,url='http://127.0.0.1:1',before=url){
   return parseConfig({model:{baseUrl:'https://example.test/v1',name:'recorded',sendSource:true},tours:{targets:{head:{url},base:{url:before}},accounts:{visitor:{purpose:'Public catalogue visitor',login:{anonymous:true},confirm:'h1'}},timeoutMs:1500},capture:{discovery:{maxDecisions:6,timeoutMs:30000},environments:{head:{backend:{kind:'none'},frontendRevision:head,disposable:true},base:{backend:{kind:'none'},frontendRevision:base,disposable:true}}}});
 }
 
-test('automatic review discovers root-level frontend states, learns once and replays both revisions',async()=>{
+for(const diffImages of [false,true])test(`automatic review discovers and replays both revisions with difference images ${diffImages?'enabled':'disabled'}`,async()=>{
   const {cwd,head,base}=await project();
   const after=await serve(path.join(fixtures,'after.html')),before=await serve(path.join(fixtures,'before.html'));
   const recorded=JSON.parse(await readFile(path.join(fixtures,'decisions.json'),'utf8')) as {purpose:string;input:Record<string,string>;output:unknown}[];
@@ -49,7 +49,7 @@ test('automatic review discovers root-level frontend states, learns once and rep
   process.env.REVIEW_MODEL_KEY_TEST='your-api-key-here';
   config.capture!.environments.head!.prepare=["node -e 'if(process.env.REVIEW_MODEL_KEY_TEST)process.exit(99)'"];
   try{
-    const result=await reviewCaptures({cwd,config,environment:'head',target:'head',compareEnvironment:'base',compareTarget:'base',base,html:true,judge:async(purpose,_system,input)=>{
+    const result=await reviewCaptures({cwd,config,environment:'head',target:'head',compareEnvironment:'base',compareTarget:'base',base,html:true,...(diffImages?{diffImages:true}:{}),judge:async(purpose,_system,input)=>{
       calls++;
       if(purpose==='navigate'&&Array.isArray((input as {related?:unknown[]}).related)&&(input as {related:unknown[]}).related.length)relatedTraces++;
       const request=input as Record<string,string>;
@@ -72,7 +72,10 @@ test('automatic review discovers root-level frontend states, learns once and rep
     assert.ok((await readFile(result.markdown,'utf8')).includes('(model assessment)'));
     const tampered=structuredClone(result.recipe);tampered.states[0]!.goal='A different review state';
     assert.equal(compareReviewRuns(result.head,result.base!,tampered).compatible,false);
-    assert.ok(result.outcome.captures.every(shot=>shot.diff));
+    assert.equal(result.outcome.diffImages,diffImages);
+    assert.ok(result.outcome.captures.every(shot=>Boolean(shot.diff)===diffImages));
+    assert.ok(result.differences!.every(shot=>Boolean(shot.diff)===diffImages));
+    assert.equal((await readFile(result.markdown,'utf8')).includes('| Difference |'),diffImages);
   }finally{delete process.env.REVIEW_MODEL_KEY_TEST;await Promise.all([after.close(),before.close()]);}
 });
 
@@ -550,4 +553,19 @@ test('browser source builds ignore minimal DOM declarations from a host project'
   await writeFile(path.join(types,'host/index.d.ts'),'interface Element {}\ninterface HTMLElement extends Element {}\ninterface SVGElement extends Element {}\n');
   const require=createRequire(import.meta.url),compiler=require.resolve('typescript/bin/tsc'),nodeTypes=path.dirname(path.dirname(require.resolve('@types/node/package.json')));
   await exec(process.execPath,[compiler,'--project',path.resolve(import.meta.dirname,'../tsconfig.json'),'--typeRoots',`${types},${nodeTypes}`,'--types','node,host','--noEmit','--composite','false','--incremental','false']);
+});
+
+
+test('the review deadline writes an incomplete outcome when a judge never responds',{timeout:5000},async(t)=>{
+  const keepAlive=setInterval(()=>{},1000);t.after(()=>clearInterval(keepAlive));
+  const {cwd,head,base}=await project();
+  const config=settings(head,base);config.capture!.discovery!.reviewTimeoutMs=100;
+  let failure:ReviewFailure|undefined;
+  try{await reviewCaptures({cwd,config,environment:'head',target:'head',base,judge:async()=>new Promise<string>(()=>{})});}
+  catch(error){assert.ok(error instanceof ReviewFailure);failure=error;}
+  assert.ok(failure);
+  const outcome=JSON.parse(await readFile(failure.evidence.manifest,'utf8'));
+  assert.equal(outcome.status,'incomplete');
+  assert.equal(outcome.head.revision,head);
+  assert.match(JSON.stringify(outcome),/timeout|aborted/i);
 });

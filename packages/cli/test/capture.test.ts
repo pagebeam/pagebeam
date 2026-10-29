@@ -46,7 +46,7 @@ async function applicationWorkspace(url: string, journeys: Record<string, unknow
 test('capture planning accepts multiple explicit journeys and overrides changed-file mapping', async () => {
   const cwd = await workspace();
   await writeFile(path.join(cwd, 'changed.json'), JSON.stringify(['first/form.vue']));
-  const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--journey', 'second', '--journey', 'first', '--changed-files', 'changed.json', '--plan']);
+  const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--journey', 'second', '--journey', 'first', '--changed-files', 'changed.json', '--plan', '--diff-images']);
   const result = JSON.parse(stdout);
   assert.deepEqual(result.journeys.map((journey: { name: string }) => journey.name), ['second', 'first']);
   assert.equal(result.journeys[0].reasons[0], 'explicit selection');

@@ -21,6 +21,7 @@ interface Asked {
   out: string | undefined;
   json: boolean;
   html: boolean;
+  diffImages?: boolean;
   compareEnvironment: string | undefined;
   compareTarget: string | undefined;
   compareBase: string | undefined;
@@ -79,7 +80,7 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
           compareEnvironment='baseline-review';
           config.capture!.environments[compareEnvironment]=baseline.environment;
         }
-        const result=await reviewCaptures({cwd,config,environment:asked.environment??'local',target:asked.target??'local',base:selectionBase,changed,compareEnvironment,compareTarget:asked.compareTarget??asked.target??'local',out:asked.out,html:asked.html,viewports:asked.requestedViewports.length?asked.requestedViewports:undefined,signal:controller.signal});
+        const result=await reviewCaptures({cwd,config,environment:asked.environment??'local',target:asked.target??'local',base:selectionBase,changed,compareEnvironment,compareTarget:asked.compareTarget??asked.target??'local',out:asked.out,html:asked.html,diffImages:asked.diffImages,viewports:asked.requestedViewports.length?asked.requestedViewports:undefined,signal:controller.signal});
         const value={...result,reviewDirectory:result.directory,directory:result.head.directory,report:result.head.report};
         if(asked.json)process.stdout.write(JSON.stringify(value)+'\n');else process.stdout.write(`${result.outcome.status}: ${result.directory}\n`);
         return result.outcome.status==='failed'?1:['passed','empty'].includes(result.outcome.status)?0:2;

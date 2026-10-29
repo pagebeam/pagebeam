@@ -44,11 +44,11 @@ async function scenario() {
   const context = { repo: { owner: pull.base.repo.owner.login, repo: pull.base.repo.name }, serverUrl: new URL(run.html_url).origin };
   const env = { CAPTURE_ARTIFACT_ID: String(artifact.id), CAPTURE_RUN_ID: String(run.id), CAPTURE_PR: String(pull.number), CAPTURE_SHA: artifact.workflow_run.head_sha, CAPTURE_STATUS: 'failure', CAPTURE_DIRECTORY: directory, CAPTURE_STORAGE_RELEASE: 'pagebeam-captures' };
   pull.head.sha = env.CAPTURE_SHA;
-  return { artifact, run, pull, comments, release, asset, writes, uploads, outcome, env, async report() {
+  return { artifact, run, pull, comments, release, asset, writes, uploads, outcome, env, async report(writeManifest=true) {
     let current = false;
     await validate(github, context, {env}, {notice() {}, setOutput(name: string, value: string) { if (name === 'current') current = value === 'true'; }});
     if (!current) return;
-    await writeFile(path.join(directory, 'outcome.json'), JSON.stringify(outcome));
+    if(writeManifest)await writeFile(path.join(directory, 'outcome.json'), JSON.stringify(outcome));
     await publish(github, context, {env}, {}, require);
   } };
 }
@@ -125,6 +125,7 @@ test('the reporter displays missing coverage without publishing substitute image
 
 test('the reusable reporter publishes native difference images in the same review table',async()=>{
   const current=await scenario();
+  Object.assign(current.outcome,{diffImages:true});
   Object.assign(current.outcome.captures[0]!,{diff:'screenshot'});
   await current.report();
   assert.equal(current.writes.length,1);
@@ -151,4 +152,21 @@ test('capture action uploads the manifest directory for nested automatic review 
   assert.ok(result.includes(`manifest=${manifest}\n`));
   await writeFile(path.join(directory,'said.txt'),JSON.stringify({manifest:path.join(directory,'outside','outcome.json'),report:{id:'head-run'}}));
   await assert.rejects(promisify(execFile)(process.execPath,['--input-type=module','-e',script],{env:{...process.env,RUNNER_TEMP:directory,GITHUB_OUTPUT:output}}),/outside the artifact directory/);
+});
+
+
+test('the reusable reporter hides difference previews unless explicitly requested',async()=>{
+  const current=await scenario();
+  Object.assign(current.outcome.captures[0]!,{diff:'screenshot'});
+  await current.report();
+  assert.ok(!current.writes[0]!.args.body.includes('Difference'));
+  assert.ok(current.writes[0]!.args.body.includes('| Screen | Before | After |'));
+});
+
+test('an interrupted capture without a manifest still posts a useful failure report',async()=>{
+  const current=await scenario();
+  await current.report(false);
+  assert.equal(current.uploads.length,0);
+  assert.match(current.writes[0]!.args.body,/Capture stopped before writing an outcome/);
+  assert.match(current.writes[0]!.args.body,/Retained evidence/);
 });
