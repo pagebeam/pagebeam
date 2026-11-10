@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
-import { launchBrowser, unavailable, routeMatches } from '@pagebeam/app';
+import { launchBrowser, unavailable, routeMatches, routesOverlap } from '@pagebeam/app';
 import { stepSchema, type TourJourney, type Tours, type TourStep } from '@pagebeam/core';
 import { navigationPath } from './checkpoints.js';
 import { act, focusBoxes } from './shoot.js';
@@ -370,14 +370,14 @@ export class CaptureSession {
         result.skipped = 'configured delay skip';
       } else if ('shot' in step) {
         const expectedRoute = step.shot.route ?? this.navigated;
-        const relevant = !o.captureRoutes || Boolean(expectedRoute && o.captureRoutes.some(route => routeMatches(route, expectedRoute)));
+        const relevant = !o.captureRoutes || Boolean(expectedRoute && o.captureRoutes.some(route => routesOverlap(route, expectedRoute)));
         if (!relevant) result.skipped = 'unaffected screen';
         else {
           const target = new URL(o.tours.targets[o.target]!.url);
           const checkRoute = (): void => {
             const actual = new URL(page.url());
             result.route = actual.pathname;
-            if (expectedRoute && (actual.origin !== target.origin || (actual.pathname.replace(/\/$/, '') || '/') !== (expectedRoute.replace(/\/$/, '') || '/'))) {
+            if (expectedRoute && (actual.origin !== target.origin || !routeMatches(expectedRoute, actual.pathname))) {
               throw new Error(`Screenshot ${step.shot.name} expected route ${expectedRoute}, reached ${actual.pathname}`);
             }
           };
