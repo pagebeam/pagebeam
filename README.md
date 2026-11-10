@@ -389,7 +389,7 @@ only expose their selection outputs and leave execution to the conditional captu
 ### Affected-screen coverage
 
 A screenshot uses its explicit `shot.route`, or the pathname of its most recent saved `goto`. The browser checks the target origin
-and that the page's pathname matches this route before capturing, so a redirect to login cannot become a screenshot of another screen.
+and that the page's pathname matches this route before capturing, so a redirect to login fails unless the route also matches `/login`.
 `shot.route` accepts the same patterns as route dependencies: `/files/:id` matches a record reached by clicking through the UI,
 whose identifier is unknown when the journey is written. A broad pattern such as `/:page` also matches `/login`, so keep
 patterns narrow, and keep assertions for the page's content and the state being reviewed in the saved journey.
