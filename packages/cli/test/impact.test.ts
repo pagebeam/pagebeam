@@ -155,6 +155,7 @@ test('browser capture excludes unrelated checkpoints and rejects the wrong scree
         journeys: { notes: { account: 'reader', steps: [
           { goto: '/notes' }, { expect: { selector: 'li.note', text: 'First note' } },
           { shot: { name: 'notes', route: '/notes' } }, { shot: { name: 'unrelated', route: '/wallets' } },
+          { shot: { name: 'pattern', route: '/:page' } },
         ] } },
       },
     };
@@ -167,7 +168,8 @@ test('browser capture excludes unrelated checkpoints and rejects the wrong scree
     assert.equal(result.report.status, 'passed');
     assert.equal(result.report.results[0].steps[2].route, '/notes');
     assert.equal(result.report.results[0].steps[3].skipped, 'unaffected screen');
-    assert.equal(result.outcome.captures.length, 1);
+    assert.equal(result.report.results[0].steps[4].route, '/notes');
+    assert.equal(result.outcome.captures.length, 2);
     await access(path.join(result.directory, result.outcome.captures[0].head.split('/').slice(1).join('/')));
     settings.tours.journeys.notes.steps[0] = { goto: '/login' };
     settings.tours.journeys.notes.steps.splice(1, 1);

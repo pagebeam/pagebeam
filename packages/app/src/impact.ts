@@ -43,6 +43,10 @@ export function routeMatches(pattern: string, pathname: string): boolean {
   return new RegExp(`^${expression.replace(/\/$/, '') || '/'}$`).test(pathname.replace(/\/$/, '') || '/');
 }
 
+export function routesOverlap(left: string, right: string): boolean {
+  return routeMatches(left, right) || routeMatches(right, left);
+}
+
 export const staticImpactAnalyzer: ImpactAnalyzer = {
   analyze(request) {
     const graph = (files: ImpactSource[]) => {
