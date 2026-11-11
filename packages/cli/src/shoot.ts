@@ -9,6 +9,7 @@ interface Asked {
   journey: string | undefined;
   out: string | undefined;
   narration: string | undefined;
+  browser?: 'chromium' | 'firefox' | undefined;
   json: boolean;
 }
 
@@ -62,6 +63,7 @@ export async function shootCommand(cwd: string, asked: Asked): Promise<Outcome> 
       journey: asked.journey,
       out: asked.out,
       narration,
+      browser: asked.browser,
     });
     if (unavailable(result)) {
       return { code: 2, out: '', err: `Nothing was shot: ${result.reason}\n` };

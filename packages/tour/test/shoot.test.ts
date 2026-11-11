@@ -251,3 +251,49 @@ test('an unknown target is refused and the known ones are named', async () => {
   });
   await assert.rejects(shoot({ cwd: await workspace(), tours, target: 'prod' }), /no target is named prod. Targets: local/);
 });
+
+test('a journey can be shot in Firefox, and the manifest says so', async (t) => {
+  const app = await notesApp();
+  const cwd = await workspace();
+  process.env.NOTES_USER = 'ada';
+  process.env.NOTES_PASSWORD = 'pw-ada';
+  try {
+    const tours = toursFor(app.url, {
+      browser: 'firefox',
+      accounts: {
+        writer: { purpose: 'a user with notes', login: { usernameEnv: 'NOTES_USER', passwordEnv: 'NOTES_PASSWORD', form: FORM }, confirm: '#signout' },
+      },
+      journeys: {
+        write: {
+          account: 'writer',
+          viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }],
+          steps: [{ goto: '/notes' }, { expect: { selector: 'li.note', text: 'Second note' } }, { shot: { name: 'list' } }],
+        },
+      },
+    });
+    const result = await shoot({ cwd, tours });
+    if (unavailable(result)) {
+      t.skip(`no browser to drive: ${result.reason}`);
+      return;
+    }
+    const manifest = result.manifests[0]!.manifest;
+    assert.equal(manifest.browser, 'firefox');
+    const png = await readFile(path.join(cwd, '.pagebeam/shots/local/write', manifest.shots[0]!.file));
+    assert.deepEqual(pngSize(png), { width: 800, height: 600 });
+  } finally {
+    delete process.env.NOTES_USER;
+    delete process.env.NOTES_PASSWORD;
+    await app.stop();
+  }
+});
+
+test('a recorded journey is refused in Firefox before anything is launched', async () => {
+  const tours = toursFor('http://127.0.0.1:1', {
+    browser: 'firefox',
+    accounts: { visitor: { purpose: 'anyone', login: { anonymous: true }, confirm: 'body' } },
+    journeys: { tour: { account: 'visitor', record: true, steps: [{ goto: '/' }] } },
+  });
+  const result = await shoot({ cwd: await workspace(), tours });
+  assert.ok(unavailable(result));
+  assert.match(result.reason, /recording needs Chromium; firefox cannot record a journey/);
+});

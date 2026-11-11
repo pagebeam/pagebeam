@@ -218,6 +218,7 @@ const toursSchema = z
       }),
     ).default({}),
     timeoutMs: z.number().int().positive().default(15_000),
+    browser: z.enum(['chromium', 'firefox']).default('chromium'),
   })
   .superRefine((tours, ctx) => {
     for (const [name, journey] of Object.entries(tours.journeys)) {
@@ -246,6 +247,7 @@ const toursSchema = z
   });
 
 export type Tours = z.infer<typeof toursSchema>;
+export type BrowserEngine = Tours['browser'];
 export type TourAccount = Tours['accounts'][string];
 export type TourJourney = Tours['journeys'][string];
 export type TourStep = TourJourney['steps'][number];

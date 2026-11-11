@@ -12,12 +12,13 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
   pagebeam fix   [--cwd <dir>] [--publish] [--build]
   pagebeam init  [--cwd <dir>]
   pagebeam shoot [--cwd <dir>] [--target <name>] [--journey <name>] [--out <dir>]
-                 [--narration <file>] [--json]
+                 [--narration <file>] [--browser chromium|firefox] [--json]
   pagebeam capture --environment <name> --target <name>
                    [--journey <name> ... | --base <ref> | --changed-files <json> | --all]
                    [--mode auto|saved|model] [--purpose capture|check|both] [--plan] [--out <dir>] [--json]
                    [--config <file>] [--compare-environment <name> --compare-target <name>]
                    [--compare-base <ref> [--baseline-install <command>]] [--viewport <name|all> ...] [--html] [--diff-images]
+                   [--browser chromium|firefox]
   pagebeam session <capture options>    caller-directed JSON lines on stdin/stdout
 
   --cwd      directory holding pagebeam.config.* (default: current directory)
@@ -42,6 +43,9 @@ const USAGE = `pagebeam - find documentation that no longer matches the product
              shoot: a JSON file of how long the voice over for each step
              lasts, {"journey": {"step": ms}}, so a recording holds each
              step until its line is said
+  --browser  shoot/capture/session: the engine to drive, overriding
+             tours.browser (default: chromium). Firefox needs Playwright's
+             build (npx playwright install firefox) and cannot record
   --profile  observe: report everything, block nothing (default)
              enforce: block on proven findings this change introduced.
                       A finding of unknown age never blocks here
@@ -84,6 +88,7 @@ interface Args {
   compareBase: string | undefined;
   baselineInstall: string | undefined;
   configFile: string | undefined;
+  browser: 'chromium' | 'firefox' | undefined;
 }
 
 const PROFILES = new Set(['observe', 'enforce', 'enforce-all']);
@@ -107,6 +112,7 @@ function parse(argv: string[]): Args {
     changedFiles: undefined, requestedJourneys: [], requestedViewports: [], all: false, plan: false,
     compareEnvironment: undefined, compareTarget: undefined, compareBase: undefined, baselineInstall: undefined,
     configFile: undefined,
+    browser: undefined,
   };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] as string;
@@ -125,6 +131,11 @@ function parse(argv: string[]): Args {
       else if (a === '--compare-base') args.compareBase = value;
       else if (a === '--baseline-install') args.baselineInstall = value;
       else args[a!.slice(2) as 'environment' | 'mode' | 'purpose' | 'base'] = value;
+    }
+    else if (a === '--browser') {
+      const value = argv[++i];
+      if (value !== 'chromium' && value !== 'firefox') throw new BadUsage('--browser must be chromium or firefox');
+      args.browser = value;
     }
     else if (a === '--viewport') {
       const value = argv[++i];

@@ -224,3 +224,10 @@ test('difference previews default off and the complete review has a bounded dead
   assert.equal(configured.discovery!.reviewTimeoutMs,120000);
   assert.throws(()=>parseConfig({...base,capture:{environments:{},discovery:{reviewTimeoutMs:0}}}));
 });
+
+test('tours drive chromium unless another engine is named', () => {
+  const tours = { targets: { local: { url: 'http://localhost:3000' } }, accounts: {} };
+  assert.equal(parseConfig({ ...base, tours }).tours?.browser, 'chromium');
+  assert.equal(parseConfig({ ...base, tours: { ...tours, browser: 'firefox' } }).tours?.browser, 'firefox');
+  assert.throws(() => parseConfig({ ...base, tours: { ...tours, browser: 'webkit' } }));
+});

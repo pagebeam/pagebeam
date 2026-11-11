@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Firefox
+
+- `tours.browser` chooses the engine: `chromium` (default) or `firefox`.
+  `--browser` and the action's `browser` input override it for one run.
+- Firefox runs on Playwright's build of it. Recorded journeys still need
+  Chromium and are refused in Firefox before a browser starts.
+- Manifests and capture reports record the engine, and a comparison between
+  engines is reported as incompatible.
+
 ## 0.1.5
 
 ### Guided screenshots

@@ -196,3 +196,25 @@ test('a page that drops out of the session is not read as the product', async (t
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test('a page can be read in Firefox', async (t) => {
+  const server: Server = createServer((_, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><html><body><div id="engine"></div><script>
+      document.getElementById('engine').innerHTML = '<button>' + (navigator.userAgent.includes('Firefox/') ? 'Rendered by Firefox' : 'Rendered elsewhere') + '</button>';
+    </script></body></html>`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  try {
+    const result = await render({ app: 'demo', baseUrl: `http://127.0.0.1:${port}`, routes: ['/'], browser: 'firefox' });
+    if (unavailable(result)) {
+      t.skip(`no browser to drive: ${result.reason}`);
+      return;
+    }
+    assert.ok(result.labels.some((l) => l.text === 'Rendered by Firefox'));
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
