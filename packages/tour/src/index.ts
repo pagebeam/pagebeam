@@ -14,3 +14,4 @@ export * from './review-context.js';
 export * from './pixels.js';
 
 export {PublicResources} from './resources.js';
+export * from './cloud.js';

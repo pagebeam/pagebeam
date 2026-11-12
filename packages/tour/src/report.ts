@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { CaptureReport } from './capture.js';
+import { compareOutcomePixels } from './pixels.js';
 import type { Comparison } from './compare.js';
 import { markdownRenderer, htmlRenderer, type Outcome, type OutcomeRenderer, type OutcomePublisher, type CaptureOutcome, type Publication } from './outcome.js';
 
@@ -49,9 +50,23 @@ export async function writeOutcome<T extends Outcome>(outcome: T, options: {
   return { manifest, outputs, publication };
 }
 
-export async function writeCaptureOutcome(directory: string, head: Run, base?: Run, comparison?: Comparison, options: { html?: boolean } = {}): Promise<{ outcome: CaptureOutcome; manifest: string; markdown: string; gallery?: string }> {
+export async function writeCaptureOutcome(directory: string, head: Run, base?: Run, comparison?: Comparison, options: { html?: boolean; diffImages?: boolean; masks?: ReadonlyMap<string,Uint8Array>; publisher?: OutcomePublisher | undefined; onPublishError?: (error: string) => void } = {}): Promise<{ outcome: CaptureOutcome; manifest: string; markdown: string; gallery?: string }> {
   const outcome = captureOutcome(directory, head, base, comparison);
+  await compareOutcomePixels(directory, outcome, options.diffImages ?? false, options.masks);
   const renderers = [markdownRenderer, ...(options.html ? [htmlRenderer] : [])];
-  const result = await writeOutcome(outcome, { directory, renderers });
+  const publisher: OutcomePublisher<CaptureOutcome> | undefined = options.publisher ? { async publish(value, context) {
+    try {
+      const publication = await options.publisher!.publish(value, context);
+      if (publication.url) outcome.cloud = { url: publication.url };
+      return publication;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      outcome.cloud = { error: message };
+      options.onPublishError?.(message);
+      return { urls: {} };
+    }
+  } } : undefined;
+  const result = await writeOutcome(outcome, { directory, renderers, ...(publisher ? { publisher } : {}) });
+  await writeFile(result.manifest, JSON.stringify(outcome, null, 2) + '\n');
   return { outcome, manifest: result.manifest, markdown: result.outputs.markdown!, ...(result.outputs.html ? { gallery: result.outputs.html } : {}) };
 }

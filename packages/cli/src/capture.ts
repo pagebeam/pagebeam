@@ -1,9 +1,11 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createInterface } from 'node:readline';
 import { loadConfig } from '@pagebeam/engine';
 import { ask } from '@pagebeam/model';
-import { capture, reviewCaptures, ReviewFailure, explore, planCaptures, compareCaptures, writeCaptureOutcome, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
+import { cloud, writeOutcome, markdownRenderer, htmlRenderer, type OutcomePublisher, type CaptureOutcome, capture, reviewCaptures, ReviewFailure, explore, planCaptures, compareCaptures, writeCaptureOutcome, selectViewports, Incomplete, StageFailure, type CaptureDriver } from '@pagebeam/tour';
 import { z } from 'zod';
 import { prepareBaseline } from './baseline.js';
 
@@ -35,6 +37,40 @@ const message = z.discriminatedUnion('method', [
   z.strictObject({ id: z.union([z.string(), z.number()]), method: z.literal('finish') }),
   z.strictObject({ id: z.union([z.string(), z.number()]), method: z.literal('cancel') }),
 ]);
+
+function cloudPublisher(cwd: string): OutcomePublisher | undefined {
+  const token = process.env.PAGEBEAM_TOKEN;
+  if (!token) return undefined;
+  return { async publish(outcome, context) {
+    try {
+      const git = async (...args: string[]): Promise<string> => (await promisify(execFile)('git', args, { cwd })).stdout.trim();
+      const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
+      const pr = event.pull_request;
+      const remote = process.env.GITHUB_REPOSITORY ? '' : await git('remote', 'get-url', 'origin');
+      const repository = process.env.GITHUB_REPOSITORY ?? remote.replace(/\.git$/, '').replace(/^.*[:/]([^/:]+\/[^/]+)$/, '$1');
+      return cloud({ token, apiUrl: process.env.PAGEBEAM_API_URL, repository,
+        pullRequest: pr?.number ?? event.number, branch: process.env.GITHUB_HEAD_REF || await git('branch', '--show-current'),
+        headSha: pr?.head?.sha ?? await git('rev-parse', 'HEAD'), baseSha: pr?.base?.sha ?? await git('rev-parse', 'HEAD^').catch(() => null),
+        idempotencyKey: process.env.GITHUB_RUN_ID ? `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT ?? '1'}` : ('head' in outcome ? (outcome.head as { id: string }).id : context.namespace),
+      }).publish(outcome, context);
+    } catch (error) { throw new Error(String(error instanceof Error ? error.message : error).split(token).join('<REDACTED>')); }
+  } };
+}
+
+async function publishReview(cwd: string, directory: string, outcome: CaptureOutcome, html: boolean): Promise<void> {
+  const publisher = cloudPublisher(cwd);
+  if (!publisher) return;
+  let publication: { url?: string; urls: Record<string, string> } = { urls: {} };
+  try {
+    publication = await publisher.publish(outcome, { directory, namespace: outcome.head.id });
+    if (publication.url) outcome.cloud = { url: publication.url };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    outcome.cloud = { error: message };
+    process.stderr.write(`Cloud: ${message}\n`);
+  }
+  await writeOutcome(outcome, { directory, renderers: [markdownRenderer, ...(html ? [htmlRenderer] : [])], publisher: { async publish() { return publication; } } });
+}
 
 export async function captureCommand(cwd: string, asked: Asked, caller = false): Promise<number> {
   const controller = new AbortController();
@@ -81,11 +117,15 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
           config.capture!.environments[compareEnvironment]=baseline.environment;
         }
         const result=await reviewCaptures({cwd,config,environment:asked.environment??'local',target:asked.target??'local',base:selectionBase,changed,compareEnvironment,compareTarget:asked.compareTarget??asked.target??'local',out:asked.out,html:asked.html,diffImages:asked.diffImages,viewports:asked.requestedViewports.length?asked.requestedViewports:undefined,signal:controller.signal});
+        await publishReview(cwd, result.directory, result.outcome, asked.html);
         const value={...result,reviewDirectory:result.directory,directory:result.head.directory,report:result.head.report};
         if(asked.json)process.stdout.write(JSON.stringify(value)+'\n');else process.stdout.write(`${result.outcome.status}: ${result.directory}\n`);
         return result.outcome.status==='failed'?1:['passed','empty'].includes(result.outcome.status)?0:2;
       } catch(error) {
-        if(error instanceof ReviewFailure && asked.json){process.stdout.write(JSON.stringify(error.evidence)+'\n');return 2;}
+        if (error instanceof ReviewFailure) {
+          await publishReview(cwd, error.evidence.directory, error.evidence.outcome, asked.html);
+          if (asked.json) { process.stdout.write(JSON.stringify(error.evidence) + '\n'); return 2; }
+        }
         throw error;
       } finally {await baseline?.dispose();}
     }
@@ -166,7 +206,7 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
       }
     } finally {
       await baseline?.dispose();
-      rendered = await writeCaptureOutcome(path.dirname(result.directory), result, base, comparison?.report, { html: asked.html });
+      rendered = await writeCaptureOutcome(path.dirname(result.directory), result, base, comparison?.report, { html: asked.html, diffImages: asked.diffImages ?? config.capture?.diffImages ?? false, publisher: cloudPublisher(cwd), onPublishError: error => process.stderr.write(`Cloud: ${error}\n`) });
     }
     const value = { directory: result.directory, report: result.report, ...rendered, ...(comparison ? { comparison } : {}) };
     if (caller || asked.json) process.stdout.write(JSON.stringify(caller ? { event: 'finished', ...value } : value) + '\n');

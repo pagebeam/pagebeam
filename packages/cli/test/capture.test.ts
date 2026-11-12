@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -219,7 +219,7 @@ test('a git baseline reuses one language-neutral environment and produces paired
         method: request.method, headers: request.headers, redirect: 'manual',
         ...(chunks.length ? { body: Buffer.concat(chunks) } : {})
       });
-      const body = (await upstream.text()).replace('</body>', '<p>${label}</p></body>');
+      const body = (await upstream.text()).replace('</body>', request.url === '/notes' ? '<div style="width:100px;height:100px;background:${label === 'before' ? 'black' : 'red'}"></div></body>' : '</body>');
       response.writeHead(upstream.status, {
         'content-type': upstream.headers.get('content-type') || 'text/html',
         ...(upstream.headers.has('location') ? { location: upstream.headers.get('location') } : {}),
@@ -250,30 +250,56 @@ test('a git baseline reuses one language-neutral environment and produces paired
         accounts: { reader: {
           purpose: 'notes reader', login: { usernameEnv: 'NOTES_USER', passwordEnv: 'NOTES_PASSWORD', form: { url: '/login', username: '#username', password: '#password', submit: '#submit' } }, confirm: '#signout',
         } },
-        journeys: { notes: { account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }], steps: [{ goto: '/notes' }, { expect: { selector: 'li.note', text: 'First note' } }, { shot: { name: 'notes', route: '/notes' } }] } },
+        journeys: { notes: { account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }], steps: [{ goto: '/notes' }, { expect: { selector: 'li.note', text: 'First note' } }, { shot: { name: 'notes', route: '/notes' } }, { goto: '/login' }, { shot: { name: 'unchanged', route: '/login' } }] } },
       },
     }));
-    const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--environment', 'ci', '--target', 'ci', '--compare-base', before,
-      '--baseline-install', `${process.execPath} -e "require('node:fs').writeFileSync('installed.txt','baseline')"`, '--html', '--json'], {
-      env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' }, timeout: 60000,
-    });
-    const result = JSON.parse(stdout);
-    assert.equal(result.report.status, 'passed');
-    assert.equal(result.report.revision, after);
-    assert.equal(result.outcome.coverage.status, 'complete');
-    assert.deepEqual(result.outcome.coverage.routes.map((route: {route: string}) => route.route), ['/notes']);
-    assert.equal(result.comparison.report.base.revision, before);
-    assert.equal(result.comparison.report.compatible, true);
-    const shot = result.comparison.report.captures[0];
-    const head = await readFile(path.join(result.directory, shot.head));
-    const base = await readFile(path.join(result.comparison.directory, shot.base));
-    assert.ok(!head.equals(base), 'both committed frontend versions must be captured');
-    const gallery = await readFile(result.gallery, 'utf8');
-    assert.ok(gallery.includes('<th>Before</th>'));
-    assert.ok(gallery.includes('<th>After</th>'));
-    assert.ok(gallery.includes(before));
-    assert.ok(gallery.includes(after));
-    assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim(), after);
+    for (const mode of ['off', 'flag', 'config']) {
+      const configPath = path.join(cwd, 'pagebeam.config.json');
+      const config = JSON.parse(await readFile(configPath, 'utf8'));
+      config.capture.diffImages = mode === 'config';
+      await writeFile(configPath, JSON.stringify(config));
+      const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--environment', 'ci', '--target', 'ci', '--compare-base', 'HEAD~1', '--all', '--viewport', 'all', ...(mode === 'flag' ? ['--diff-images'] : []),
+        '--baseline-install', `${process.execPath} -e "require('node:fs').writeFileSync('installed.txt','baseline')"`, '--html', '--json'], {
+        env: { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada' }, timeout: 60000,
+      });
+      const result = JSON.parse(stdout);
+      assert.equal(result.report.status, 'passed');
+      assert.equal(result.report.revision, after);
+      assert.equal(result.outcome.coverage.status, 'manual');
+      assert.equal(result.comparison.report.base.revision, before);
+      assert.equal(result.comparison.report.compatible, true);
+      const outcome = JSON.parse(await readFile(result.manifest, 'utf8'));
+      assert.deepEqual(result.outcome, outcome);
+      assert.equal(outcome.captures.length, 2);
+      const [changed, unchanged] = outcome.captures;
+      assert.ok(changed.pixels > 0);
+      assert.ok(changed.percent > 0);
+      assert.ok(changed.region);
+      assert.equal(unchanged.pixels, 0);
+      assert.equal(unchanged.percent, 0);
+      assert.equal(unchanged.region, null);
+      const diffImages = mode !== 'off';
+      assert.equal(outcome.diffImages, diffImages);
+      for (const capture of outcome.captures) {
+        assert.equal(Boolean(capture.diff), diffImages && capture.pixels > 0);
+        if (capture.diff) {
+          assert.ok(await readFile(path.join(path.dirname(result.manifest), capture.diff)));
+          assert.ok(outcome.evidence.some((item: {file: string; mediaType: string}) => item.file === capture.diff && item.mediaType === 'image/png'));
+        }
+      }
+      assert.equal((await readdir(path.dirname(result.manifest))).filter(file => file.endsWith('-diff.png')).length, diffImages ? 1 : 0);
+      assert.equal(outcome.evidence.filter((item: {mediaType: string}) => item.mediaType === 'image/png').length, diffImages ? 5 : 4);
+      const shot = result.comparison.report.captures[0];
+      const head = await readFile(path.join(result.directory, shot.head));
+      const base = await readFile(path.join(result.comparison.directory, shot.base));
+      assert.ok(!head.equals(base), 'both committed frontend versions must be captured');
+      const gallery = await readFile(result.gallery, 'utf8');
+      assert.ok(gallery.includes('<th>Before</th>'));
+      assert.ok(gallery.includes('<th>After</th>'));
+      assert.ok(gallery.includes(before));
+      assert.ok(gallery.includes(after));
+      assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim(), after);
+    }
   } finally { await app.stop(); }
 });
 
@@ -323,4 +349,123 @@ test('capture defaults to desktop and captures mobile only when requested', asyn
     const { stdout } = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--all', '--plan']);
     assert.deepEqual(JSON.parse(stdout).journeys[0].viewports, ['desktop']);
   } finally { await app.stop(); }
+});
+
+test('cloud capture uploads real evidence, resumes, retries and preserves local reports on failure', async () => {
+  const { createServer } = await import('node:http');
+  const { createHash } = await import('node:crypto');
+  const { cloud } = await import('../../tour/dist/cloud.js');
+  const { symlink } = await import('node:fs/promises');
+  const app = await notesApp();
+  const received = new Map<string, Buffer>();
+  const attempts = new Map<string, number>();
+  const requests: string[] = [];
+  const token = 'test-cloud-token';
+  let fail = false;
+  let retried = false;
+  let declared: { path: string; size: number; sha256: string; media_type: string }[] = [];
+  let externalAuthorization: string | undefined;
+  const external = createServer(async (req, res) => {
+    externalAuthorization = req.headers.authorization;
+    for await (const _chunk of req) {}
+    res.end();
+  });
+  await new Promise<void>(resolve => external.listen(0, '127.0.0.1', resolve));
+  const externalUrl = `http://127.0.0.1:${(external.address() as { port: number }).port}`;
+  let crossOrigin = false;
+  let apiUrl = '';
+  const server = createServer(async (req, res) => {
+    requests.push(`${req.method} ${req.url}`);
+    assert.equal(req.headers.authorization, `Bearer ${token}`);
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const bytes = Buffer.concat(chunks);
+    res.setHeader('Content-Type', 'application/json');
+    if (fail) { res.writeHead(503); res.end(JSON.stringify({ message: `Service unavailable ${token}` })); return; }
+    if (req.method === 'POST' && req.url === '/v1/runs') {
+      assert.equal(req.headers['idempotency-key'], '123-1');
+      const body = JSON.parse(bytes.toString());
+      assert.equal(body.repository, 'fixture/notes');
+      assert.equal(body.pull_request, 42);
+      assert.equal(body.head_sha, 'a'.repeat(40));
+      assert.equal(body.base_sha, 'b'.repeat(40));
+      assert.equal(body.branch, 'feature');
+      declared = body.files;
+      assert.deepEqual(declared.map(file => file.path), body.outcome.evidence.map((item: { file: string }) => item.file));
+      res.end(JSON.stringify({ data: { id: 'run', review_url: `${apiUrl}/review`, uploads: declared.filter(file => crossOrigin || !received.has(file.path)).map(file => ({ path: file.path, url: crossOrigin ? `${externalUrl}/upload` : `${apiUrl}/upload/${encodeURIComponent(file.path)}`, headers: { 'Content-Type': file.media_type } })) } }));
+    } else if (req.method === 'PUT') {
+      const name = decodeURIComponent(req.url!.slice('/upload/'.length));
+      attempts.set(name, (attempts.get(name) ?? 0) + 1);
+      if (!retried) { retried = true; res.writeHead(500); res.end(JSON.stringify({ message: 'Try again' })); return; }
+      const file = declared.find(file => file.path === name)!;
+      assert.equal(bytes.length, file.size);
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), file.sha256);
+      assert.equal(req.headers['content-type'], file.media_type);
+      assert.ok(!received.has(name));
+      received.set(name, bytes);
+      res.end('{}');
+    } else {
+      assert.equal(req.url, '/v1/runs/run/complete');
+      assert.ok(crossOrigin || declared.every(file => received.has(file.path)));
+      res.end(JSON.stringify({ data: { id: 'run', status: 'ready', review_url: `${apiUrl}/review` } }));
+    }
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  apiUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    const cwd = await applicationWorkspace(app.url, { notes: {
+      account: 'reader', viewports: [{ name: 'desktop', width: 800, height: 600, scale: 1 }],
+      steps: [{ goto: '/notes' }, { shot: { name: 'notes' } }],
+    } });
+    const eventPath = path.join(cwd, 'event.json');
+    await writeFile(eventPath, JSON.stringify({ pull_request: { number: 42, head: { sha: 'a'.repeat(40) }, base: { sha: 'b'.repeat(40) } } }));
+    const env = { ...process.env, NOTES_USER: 'ada', NOTES_PASSWORD: 'pw-ada', PAGEBEAM_TOKEN: token, PAGEBEAM_API_URL: apiUrl,
+      GITHUB_REPOSITORY: 'fixture/notes', GITHUB_EVENT_PATH: eventPath, GITHUB_HEAD_REF: 'feature', GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1' };
+    const args = [cli, 'capture', '--cwd', cwd, '--all', '--json'];
+    const { stdout } = await exec(process.execPath, args, { env });
+    const result = JSON.parse(stdout);
+    assert.equal(result.outcome.cloud.url, `${apiUrl}/review`);
+    assert.ok((await readFile(result.markdown, 'utf8')).startsWith(`Review every changed screen: <${apiUrl}/review>`));
+    assert.ok((await readFile(result.markdown, 'utf8')).includes(`![After](<${result.outcome.captures[0].head}>)`));
+    assert.ok(declared.some(file => file.media_type === 'image/png'));
+    assert.ok(declared.some(file => file.media_type === 'application/json'));
+    assert.equal(received.size, declared.length);
+    assert.equal([...attempts.values()].filter(count => count === 2).length, 1);
+    const publisher = cloud({ token, apiUrl, repository: 'fixture/notes', pullRequest: 42, branch: 'feature', headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), idempotencyKey: '123-1' });
+    const context = { directory: path.dirname(result.manifest), namespace: 'test' };
+    const puts = [...attempts.values()].reduce((a, b) => a + b, 0);
+    assert.deepEqual(await publisher.publish(result.outcome, context), { url: `${apiUrl}/review`, urls: {} });
+    assert.equal([...attempts.values()].reduce((a, b) => a + b, 0), puts);
+    for (const file of ['../outside.png', '/outside.png']) {
+      const count = requests.length;
+      await assert.rejects(publisher.publish({ ...result.outcome, evidence: [{ ...result.outcome.evidence[0], file }] }, context), /outside the outcome directory/);
+      assert.equal(requests.length, count);
+    }
+    await symlink(eventPath, path.join(context.directory, 'escape.json'));
+    const count = requests.length;
+    await assert.rejects(publisher.publish({ ...result.outcome, evidence: [{ id: 'escape', file: 'escape.json', mediaType: 'application/json' }] }, context), /outside the outcome directory/);
+    assert.equal(requests.length, count);
+    crossOrigin = true;
+    await publisher.publish(result.outcome, context);
+    assert.equal(externalAuthorization, undefined);
+    fail = true;
+    const failed = await exec(process.execPath, args, { env });
+    const local = JSON.parse(failed.stdout);
+    assert.match(failed.stderr, /Service unavailable <REDACTED>/);
+    assert.ok(!failed.stderr.includes(token));
+    assert.match(local.outcome.cloud.error, /Service unavailable/);
+    assert.ok(!JSON.stringify(local).includes(token));
+    assert.deepEqual(JSON.parse(await readFile(local.manifest, 'utf8')), local.outcome);
+    assert.match(await readFile(local.markdown, 'utf8'), /Screen \| Before \| After/);
+    const failedCapture = await exec(process.execPath, [cli, 'capture', '--cwd', cwd, '--json'], { env })
+      .then(() => { throw new Error('an unselected capture must fail'); }, error => error as { code: number; stdout: string });
+    assert.equal(failedCapture.code, 1);
+    const unselected = JSON.parse(failedCapture.stdout);
+    assert.match(unselected.outcome.cloud.error, /Service unavailable/);
+    assert.ok(await readFile(unselected.markdown, 'utf8'));
+
+  } finally {
+    await app.stop();
+    await Promise.all([new Promise<void>(resolve => server.close(() => resolve())), new Promise<void>(resolve => external.close(() => resolve()))]);
+  }
 });

@@ -335,7 +335,7 @@ export async function reviewCaptures(request:ReviewRequest) {
     await writeFile(path.join(directory,'recipe.json'),JSON.stringify(recipe,null,2)+'\n');
     if(comparison)await writeFile(path.join(directory,'comparison.json'),JSON.stringify(comparison,null,2)+'\n');
     const stability: {state:string;volatilePixels:number;controlPixels:number;valid:boolean}[]=[];
-    const differences: {state:string;pixels:number;percent:number;diff?:string}[]=[];
+    const masks=new Map<string,Uint8Array>();
     for(const state of recipe.states){
       const shot=head.report.results.find(result=>result.journey===state.name)?.steps.find(step=>step.action==='shot'&&step.file);
       const repeated=control?.report.results.find(result=>result.journey===state.name)?.steps.find(step=>step.action==='shot'&&step.file);
@@ -352,21 +352,13 @@ export async function reviewCaptures(request:ReviewRequest) {
       const valid=volatility.valid&&!check.pixels&&!check.dimensionsChanged&&control?.report.status==='passed';
       stability.push({state:state.name,volatilePixels:volatility.volatilePixels,controlPixels:check.pixels,valid});
       if(!valid&&comparison){comparison.compatible=false;comparison.reasons.push(`Unstable screenshot state ${state.name}`);}
-      const pair=comparison?.captures.find(item=>item.journey===state.name);
-      if(pair?.base&&pair.head&&base){
-        const filename=(request.diffImages??config.capture.diffImages)?state.name+'-diff.png':undefined;
-        const difference=await comparePixels(path.join(base.directory,pair.base),path.join(head.directory,pair.head),filename?path.join(directory,filename):undefined,volatility.mask);
-        differences.push({state:state.name,pixels:difference.pixels,percent:difference.percent,...(filename?{diff:filename}:{})});
-      }
+      masks.set(state.name,volatility.mask);
     }
     if(comparison)await writeFile(path.join(directory,'comparison.json'),JSON.stringify(comparison,null,2)+'\n');
     await writeFile(path.join(directory,'stability.json'),JSON.stringify(stability,null,2)+'\n');
+    const rendered=await writeCaptureOutcome(directory,head,base,comparison,{html:request.html??false,diffImages:request.diffImages??config.capture.diffImages,masks});
+    const differences=rendered.outcome.captures.filter(shot=>shot.pixels!==undefined).map(shot=>({state:shot.journey,pixels:shot.pixels!,percent:shot.percent!,region:shot.region,...(shot.diff?{diff:shot.diff}:{})}));
     await writeFile(path.join(directory,'pixels.json'),JSON.stringify(differences,null,2)+'\n');
-    const rendered=await writeCaptureOutcome(directory,head,base,comparison,{html:request.html??false});
-    for(const shot of rendered.outcome.captures){
-      const difference=differences.find(item=>item.state===shot.journey);
-      if(difference){shot.pixels=difference.pixels;shot.percent=difference.percent;if(difference.diff){shot.diff=difference.diff;rendered.outcome.evidence.push({id:difference.diff,file:difference.diff,mediaType:'image/png'});}}
-    }
     rendered.outcome.evidence.push({id:'public-resources',file:'public-resources.json',mediaType:'application/json'});
     if(recipe.repairs?.length)rendered.outcome.evidence.push({id:'replay-repairs',file:'replay-repairs.json',mediaType:'application/json'});
     rendered.outcome.stability=stability;

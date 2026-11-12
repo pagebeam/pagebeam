@@ -6,6 +6,9 @@ name: pagebeam
 description: Check documentation against the product it describes, and propose the corrections.
 
 inputs:
+  cloud-token:
+    description: Pagebeam cloud CI token.
+    default: ''
   html:
     description: Also produce an HTML gallery. Markdown tables and structured outcomes are the default.
     default: 'false'
@@ -135,6 +138,9 @@ inputs:
     default: OPENAI_API_KEY
 
 outputs:
+  review-url:
+    description: Review page containing every changed screen.
+    value: ${{ steps.run.outputs.review-url }}
   plan:
     description: Structured selection and coverage plan.
     value: ${{ steps.run.outputs.plan }}
@@ -242,6 +248,7 @@ runs:
       shell: bash
       working-directory: ${{ runner.temp }}
       env:
+        PAGEBEAM_TOKEN: ${{ inputs.command == 'capture' && inputs.cloud-token || '' }}
         GITHUB_TOKEN: ${{ inputs.token || github.token }}
         PAGEBEAM_COMMAND: ${{ inputs.command }}
         PAGEBEAM_PROFILE: ${{ inputs.profile }}
@@ -374,6 +381,8 @@ runs:
           const gallery = result?.gallery ?? '';
           const markdown = result?.markdown ?? path.join(directory, 'report.md');
           const manifest = result?.manifest ?? path.join(directory, 'outcome.json');
+          const reviewUrl = result.outcome?.cloud?.url ?? '';
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `review-url=${reviewUrl}\n`);
           const report = result ? path.join(result.directory, 'report.json') : '';
           const id = result?.report.id ?? `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nreport=${report}\ngallery=${gallery}\nmarkdown=${markdown}\nmanifest=${manifest}\nrun-id=${id}\n`);
@@ -413,9 +422,13 @@ runs:
         retention-days: ${{ inputs.retention-days }}
 
     - name: Link capture evidence
-      if: always() && steps.captures.outputs.artifact-url != ''
+      if: always() && (steps.run.outputs.review-url != '' || steps.captures.outputs.artifact-url != '')
       shell: bash
       env:
+        CAPTURE_REVIEW_URL: ${{ steps.run.outputs.review-url }}
         CAPTURE_ARTIFACT_URL: ${{ steps.captures.outputs.artifact-url }}
       run: |
+        if [ -n "$CAPTURE_REVIEW_URL" ]; then
+          printf '\nReview every changed screen: %s\n' "$CAPTURE_REVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
+        fi
         printf '\nCapture evidence: %s\n' "$CAPTURE_ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

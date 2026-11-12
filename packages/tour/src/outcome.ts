@@ -30,13 +30,14 @@ export interface OutcomeRenderer<T extends Outcome = Outcome> {
 
 export interface CaptureOutcome extends Outcome {
   kind: 'capture';
+  cloud?: { url: string } | { error: string };
   head: { id: string; revision: string | null; status: string };
   base?: { id: string; revision: string | null; status: string };
   compatible: boolean | null;
   reasons: string[];
   unmapped: string[];
   coverage?: Selection['coverage'];
-  captures: { journey: string; viewport: string; step: number; head: string | null; base: string | null;diff?:string;pixels?:number;percent?:number }[];
+  captures: { journey: string; viewport: string; step: number; head: string | null; base: string | null;diff?:string;pixels?:number;percent?:number;region?:[number,number,number,number]|null }[];
   diffImages?: boolean;
   stability?: {state:string;volatilePixels:number;controlPixels:number;valid:boolean}[];
 }
@@ -56,6 +57,7 @@ export const markdownRenderer: OutcomeRenderer<CaptureOutcome> = {
   format: 'markdown', filename: 'report.md',
   render(outcome, publication) {
     const lines = [`Before: ${outcome.base?.revision ?? 'unavailable'}. After: ${outcome.head.revision ?? 'unknown'}.`, ''];
+    if (publication.url) lines.unshift(`Review every changed screen: <${publication.url}>`, '');
     if (outcome.coverage) {
       lines.push(`UI coverage: **${outcome.coverage.status}**${outcome.coverage.basis==='model'?' (model assessment)':''}.`, '');
       for (const reason of outcome.coverage.reasons) lines.push(`* ${markdown(reason)}`);

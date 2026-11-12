@@ -72,6 +72,7 @@ for(const diffImages of [false,true])test(`automatic review discovers and replay
     assert.ok((await readFile(result.markdown,'utf8')).includes('(model assessment)'));
     const tampered=structuredClone(result.recipe);tampered.states[0]!.goal='A different review state';
     assert.equal(compareReviewRuns(result.head,result.base!,tampered).compatible,false);
+    assert.ok(result.outcome.captures.every(shot=>typeof shot.percent==='number'&&(shot.pixels?Array.isArray(shot.region):shot.region===null)));
     assert.equal(result.outcome.diffImages,diffImages);
     assert.ok(result.outcome.captures.every(shot=>Boolean(shot.diff)===diffImages));
     assert.ok(result.differences!.every(shot=>Boolean(shot.diff)===diffImages));
@@ -568,4 +569,24 @@ test('the review deadline writes an incomplete outcome when a judge never respon
   assert.equal(outcome.status,'incomplete');
   assert.equal(outcome.head.revision,head);
   assert.match(JSON.stringify(outcome),/timeout|aborted/i);
+});
+
+test('pixel regions bound the changed rectangle in compared image coordinates',async()=>{
+  const {PNG}=createRequire(import.meta.url)('pngjs');
+  const cwd=await mkdtemp(path.join(tmpdir(),'pagebeam-region-'));
+  const width=13,height=17;
+  const data=Buffer.alloc(width*height*4,255);
+  const first=path.join(cwd,'first.png'),second=path.join(cwd,'second.png');
+  await writeFile(first,PNG.sync.write({width,height,data}));
+  for(let y=3;y<9;y++)for(let x=2;x<7;x++){
+    const offset=(y*width+x)*4;
+    data[offset]=0;data[offset+1]=0;data[offset+2]=0;
+  }
+  await writeFile(second,PNG.sync.write({width,height,data}));
+  const difference=await comparePixels(first,second);
+  assert.equal(difference.pixels,30);
+  assert.deepEqual(difference.region,[0.1538,0.1765,0.3846,0.3529]);
+  assert.equal((await comparePixels(first,first)).region,null);
+  const mask=new Uint8Array(width*height).fill(1);
+  assert.equal((await comparePixels(first,second,undefined,mask)).region,null);
 });
