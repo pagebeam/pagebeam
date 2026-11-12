@@ -34,6 +34,30 @@ export async function notesApp(): Promise<NotesApp> {
       res.end(page(body));
     };
 
+    if (url.pathname === '/scroll-reveal') {
+      html(200, `<div id="status">Not scrolled</div><div style="height:900px"></div>
+        <section style="height:600px"></section><script>
+        let count=0;
+        const observer=new IntersectionObserver(entries=>{
+          for(const entry of entries){
+            if(!entry.isIntersecting)continue;
+            observer.unobserve(entry.target);
+            entry.target.innerHTML='<p>Revealed section '+(++count)+'</p><img width="100" height="100">';
+            const image=entry.target.querySelector('img');
+            image.onload=()=>document.querySelector('#status').textContent='Loaded section '+count;
+            image.src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><path fill="red" d="M0 0h100v100H0z"/></svg>');
+            if(count===1){const section=document.createElement('section');section.style.height='600px';document.body.append(section);observer.observe(section);}
+          }
+        });
+        observer.observe(document.querySelector('section'));
+        addEventListener('scroll',()=>document.body.dataset.scrolled='yes');
+        </script>`);
+      return;
+    }
+    if (url.pathname === '/growing') {
+      html(200, '<div style="height:1800px"></div><script>addEventListener("scroll",()=>{document.querySelector("div").style.height=(document.documentElement.scrollHeight+600)+"px";document.body.dataset.scrolled="yes"})</script>');
+      return;
+    }
     if (url.pathname === '/signup' && req.method === 'POST') {
       made += 1;
       const username = `new${made}`;

@@ -4,6 +4,7 @@ import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { history, launchBrowser, unavailable, moduleDefault, type Unavailable } from '@pagebeam/app';
 import type { TourJourney, TourStep, Tours } from '@pagebeam/core';
 import { missingEnv, open, settle, signIn, TourFailure, TourUsage, type Target } from './accounts.js';
+import { settleShot } from './settle.js';
 import { ffmpegFound, HIDE_CURSOR, paceOf, Recorder, type Box, type Recording } from './record.js';
 
 export { TourFailure, TourUsage } from './accounts.js';
@@ -334,6 +335,7 @@ async function follow(context: BrowserContext, run: Run): Promise<{ shots: Shot[
         }
         const { name: shotName, caption, focus, fullPage } = step.shot;
         await settle(page, timeout);
+        await settleShot(page, { timeout, fullPage });
         const boxes = await focusBoxes(page, focus, fullPage, viewport.scale, timeout);
         taken += 1;
         const file = `${String(taken).padStart(2, '0')}-${shotName}.${viewport.name}.png`;

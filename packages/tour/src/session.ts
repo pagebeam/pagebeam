@@ -6,6 +6,7 @@ import { stepSchema, type TourJourney, type Tours, type TourStep } from '@pagebe
 import { navigationPath } from './checkpoints.js';
 import { act, focusBoxes } from './shoot.js';
 import { signIn, TourFailure } from './accounts.js';
+import { settleShot } from './settle.js';
 import { StageFailure } from './environment.js';
 import { HIDE_CURSOR, paceOf, Recorder } from './record.js';
 import { learnVolatility } from './pixels.js';
@@ -427,6 +428,7 @@ export class CaptureSession {
   private async screenshot(name: string, fullPage = false): Promise<string[]> {
     const o = this.options;
     const page = this.page!;
+    await settleShot(page, { timeout: o.tours.timeoutMs, fullPage });
     await this.ready();
     const shoot=async(file:string)=>page.screenshot({ path: path.join(o.out, file), fullPage, animations: 'disabled', caret: 'hide', style: HIDE_CURSOR,
       mask: page.frames().flatMap(frame => [...this.privateSelectors].map(selector => frame.locator(selector)).concat([...this.secrets].filter(Boolean).map(secret => frame.getByText(secret, { exact: true })))), timeout: o.tours.timeoutMs });
