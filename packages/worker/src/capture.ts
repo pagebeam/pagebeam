@@ -13,7 +13,9 @@ export class CaptureWorker {
     this.launching ??= (async () => {
       const executablePath = await browserPath(this.executablePath ?? process.env.CHROME_PATH);
       if (!executablePath) throw new CaptureFailure('navigation_failed');
-      this.browser = await chromium.launch({ executablePath, headless: true, args: [
+      this.browser = await chromium.launch({ executablePath, headless: true, chromiumSandbox: true,
+        // The worker drains accepted jobs before closing the shared browser.
+        handleSIGTERM: false, handleSIGINT: false, args: [
         `--proxy-server=${this.proxy.url}`, '--proxy-bypass-list=<-loopback>',
         '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-quic',
       ] });
