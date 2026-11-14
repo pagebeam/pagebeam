@@ -80,7 +80,8 @@ export async function installFirefox(): Promise<void> {
   const nodePath = await import('node:path');
   const manifest = createRequire(import.meta.url).resolve('playwright-core/package.json');
   const cli = nodePath.join(nodePath.dirname(manifest), 'cli.js');
-  await promisify(execFile)(process.execPath, [cli, 'install', 'firefox'], { maxBuffer: 64 * 1024 * 1024 });
+  const deps = process.env.PAGEBEAM_INSTALL_BROWSER_DEPS === '1' ? ['--with-deps'] : [];
+  await promisify(execFile)(process.execPath, [cli, 'install', ...deps, 'firefox'], { maxBuffer: 64 * 1024 * 1024 });
 }
 
 export async function launchBrowser(
