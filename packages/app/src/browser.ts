@@ -72,7 +72,22 @@ export async function browserPath(given?: string): Promise<string | undefined> {
 
 export type Engine = 'chromium' | 'firefox';
 
-export async function launchBrowser(executablePath?: string, engine: Engine = 'chromium'): Promise<Browser | Unavailable> {
+// Installs the Firefox build matching the playwright-core that will launch it.
+export async function installFirefox(): Promise<void> {
+  const { createRequire } = await import('node:module');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const nodePath = await import('node:path');
+  const manifest = createRequire(import.meta.url).resolve('playwright-core/package.json');
+  const cli = nodePath.join(nodePath.dirname(manifest), 'cli.js');
+  await promisify(execFile)(process.execPath, [cli, 'install', 'firefox'], { maxBuffer: 64 * 1024 * 1024 });
+}
+
+export async function launchBrowser(
+  executablePath?: string,
+  engine: Engine = 'chromium',
+  install: () => Promise<void> = installFirefox,
+): Promise<Browser | Unavailable> {
   let playwright;
   try {
     playwright = await import('playwright-core');
@@ -83,7 +98,16 @@ export async function launchBrowser(executablePath?: string, engine: Engine = 'c
     // Playwright drives a patched Firefox build; a stock Firefox install cannot be controlled.
     const { access } = await import('node:fs/promises');
     const found = executablePath ?? playwright.firefox.executablePath();
-    const ok = await access(found).then(() => true, () => false);
+    const exists = () => access(found).then(() => true, () => false);
+    let ok = await exists();
+    if (!ok && executablePath === undefined && process.env.PAGEBEAM_INSTALL_BROWSERS === '1') {
+      try {
+        await install();
+      } catch (error) {
+        return { reason: `Playwright Firefox could not be installed: ${(error as Error).message}` };
+      }
+      ok = await exists();
+    }
     if (!ok) return { reason: 'no Playwright Firefox was found to drive (run npx playwright install firefox)' };
     return playwright.firefox.launch({ executablePath: found, headless: true });
   }

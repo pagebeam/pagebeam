@@ -117,6 +117,32 @@ jobs:
           printf '%s\n' "$said"
           printf '%s\n' "$said" | grep -q "pages checked against pagebeam"
 
+  capture-action-firefox:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./
+        id: captures
+        with:
+          command: capture
+          checkout: 'false'
+          cwd: ${{ github.workspace }}/examples/capture
+          environment: source
+          capture-config: pagebeam.config.firefox.yaml
+          target: local
+          install: node --version
+          all: 'true'
+      - name: Check the captures came from Firefox
+        env:
+          REPORT: ${{ steps.captures.outputs.report }}
+        run: |
+          test -f "$REPORT"
+          node -e 'const r = JSON.parse(require("fs").readFileSync(process.env.REPORT, "utf8")); if (r.browser !== "firefox" || r.status !== "passed") { console.error(r.browser, r.status); process.exit(1); }'
+
   capture-action:
     runs-on: ubuntu-latest
     permissions:

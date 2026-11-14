@@ -1,0 +1,4 @@
+extends: pagebeam.config.ci.yaml
+
+tours:
+  browser: firefox
