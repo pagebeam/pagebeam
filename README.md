@@ -272,8 +272,13 @@ tours:
 `--browser` on `shoot`, `capture` and `session`, and the action's `browser`
 input, override it for one run. Firefox uses Playwright's build of it
 (`npx playwright-core install firefox`); a Firefox installed on the system
-cannot be driven. Recorded journeys need Chromium, so a recorded journey in
-Firefox is refused before a browser starts. Manifests and capture reports say
+cannot be driven. The action installs it whenever the run uses Firefox,
+whether the input or the configuration chose it, along with its system
+libraries on Linux runners. Elsewhere, set `PAGEBEAM_INSTALL_BROWSERS=1` to
+install it on first use, and `PAGEBEAM_INSTALL_BROWSER_DEPS=1` to install its
+system libraries too (this runs `apt-get`, through `sudo` when not root).
+Recorded journeys need Chromium, so a recorded journey in Firefox is refused
+before a browser starts. Manifests and capture reports say
 which engine took them, and comparing runs from different engines is
 reported as incompatible. Give each engine its own `--out` to keep both.
 
