@@ -7,6 +7,7 @@ import {
   moduleDefault,
   sessionFile,
   unavailable,
+  type Engine,
   type Unavailable,
 } from './browser.js';
 
@@ -38,6 +39,7 @@ export interface RenderRequest {
   auth?: Auth | undefined;
   timeoutMs?: number | undefined;
   executablePath?: string | undefined;
+  browser?: Engine | undefined;
 }
 
 export interface Rendered {
@@ -57,7 +59,7 @@ export async function render(request: RenderRequest): Promise<Rendered | Unavail
     return { reason: 'signing in was configured without a way to confirm it worked' };
   }
 
-  const browser = await launchBrowser(request.executablePath);
+  const browser = await launchBrowser(request.executablePath, request.browser);
   if (unavailable(browser)) return browser;
 
   const timeout = request.timeoutMs ?? DEFAULT_TIMEOUT;

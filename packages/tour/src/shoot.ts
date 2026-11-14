@@ -1,7 +1,7 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
-import { history, launchBrowser, unavailable, moduleDefault, type Unavailable } from '@pagebeam/app';
+import { history, launchBrowser, unavailable, moduleDefault, type Engine, type Unavailable } from '@pagebeam/app';
 import type { TourJourney, TourStep, Tours } from '@pagebeam/core';
 import { missingEnv, open, settle, signIn, TourFailure, TourUsage, type Target } from './accounts.js';
 import { ffmpegFound, HIDE_CURSOR, paceOf, Recorder, type Box, type Recording } from './record.js';
@@ -16,6 +16,7 @@ export interface ShootRequest {
   journey?: string | undefined;
   out?: string | undefined;
   executablePath?: string | undefined;
+  browser?: Engine | undefined;
   ffmpeg?: string | undefined;
   // How long the narration for a step lasts, by journey and step number,
   // measured from the recorded or generated voice over.
@@ -48,6 +49,7 @@ export interface Shot {
 
 export interface Manifest {
   target: string;
+  browser: Engine;
   url: string;
   journey: string;
   account: string;
@@ -397,12 +399,16 @@ export async function shoot(request: ShootRequest): Promise<Shoot | Unavailable>
   checkEnv(tours, journeys);
   if (request.narration !== undefined) checkNarration(tours, request.narration);
 
+  const engine = request.browser ?? tours.browser;
+  if (engine !== 'chromium' && journeys.some(([, journey]) => paceOf(journey) !== null)) {
+    return { reason: `recording needs Chromium; ${engine} cannot record a journey` };
+  }
   const ffmpeg = request.ffmpeg ?? 'ffmpeg';
   if (journeys.some(([, journey]) => paceOf(journey) !== null) && !(await ffmpegFound(ffmpeg))) {
     return { reason: `no ffmpeg was found to encode recordings (${ffmpeg})` };
   }
 
-  const launched = await launchBrowser(request.executablePath);
+  const launched = await launchBrowser(request.executablePath, engine);
   if (unavailable(launched)) return launched;
   const browser: Browser = launched;
 
@@ -452,6 +458,7 @@ export async function shoot(request: ShootRequest): Promise<Shoot | Unavailable>
       }
       const manifest: Manifest = {
         target: target.name,
+        browser: engine,
         url: target.url,
         journey: name,
         account: journey.account,

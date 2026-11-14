@@ -62,6 +62,9 @@ inputs:
   viewports:
     description: Viewport names, one per line. Auto uses the review plan; saved defaults to desktop.
     default: ''
+  browser:
+    description: Browser engine for captures, chromium or firefox. Empty uses tours.browser from the configuration. Firefox is installed through Playwright.
+    default: ''
   journeys:
     description: Explicit capture journeys, one name per line. Overrides changed-file selection.
     default: ''
@@ -235,6 +238,12 @@ runs:
         npm ci
         npm run build
 
+    - name: Install Playwright Firefox
+      if: inputs.browser == 'firefox'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npx --yes playwright-core install firefox
+
     # Away from the workspace, so a package.json there cannot decide which
     # pagebeam npx runs. In this repository it resolves to the unbuilt one.
     - name: Run
@@ -260,6 +269,7 @@ runs:
         CAPTURE_CONFIG: ${{ inputs.capture-config }}
         CAPTURE_TARGET: ${{ inputs.target }}
         CAPTURE_VIEWPORTS: ${{ inputs.viewports }}
+        CAPTURE_BROWSER: ${{ inputs.browser }}
         CAPTURE_JOURNEYS: ${{ inputs.journeys }}
         CAPTURE_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
         CAPTURE_CHANGED_FILES: ${{ inputs.changed-files }}
@@ -314,6 +324,7 @@ runs:
           [ "$CAPTURE_DIFF_IMAGES" != true ] || args+=(--diff-images)
           args+=(--json --environment "$CAPTURE_ENVIRONMENT" --target "$CAPTURE_TARGET" --mode "$CAPTURE_MODE" --purpose "$CAPTURE_PURPOSE" --out "$RUNNER_TEMP/pagebeam-captures")
           [ -z "$CAPTURE_CONFIG" ] || args+=(--config "$CAPTURE_CONFIG")
+          [ -z "$CAPTURE_BROWSER" ] || args+=(--browser "$CAPTURE_BROWSER")
           while IFS= read -r journey; do
             [ -z "$journey" ] || args+=(--journey "$journey")
           done <<< "$CAPTURE_JOURNEYS"

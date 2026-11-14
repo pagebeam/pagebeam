@@ -84,7 +84,8 @@ export class CaptureSession {
     const loginUrl = o.tours.accounts[o.journey.account]?.login.form?.url;
     if (loginUrl) this.origins.add(new URL(loginUrl, target.url).origin);
     o.signal.throwIfAborted();
-    const browser = await launchBrowser();
+    if (o.tours.browser !== 'chromium' && paceOf(o.journey) !== null) throw new Error(`recording needs Chromium; ${o.tours.browser} cannot record a journey`);
+    const browser = await launchBrowser(undefined, o.tours.browser);
     if (unavailable(browser)) throw new Error(browser.reason);
     this.browser = browser;
     o.signal.addEventListener('abort', this.abort, { once: true });

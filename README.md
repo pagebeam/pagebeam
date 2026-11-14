@@ -260,6 +260,23 @@ propose:
 
 pagebeam checks every setting. A setting it does not know is an error.
 
+### Browser engine
+
+Tours run in Chromium unless `tours.browser` names another engine:
+
+```yaml
+tours:
+  browser: firefox   # chromium (default) or firefox
+```
+
+`--browser` on `shoot`, `capture` and `session`, and the action's `browser`
+input, override it for one run. Firefox uses Playwright's build of it
+(`npx playwright-core install firefox`); a Firefox installed on the system
+cannot be driven. Recorded journeys need Chromium, so a recorded journey in
+Firefox is refused before a browser starts. Manifests and capture reports say
+which engine took them, and comparing runs from different engines is
+reported as incompatible. Give each engine its own `--out` to keep both.
+
 ## Coverage
 
 Reading files shows every control the application declares. Opening a running

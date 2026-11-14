@@ -19,6 +19,9 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
+      # Browser tests skip an engine that is missing, so Firefox is installed
+      # to keep its tests from passing by skipping.
+      - run: npx playwright-core install --with-deps firefox
       - run: npm test
       - run: npm run build
 

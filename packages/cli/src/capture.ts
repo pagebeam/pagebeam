@@ -27,6 +27,7 @@ interface Asked {
   compareBase: string | undefined;
   baselineInstall: string | undefined;
   configFile: string | undefined;
+  browser?: 'chromium' | 'firefox' | undefined;
 }
 
 const message = z.discriminatedUnion('method', [
@@ -46,6 +47,7 @@ export async function captureCommand(cwd: string, asked: Asked, caller = false):
     const loaded = await loadConfig(cwd, asked.configFile);
     if (!loaded.from || !loaded.config.tours) throw new Error('no capture journeys are configured');
     const config = loaded.config;
+    if (asked.browser) config.tours!.browser = asked.browser;
     const automatic=!caller && !asked.all && !asked.requestedJourneys.length && (asked.mode??(config.capture?.discovery && config.model?'auto':'saved'))==='auto' && Boolean(config.capture?.discovery && config.model?.enrich && config.model?.sendSource);
     const mode = z.enum(['saved', 'model', 'caller']).parse(caller ? 'caller' : automatic?'saved':asked.mode==='auto'?'saved':asked.mode??'saved');
     if (mode === 'caller' && !caller) throw new Error('use the session command for caller-directed exploration');

@@ -55,6 +55,7 @@ export interface CaptureReport {
   mode: 'saved' | 'caller' | 'model';
   purpose: 'capture' | 'check' | 'both';
   environment: string;
+  browser?: 'chromium' | 'firefox';
   backend?: { kind: string; revision: string | null; fixtureVersion: string | null; mocked: boolean };
   selection: Selection;
   results: JourneyResult[];
@@ -87,6 +88,7 @@ export async function capture(request: CaptureRequest, driver?: CaptureDriver): 
     schemaVersion: 1, id, revision: null, base: request.base ?? null,
     startedAt: new Date().toISOString(), status: 'running', stage: 'selection',
     mode: request.mode ?? 'saved', purpose: request.purpose ?? 'both', environment: request.environment,
+    browser: request.config.tours?.browser ?? 'chromium',
     selection: { journeys: [], unmapped: [] }, results: [], errors: [],
   };
   const secrets = new Set<string>();

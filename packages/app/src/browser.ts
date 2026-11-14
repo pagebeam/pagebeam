@@ -70,18 +70,28 @@ export async function browserPath(given?: string): Promise<string | undefined> {
   return undefined;
 }
 
-export async function launchBrowser(executablePath?: string): Promise<Browser | Unavailable> {
-  let chromium;
+export type Engine = 'chromium' | 'firefox';
+
+export async function launchBrowser(executablePath?: string, engine: Engine = 'chromium'): Promise<Browser | Unavailable> {
+  let playwright;
   try {
-    ({ chromium } = await import('playwright-core'));
+    playwright = await import('playwright-core');
   } catch {
     return { reason: 'playwright-core is not installed' };
+  }
+  if (engine === 'firefox') {
+    // Playwright drives a patched Firefox build; a stock Firefox install cannot be controlled.
+    const { access } = await import('node:fs/promises');
+    const found = executablePath ?? playwright.firefox.executablePath();
+    const ok = await access(found).then(() => true, () => false);
+    if (!ok) return { reason: 'no Playwright Firefox was found to drive (run npx playwright install firefox)' };
+    return playwright.firefox.launch({ executablePath: found, headless: true });
   }
   const found = await browserPath(executablePath);
   if (found === undefined) {
     return { reason: 'no browser was found to drive' };
   }
-  return chromium.launch({ executablePath: found, headless: true, args: ['--disable-font-subpixel-positioning'] });
+  return playwright.chromium.launch({ executablePath: found, headless: true, args: ['--disable-font-subpixel-positioning'] });
 }
 
 export async function isShown(page: Page, selector: string, timeout: number): Promise<boolean> {

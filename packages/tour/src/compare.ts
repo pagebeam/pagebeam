@@ -15,6 +15,7 @@ export function compareCaptures(head: CaptureReport, base: CaptureReport): Compa
   if (!head.revision || !base.revision) reasons.push('frontend revision is unknown');
   if (!head.backend?.fixtureVersion || head.backend.fixtureVersion !== base.backend?.fixtureVersion) reasons.push('fixture versions are unknown or differ');
   if (head.backend?.mocked !== base.backend?.mocked) reasons.push('backend kinds differ');
+  if ((head.browser ?? 'chromium') !== (base.browser ?? 'chromium')) reasons.push('browsers differ');
   if (head.status !== 'passed' || base.status !== 'passed') reasons.push('one or both runs did not complete successfully');
   const keys = (report: CaptureReport): string[] => report.results.flatMap(result => result.steps.map(step => `${result.journey}/${result.viewport}/${step.step}/${step.action}`));
   if (JSON.stringify(keys(head)) !== JSON.stringify(keys(base))) reasons.push('journeys or actions differ');
