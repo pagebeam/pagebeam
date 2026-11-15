@@ -10,6 +10,9 @@
   Chromium and are refused in Firefox before a browser starts.
 - Manifests and capture reports record the engine, and a comparison between
   engines is reported as incompatible.
+- The action installs Playwright's Firefox when only the configuration asks
+  for Firefox, not just when its `browser` input does, and installs its
+  system libraries on Linux runners.
 
 ## 0.1.5
 

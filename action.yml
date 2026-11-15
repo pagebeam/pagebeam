@@ -63,7 +63,7 @@ inputs:
     description: Viewport names, one per line. Auto uses the review plan; saved defaults to desktop.
     default: ''
   browser:
-    description: Browser engine for captures, chromium or firefox. Empty uses tours.browser from the configuration. Firefox is installed through Playwright.
+    description: Browser engine for captures, chromium or firefox. Empty uses tours.browser from the configuration. Firefox is installed through Playwright either way.
     default: ''
   journeys:
     description: Explicit capture journeys, one name per line. Overrides changed-file selection.
@@ -242,7 +242,7 @@ runs:
       if: inputs.browser == 'firefox'
       shell: bash
       working-directory: ${{ github.action_path }}
-      run: npx --yes playwright-core install firefox
+      run: npx --yes playwright-core install ${{ runner.os == 'Linux' && '--with-deps' || '' }} firefox
 
     # Away from the workspace, so a package.json there cannot decide which
     # pagebeam npx runs. In this repository it resolves to the unbuilt one.
@@ -270,6 +270,8 @@ runs:
         CAPTURE_TARGET: ${{ inputs.target }}
         CAPTURE_VIEWPORTS: ${{ inputs.viewports }}
         CAPTURE_BROWSER: ${{ inputs.browser }}
+        PAGEBEAM_INSTALL_BROWSERS: '1'
+        PAGEBEAM_INSTALL_BROWSER_DEPS: ${{ runner.os == 'Linux' && '1' || '' }}
         CAPTURE_JOURNEYS: ${{ inputs.journeys }}
         CAPTURE_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
         CAPTURE_CHANGED_FILES: ${{ inputs.changed-files }}
