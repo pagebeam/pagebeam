@@ -1,0 +1,22 @@
+name: ${NAME}
+services:
+  worker:
+    image: ghcr.io/pagebeam/worker:${IMAGE_TAG:-latest}
+    environment:
+      PAGEBEAM_API_URL: ${PAGEBEAM_API_URL:?required}
+      PAGEBEAM_WORKER_TOKEN: ${PAGEBEAM_WORKER_TOKEN:?required}
+      PAGEBEAM_WORKER_CAPACITY: ${PAGEBEAM_WORKER_CAPACITY:-2}
+    networks:
+      - default
+    init: true
+    # Docker's default seccomp profile must additionally allow clone, setns and unshare.
+    security_opt:
+      - seccomp=/etc/docker/pagebeam-worker-seccomp.json
+    shm_size: 1gb
+    mem_limit: 4g
+    pids_limit: 512
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1g,mode=1777
+    stop_grace_period: 90s

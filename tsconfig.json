@@ -27,6 +27,9 @@
     },
     {
       "path": "packages/cli"
+    },
+    {
+      "path": "packages/worker"
     }
   ]
 }
